@@ -129,6 +129,19 @@ export function renderResponse(response: StubResponse, ctx: TemplateContext, stu
   return { isError: false, value, text: typeof value === 'string' ? value : JSON.stringify(value), delayMs, effect };
 }
 
+/**
+ * Ответ заглушки для шаблона стартового сообщения ({{tools.<инструмент>}}): заглушка выбирается как для вызова
+ * без аргументов, берётся первый ответ последовательности, эффект не применяется — счётчики и состояние выполнения
+ * не меняются, и агент при своём вызове получит тот же ответ. Ошибка или отсутствие заглушки — значения нет.
+ */
+export function previewStub(c: CaseDef, defaults: StubDef[] | undefined, tool: string, state: Record<string, unknown>, execution: Record<string, unknown>): unknown {
+  const match = matchStub(c.tools[tool], defaults, {});
+  if (!match) return undefined;
+  const response = match.stub.sequence?.length ? match.stub.sequence[0] : match.stub;
+  if (response.error !== undefined) return undefined;
+  return renderResponse({ ...response, effect: undefined }, templateContext(c, {}, state, execution), new StubState(state)).value;
+}
+
 /** YAML-фрагмент для файла кейса по ответу, введённому человеком (plan_start.md, п. 6). */
 export function yamlSnippet(tool: string, args: Record<string, unknown>, answer: { json?: unknown; text?: string; error?: string }): string {
   const ind = (s: string, n: number) => s.split('\n').map((l) => ' '.repeat(n) + l).join('\n');

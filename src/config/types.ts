@@ -28,6 +28,8 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>;
   requiresConfirmation: boolean;
   kind: 'info' | 'action';
+  /** false — инструмента нет в tools/list, вызов получает ошибку «не найден»; заглушки кейсов остаются доступны шаблону стартового сообщения. */
+  enabled: boolean;
 }
 
 export interface ContractDef {

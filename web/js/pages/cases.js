@@ -97,11 +97,15 @@ ${c.situation ? html`<p class="lede" style="font-size: 14px; line-height: 22px">
 ${c.facts.length ? html`<div class="col" style="gap: 6px"><span class="lbl">Факты для ответов оператора</span>${c.facts.map((f) => html`<span class="sm">· ${f}</span>`)}</div>` : ''}
 ${Object.keys(c.state).length ? html`<div class="row cap" style="gap: 6px">Начальное состояние выполнения: ${Object.entries(c.state).map(([k, v]) => html`<span class="ref">${k} = ${String(v)}</span>`)}</div>` : ''}
 <span class="cap">Номер обращения выдаётся на выполнение и остаётся тем же в его capture. Поля стартового сообщения — по шаблону contracts/start-message.txt, сейчас условному.</span>
+${c.startPreview
+    ? html`<details class="raw" id="start-preview"><summary>Стартовое сообщение — как его получит агент</summary><pre>${c.startPreview.text}</pre><p class="cap" style="padding-bottom: 8px">x-task-id, номер обращения и request_ref подставляются на выполнении. Шаблон — ${c.startPreview.file}${c.startPreview.missing.length ? `. Без значения в этом кейсе, строки выпадают: ${c.startPreview.missing.join(', ')}` : ''}.</p></details>`
+    : ''}
 </section>
 <section class="sec" aria-labelledby="stub-h">
 <div class="sec-h"><h3 class="h2" id="stub-h">Заглушки инструментов</h3><span class="cap">Состояние и счётчики — свои у каждого выполнения</span></div>
 ${stubTable(c)}
 ${c.unknownStubTools.length ? html`<p class="hint">${icon('warn')}<span>Инструментов ${c.unknownStubTools.join(', ')} нет в contracts/tools.json: агент их не увидит.</span></p>` : ''}
+${c.disabledStubTools.length ? html`<p class="hint">${icon('info')}<span>${c.disabledStubTools.join(', ')} ${c.disabledStubTools.length > 1 ? 'выключены' : 'выключен'} в контракте (enabled: false): агент не видит ${c.disabledStubTools.length > 1 ? 'их' : 'его'} в tools/list. Заглушки доступны шаблону стартового сообщения как {{tools.<имя>}}.</span></p>` : ''}
 <div class="col" style="gap: 8px">
 ${hint(`Нет подходящей заглушки: в ручном режиме ${c.unmatchedMode === 'manual' ? 'отвечает человек' : 'агент получает ошибку'}, в автоматическом агент получает ошибку инструмента, а вызов попадает в «неожиданные». Порядок поиска: кейс → contracts/tool-defaults.yaml.`, 'tool')}
 ${hint('Подходят несколько заглушек — выбирается заглушка с более точным условием; при равенстве — первая в файле.')}

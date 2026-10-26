@@ -46,7 +46,7 @@ export async function render() {
   const d = await get('/api/directory');
   return html`<div class="col" style="gap: 20px">
 <header class="ph"><div class="ph-t"><h1 class="h1">Справочники</h1><p class="lede">Подключения к агентам, модели, встроенные метрики и контракт инструментов. Настраиваются файлами в agents/, models/, metrics/ и contracts/; ClawGym проверяет их до запуска.</p></div></header>
-<nav class="tabs" aria-label="Справочники"><a class="tab on" href="#agents">Агенты · ${d.agents.length}</a><a class="tab" href="#models">Модели · ${d.models.length}</a><a class="tab" href="#metrics">Метрики · ${d.metrics.length}</a><a class="tab" href="#tools">Инструменты · ${d.tools.length}</a></nav>
+<nav class="tabs" aria-label="Справочники"><a class="tab on" href="#agents">Агенты · ${d.agents.length}</a><a class="tab" href="#models">Модели · ${d.models.length}</a><a class="tab" href="#metrics">Метрики · ${d.metrics.length}</a><a class="tab" href="#tools">Инструменты · ${d.tools.filter((t) => t.enabled).length}${d.tools.some((t) => !t.enabled) ? ` из ${d.tools.length}` : ''}</a></nav>
 </div>
 <div id="agents" class="col" style="gap: 36px">${d.agents.map(agentSection)}</div>
 <hr class="rule">
@@ -68,8 +68,9 @@ ${hint('Одна модель может играть разные роли, н�
 <section class="sec" id="tools" aria-labelledby="to-h">
 <div class="sec-h"><h2 class="h2" id="to-h">Инструменты MCP</h2>${d.contract ? html`<span class="row cap" style="gap: 8px"><span class="mono">${d.contract.file} · ${d.contract.version}</span>${d.contract.conditional ? html`<span class="pill na">условный контракт</span>` : ''}</span>` : ''}</div>
 ${d.contract?.conditional ? hint('Имена, описания и схемы инструментов, обёртка результата и тексты ошибок условные: их нужно снять с кода Java-оркестратора (plan.md, этап 0; docs/CONTRACTS.md).', 'warn') : ''}
-<div class="tw"><table class="tbl"><thead><tr><th>Инструмент</th><th>Описание</th><th>Тип</th><th>Подтверждение</th></tr></thead>
-<tbody>${d.tools.map((t) => html`<tr><td class="mono m5">${t.name}</td><td class="t2">${t.description}</td><td>${t.kind === 'action' ? 'активный' : 'информационный'}</td><td>${t.requiresConfirmation ? html`<span class="pill live">требует</span>` : html`<span class="t3">—</span>`}</td></tr>`)}</tbody></table></div>
+<div class="tw"><table class="tbl"><thead><tr><th>Инструмент</th><th>Описание</th><th>Тип</th><th>Подтверждение</th><th>В tools/list</th></tr></thead>
+<tbody>${d.tools.map((t) => html`<tr${t.enabled ? '' : html` class="t3"`}><td class="mono m5">${t.name}</td><td class="t2">${t.description}</td><td>${t.kind === 'action' ? 'активный' : 'информационный'}</td><td>${t.requiresConfirmation ? html`<span class="pill live">требует</span>` : html`<span class="t3">—</span>`}</td><td>${t.enabled ? mk(true) : html`<span class="pill na">выключен</span>`}</td></tr>`)}</tbody></table></div>
+${d.tools.some((t) => !t.enabled) ? hint('Выключенный инструмент (enabled: false в контракте) агенту не предъявляется, вызов получает ошибку «не найден». Его заглушки в кейсах остаются и доступны шаблону стартового сообщения как {{tools.<имя>}}.') : ''}
 ${d.contract ? html`<div class="col" style="gap: 6px"><span class="lbl">Тексты ошибок для агента</span><dl class="kvs sm">${Object.entries(d.contract.errors).map(([k, v]) => html`<dt class="mono">${k}</dt><dd>${v}</dd>`)}</dl></div><div class="col" style="gap: 6px"><span class="lbl">Шаблон стартового сообщения · ${d.contract.startMessage.file}</span><pre class="diff">${d.contract.startMessage.text}</pre></div>` : ''}
 </section>`;
 }

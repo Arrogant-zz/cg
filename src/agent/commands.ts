@@ -10,8 +10,8 @@ export const COMMAND_TITLES: Record<CommandName, string> = {
   curator: '/skill-curator',
 };
 
-export function renderCommand(agent: AgentDef, name: CommandName, vars: { requestRef?: string; topic?: string }): string {
-  return renderString(agent.commands[name], { requestRef: vars.requestRef ?? '', topic: vars.topic ?? '' }).trim();
+export function renderCommand(agent: AgentDef, name: CommandName, vars: { requestRef?: string; topic?: string; taskId?: string }): string {
+  return renderString(agent.commands[name], { requestRef: vars.requestRef ?? '', topic: vars.topic ?? '', taskId: vars.taskId ?? '' }).trim();
 }
 
 /** Края строки: пробелы и ` " ' « » * — модель может обернуть строку скрипта. */

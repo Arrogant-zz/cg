@@ -159,10 +159,12 @@ ClawGym — тестовый стенд обучения агента **Pagurus*
   - шаблон стартового сообщения и источники полей;
   - есть ли строки `Тематика:` и `request_ref:` (нужны по INTEGRATION.md);
   - как оркестратор вычисляет `request_ref`.
+- **Уже известно** с фото `TaskService.processTask` от владельца, 26 октября: промпт из `openClawConfig`, блок с `Тематика:` и `request_ref:` = `taskId`, затем JSON четырёх вызовов `armCzkService`. Подробно — `docs/CONTRACTS.md`, раздел 3.
 - **Изменить:**
-  - `contracts/start-message.txt`;
-  - поля `start:` в кейсах под реальный шаблон;
-  - если алгоритм `request_ref` отличается — `requestRef` в `src/util/core.ts`. Сейчас это HMAC-SHA256 номера обращения, первые 32 hex.
+  - `contracts/start-message.txt` — по образцу в `docs/FORMATS.md`. `request_ref: {{execution.taskId}}`; ответы инструментов — `{{tools.<инструмент>}}`;
+  - заглушки этих инструментов в кейсах — обезличенные реальные ответы. Инструменты, которых агент не должен видеть, выключите в контракте: `enabled: false`;
+  - в `agents/*.yaml` — `commands.capture` с `request_ref={{taskId}}`, если оркестратор передаёт в capture тот же `taskId`;
+  - **приёмка:** предпросмотр на странице кейса совпадает с сообщением оркестратора для того же обращения.
 
 ### 6.4. MCP-сервер
 

@@ -1,11 +1,12 @@
 // Автоматический диалог кейса с LLM-оператором (SOL-04, SOL-05, BASK-05).
-import type { BasketType, Limits } from '../config/types.js';
+import type { BasketType, CaseDef, ContractDef, Limits } from '../config/types.js';
 import type { Execution } from './execution.js';
 import type { AgentChannel } from './channel.js';
 import type { DecisionEvent, MessageEvent, ToolCallEvent } from './events.js';
 import { MODE_MARK, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../operator/operator.js';
 import { StructuredError } from '../llm/structured.js';
 import { renderLines } from '../util/template.js';
+import { previewStub } from '../stubs/engine.js';
 import { errorMessage } from '../util/core.js';
 
 export interface DialogDeps {
@@ -28,12 +29,37 @@ export interface DialogOutcome {
   resultSeq: number;
 }
 
+export interface StartExecution {
+  caseNumber: string;
+  requestRef: string;
+  /** x-task-id, с которым уйдёт стартовое сообщение. */
+  taskId: string;
+}
+
+/**
+ * Стартовое сообщение по шаблону контракта: поля кейса ({{case.*}}, {{start.*}}), выполнения ({{execution.taskId}} и др.)
+ * и ответы заглушек инструментов ({{tools.<инструмент>}}) — как оркестратор, который встраивает результаты вызовов в старт.
+ * missing — подстановки без значения: их строки выпадают.
+ */
+export function renderStartMessage(contract: ContractDef, c: CaseDef, execution: StartExecution, state: Record<string, unknown>, missing?: Set<string>): string {
+  const cache = new Map<string, unknown>();
+  const tools = new Proxy(
+    {},
+    {
+      get: (_t, tool) => {
+        if (typeof tool !== 'string') return undefined;
+        if (!cache.has(tool)) cache.set(tool, previewStub(c, contract.defaults[tool], tool, state, { ...execution }));
+        return cache.get(tool);
+      },
+    },
+  );
+  return renderLines(contract.startMessage.text, { case: { id: c.id, title: c.title, topic: c.topic, tags: c.tags }, start: c.start, execution, tools }, missing);
+}
+
 export function startMessage(exec: Execution): string {
-  return renderLines(exec.contract.startMessage.text, {
-    case: { id: exec.caseDef.id, title: exec.caseDef.title, topic: exec.caseDef.topic },
-    start: exec.caseDef.start,
-    execution: { caseNumber: exec.caseNumber, requestRef: exec.requestRef },
-  });
+  const taskId = exec.reserveTaskId();
+  exec.startTaskId = taskId;
+  return renderStartMessage(exec.contract, exec.caseDef, { caseNumber: exec.caseNumber, requestRef: exec.requestRef, taskId }, exec.stub.state);
 }
 
 function marksOf(d: OperatorDecision, prior: Set<string>): NonNullable<MessageEvent['marks']> {

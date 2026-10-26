@@ -166,7 +166,7 @@ response:
   usage: { inputPath: …, outputPath: …, totalPath: … }
 commands:                             # по умолчанию — тексты из INTEGRATION.md
   reset: /reset
-  capture: /case-capture request_ref={{requestRef}} category={{topic}}
+  capture: /case-capture request_ref={{requestRef}} category={{topic}}   # {{taskId}} — x-task-id стартового сообщения
   curator: /skill-curator
 mcp: { contract: contracts/tools.json, protocolVersion: 2025-06-18, taskIdFrom: [header, meta, argument] }
 model: { switch: none, fixed: main }  # none — задана развёртыванием; request — значение по model.path
@@ -301,6 +301,31 @@ metrics:
 
 ## Контракт — `contracts/`
 
-- `tools.json`: `tools[]` — `name`, `description`, `inputSchema`, `requiresConfirmation`, `kind`; `result.mode` — `text` | `structured` | `both`; `errors` — тексты для агента с `{{tool}}`; `conditional: true` — пока не сверено с оркестратором.
-- `start-message.txt`: шаблон стартового сообщения; строка с пустой подстановкой выпадает.
+- `tools.json`:
+  - `tools[]` — `name`, `description`, `inputSchema`, `requiresConfirmation`, `kind`, `enabled`;
+  - `result.mode` — `text` | `structured` | `both`;
+  - `errors` — тексты для агента с `{{tool}}`;
+  - `conditional: true` — контракт ещё не сверен с оркестратором.
+- `enabled: false` у инструмента — выключить его, не удаляя описание. Решение владельца от 26 октября 2026 года. Что при этом происходит:
+  - инструмента нет в `tools/list`;
+  - его вызов получает ошибку `unknownTool`, а в журнале кейса — пометку «выключен в контракте»;
+  - заглушки кейсов остаются и доступны шаблону стартового сообщения.
+- `start-message.txt` — шаблон стартового сообщения. Строка, где подстановка оказалась пустой, выпадает целиком. Объект подставляется компактным JSON. Доступны:
+  - `{{case.id}}`, `{{case.title}}`, `{{case.topic}}`, `{{start.<поле>}}` — данные кейса;
+  - `{{execution.taskId}}` — x-task-id, с которым уйдёт стартовое сообщение; в оркестраторе `request_ref` равен ему;
+  - `{{execution.caseNumber}}`, `{{execution.requestRef}}` — номер обращения и request_ref по INTEGRATION.md;
+  - `{{tools.<инструмент>}}` — ответ заглушки инструмента из кейса, или `{{tools.<инструмент>.<путь>}}` — поле ответа. Заглушка выбирается как для вызова без аргументов; берётся первый ответ последовательности, эффект не применяется. Поэтому агент при своём вызове получит тот же ответ.
+- Пример в формате оркестратора (`TaskService.processTask`):
+
+  ````text
+  <текст промпта из конфигурации оркестратора>
+  ```
+      Тематика: {{tools.get_static_attributes.classifier.categoryName}}
+      request_ref: {{execution.taskId}}
+  ```.
+  Результат вызова инструмента «Получение кейса для сотрудника»{{tools.get_assigned_case}}.
+  Результат вызова инструмента «Получение статических атрибутов кейса»{{tools.get_static_attributes}}
+  ````
+
+  Имена инструментов здесь условные: возьмите имена из контракта. На странице кейса есть предпросмотр «Стартовое сообщение — как его получит агент».
 - `tool-defaults.yaml`: `tools:` — заглушки по умолчанию в формате кейса.

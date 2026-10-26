@@ -63,6 +63,8 @@ export interface ToolCallEvent extends BaseEvent {
   unexpected: boolean;
   durationMs: number | null;
   yaml?: string;
+  /** Инструмент есть в контракте, но выключен (enabled: false): агент получил ошибку «не найден». */
+  disabled?: boolean;
 }
 
 export interface MessageEvent extends BaseEvent {

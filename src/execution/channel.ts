@@ -87,7 +87,7 @@ export class AgentChannel {
   /** Служебная команда в журнал кейса. */
   async command(exec: Execution, name: CommandName, by: 'runner' | 'human', signal?: AbortSignal): Promise<CommandEvent> {
     return this.locks.run(exec.senderId, async () => {
-      const text = renderCommand(this.agent, name, { requestRef: exec.requestRef, topic: exec.caseDef.topic });
+      const text = renderCommand(this.agent, name, { requestRef: exec.requestRef, topic: exec.caseDef.topic, taskId: exec.startTaskId ?? exec.currentTaskId });
       const ev = exec.add<CommandEvent>({ type: 'command', name, text, status: 'running', reply: null, parsed: null, durationMs: null, by });
       const onExchange = (x: HttpExchange, phase: 'start' | 'end') => {
         if (phase === 'start') {

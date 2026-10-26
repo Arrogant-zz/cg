@@ -369,7 +369,7 @@ export function toolPill(e) {
   if (e.outcome === 'rejected') return html`<span class="pill dark" style="margin-left: auto">${icon('x')}Отклонено ${c?.by === 'human' ? 'вами' : 'оператором'}${c?.waitedMs ? ` · ${fmtDur(c.waitedMs)}` : ''}</span>`;
   if (e.outcome === 'timeout') return html`<span class="pill tech" style="margin-left: auto">${icon('clock')}Отклонено по таймауту</span>`;
   if (e.outcome === 'stopped') return html`<span class="pill tech" style="margin-left: auto">Остановлено</span>`;
-  if (e.outcome === 'unknown_tool') return html`<span class="pill na" style="margin-left: auto">неизвестный инструмент</span>`;
+  if (e.outcome === 'unknown_tool') return html`<span class="pill na" style="margin-left: auto">${e.disabled ? 'выключен в контракте' : 'неизвестный инструмент'}</span>`;
   if (e.outcome === 'no_stub') return html`<span class="pill na" style="margin-left: auto">нет заглушки · ошибка инструмента</span>`;
   if (e.outcome === 'manual') return html`<span class="pill" style="margin-left: auto">${icon('user')}ответ человека${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''}</span>`;
   if (e.outcome === 'manual_error') return html`<span class="pill fail" style="margin-left: auto">ошибка от человека</span>`;

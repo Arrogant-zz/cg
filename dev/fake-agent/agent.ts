@@ -338,7 +338,8 @@ export class FakeAgent {
       const line = await this.ws.curator();
       return `Проход curator выполнен.\n${line}`;
     }
-    if (/^Тематика:/m.test(t) && /^request_ref:/m.test(t)) return this.start(t, taskId);
+    // Строки могут быть с отступом — как в блоке кода стартового сообщения оркестратора.
+    if (/^\s*Тематика:/m.test(t) && /^\s*request_ref:/m.test(t)) return this.start(t, taskId);
     if (!this.dialog) return 'Я не веду обращение. Отправьте стартовое сообщение.';
     return this.onOperator(t, taskId);
   }

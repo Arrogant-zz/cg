@@ -210,7 +210,8 @@ export class McpServer {
       case 'tools/list': {
         const c = this.getContract();
         if (!c) return fail(-32603, 'Контракт инструментов не загружен');
-        return ok({ tools: c.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
+        // Выключенные инструменты (enabled: false) агенту не предъявляются.
+        return ok({ tools: c.tools.filter((t) => t.enabled).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
       }
       case 'tools/call': {
         const c = this.getContract();

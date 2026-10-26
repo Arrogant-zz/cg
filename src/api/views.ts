@@ -1,5 +1,6 @@
 // Представления для интерфейса: собирают из реестра и результатов то, что показывают экраны дизайна.
 import type { App } from '../app.js';
+import { renderStartMessage } from '../execution/dialog.js';
 import type { CaseDef, Issue, StubDef } from '../config/types.js';
 import { resolveEnvRefs } from '../config/loader.js';
 import { buildPlan, describePlan } from '../runner/plan.js';
@@ -117,6 +118,9 @@ export function caseDetail(app: App, id: string) {
     .filter((s) => s.case === id)
     .map((s) => ({ id: s.id, title: s.title, goal: s.goal, instruction: s.operator.instruction, style: s.operator.style, seesToolResults: s.operator.seesToolResults, file: s.source.file, usage: solutionUsage(app, s.id), issues: reg.issues.filter((i) => i.file === s.source.file) }));
   const toolNames = new Set(reg.contract?.tools.map((t) => t.name) ?? []);
+  // Предпросмотр: x-task-id, номер обращения и request_ref выдаются на выполнение.
+  const missing = new Set<string>();
+  const startText = reg.contract ? renderStartMessage(reg.contract, c, { caseNumber: '‹номер обращения›', requestRef: '‹request_ref›', taskId: '‹x-task-id›' }, c.state, missing) : null;
   return {
     id: c.id,
     title: c.title,
@@ -130,6 +134,8 @@ export function caseDetail(app: App, id: string) {
     hash: c.source.hash,
     stubs: stubRows(c),
     unknownStubTools: Object.keys(c.tools).filter((t) => !toolNames.has(t)),
+    disabledStubTools: Object.keys(c.tools).filter((t) => reg.contract?.tools.some((x) => x.name === t && !x.enabled)),
+    startPreview: startText === null ? null : { text: startText, missing: [...missing], file: reg.contract!.startMessage.file },
     reference: {
       procedure: c.reference.procedure,
       answer: c.reference.answer,

@@ -52,13 +52,16 @@ export function renderDeep<T>(value: T, ctx: TemplateContext, missing?: Set<stri
  * Построчный шаблон: строка, в которой плейсхолдер оказался пустым, выпадает целиком.
  * Так стартовое сообщение не получает строк «Карта: » для кейсов без карты.
  */
-export function renderLines(template: string, ctx: TemplateContext): string {
+export function renderLines(template: string, ctx: TemplateContext, missing?: Set<string>): string {
   const out: string[] = [];
   for (const line of template.split(/\r?\n/)) {
     let empty = false;
     const rendered = line.replace(RE, (_m, name: string) => {
       const t = toText(lookup(ctx, name));
-      if (!t.trim()) empty = true;
+      if (!t.trim()) {
+        empty = true;
+        missing?.add(name);
+      }
       return t;
     });
     if (!empty) out.push(rendered);

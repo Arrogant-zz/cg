@@ -252,6 +252,7 @@ async function loadContract(c: Collector, home: string): Promise<ContractDef | n
       inputSchema: t.inputSchema,
       requiresConfirmation: !!t.requiresConfirmation,
       kind: t.kind ?? (t.requiresConfirmation ? 'action' : 'info'),
+      enabled: t.enabled !== false,
     });
   });
   const smRel = d.startMessage ?? 'contracts/start-message.txt';
@@ -392,9 +393,11 @@ async function loadCase(c: Collector, home: string, p: Parsed, contract: Contrac
     for (const tool of Object.keys(tools)) {
       if (!known.has(tool)) c.warn(p.rel, `Инструмента «${tool}» нет в contracts/tools.json — агент его не увидит`, { field: `tools.${tool}`, line: lineOf(p, ['tools', tool]) });
     }
+    const disabled = new Set(contract.tools.filter((t) => !t.enabled).map((t) => t.name));
     const check = (a: ActionRequirement, field: string) => {
       for (const t of [a.tool, a.before].filter(Boolean) as string[]) {
         if (!known.has(t)) c.warn(p.rel, `Инструмента «${t}» нет в контракте`, { field });
+        else if (disabled.has(t) && field.includes('required')) c.warn(p.rel, `Инструмент «${t}» выключен в контракте (enabled: false): агент не сможет его вызвать, проверка не пройдёт`, { field });
       }
     };
     cd.reference.required.forEach((a, i) => check(a, `reference.actions.required[${i}]`));

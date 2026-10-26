@@ -109,8 +109,23 @@ export class Execution {
     return id;
   }
 
+  /** x-task-id стартового сообщения: его же получает {{taskId}} в служебных командах (в оркестраторе request_ref = taskId). */
+  startTaskId: string | null = null;
+  private reservedTaskId: string | null = null;
+
+  /** Резервирует x-task-id следующего запроса: стартовое сообщение подставляет его в текст до отправки. */
+  reserveTaskId(): string {
+    this.reservedTaskId ??= this.taskIdForRequest();
+    return this.reservedTaskId;
+  }
+
   /** x-task-id для очередного запроса агенту: один на выполнение или новый на сообщение. */
   taskIdForRequest(): string {
+    if (this.reservedTaskId) {
+      const id = this.reservedTaskId;
+      this.reservedTaskId = null;
+      return id;
+    }
     if (this.taskIdScope === 'message' && this.events.some((e) => e.type === 'agent_message' || e.type === 'command')) {
       this.currentTaskId = this.mintTaskId();
     }
@@ -236,7 +251,8 @@ export class Execution {
 
   async handleToolCall(name: string, args: Record<string, unknown>, taskId: string, httpId: string | null = null): Promise<McpCallResult> {
     const t0 = Date.now();
-    const tool = this.contract.tools.find((t) => t.name === name);
+    const def = this.contract.tools.find((t) => t.name === name);
+    const tool = def?.enabled ? def : undefined;
     const ev = this.add<ToolCallEvent>({
       httpId,
       type: 'tool_call',
@@ -245,6 +261,7 @@ export class Execution {
       args,
       taskId,
       requiresConfirmation: !!tool?.requiresConfirmation,
+      ...(def && !def.enabled ? { disabled: true } : {}),
       stub: null,
       confirmation: null,
       awaiting: null,
@@ -302,7 +319,7 @@ export class Execution {
     if (match) {
       const { response, call } = this.stub.next(match.stub);
       ev.stub = { id: match.stub.id, origin: match.stub.origin, candidates: match.candidates, call };
-      const ctx = templateContext(this.caseDef, args, this.stub.state, { caseNumber: this.caseNumber, requestRef: this.requestRef, id: this.id });
+      const ctx = templateContext(this.caseDef, args, this.stub.state, { caseNumber: this.caseNumber, requestRef: this.requestRef, id: this.id, taskId });
       const rendered = renderResponse(response, ctx, this.stub);
       if (rendered.delayMs) {
         try {

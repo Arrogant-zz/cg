@@ -1,5 +1,6 @@
 // Сборка приложения: настройки, MCP-сервер, раннер, ручной режим, журнал стенда, SSE.
 import http from 'node:http';
+import { settleWrites } from './util/fsx.js';
 import type { AddressInfo } from 'node:net';
 import type { Env } from './env.js';
 import type { Registry } from './config/types.js';
@@ -156,5 +157,7 @@ export class App {
           }),
       ),
     );
+    // Начатые записи результатов доводятся до конца: файл прогона не обрывается на остановке.
+    await settleWrites(this.store.dataDir);
   }
 }

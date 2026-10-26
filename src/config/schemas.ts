@@ -422,6 +422,7 @@ export const contractSchema = {
           inputSchema: { type: 'object' },
           requiresConfirmation: { type: 'boolean' },
           kind: { enum: ['info', 'action'] },
+          enabled: { type: 'boolean' },
         },
         additionalProperties: false,
       },
