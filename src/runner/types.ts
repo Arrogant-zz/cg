@@ -5,6 +5,7 @@ import type { CheckItem } from '../execution/events.js';
 import type { Issue, Limits } from '../config/types.js';
 import type { PlanStep } from './plan.js';
 import type { MetricAvailability } from './resolve.js';
+import type { HttpExchange } from '../util/httplog.js';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'stopped' | 'failed';
 
@@ -57,6 +58,8 @@ export interface CuratorPassRecord {
   changes: TreeChange[] | null;
   exportNote: string;
   report: string | null;
+  /** HTTP-обмены прохода: /reset и /skill-curator. */
+  http?: HttpExchange[];
 }
 
 export interface SkillsRecord {

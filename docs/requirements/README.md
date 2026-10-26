@@ -6,9 +6,9 @@
 
 | Копия | Оригинал в проекте AEFClaw | sha256 оригинала | Что это |
 | --- | --- | --- | --- |
-| [gap.md](gap.md) | `gap.md` | `301fface3fb8…` | Решения владельца, задачи первой автоматической версии, сквозные сценарии приёмки, статус реализации (раздел 18) |
-| [plan.md](plan.md) | `plan.md` | `2d7bd3a672e5…` | Полный план ClawGym: этап 0 (контракты), архитектура, модель и поведение, этапы |
-| [plan_start.md](plan_start.md) | `plan_start.md` | `797958871115…` | Ручной режим: чат с агентом на заглушках и его приёмка на стенде |
+| [gap.md](gap.md) | `gap.md` | `5c4e50481c93…` | Решения владельца, задачи первой автоматической версии, сквозные сценарии приёмки, статус реализации (раздел 18) |
+| [plan.md](plan.md) | `plan.md` | `f8fafc93f1f4…` | Полный план ClawGym: этап 0 (контракты), архитектура, модель и поведение, этапы |
+| [plan_start.md](plan_start.md) | `plan_start.md` | `985fcf652159…` | Ручной режим: чат с агентом на заглушках и его приёмка на стенде |
 | [ui/style-guide.md](ui/style-guide.md) | `ui/style-guide.md` | `39fb93e8fe3b…` | Стиль интерфейса ClawGym. Классы — в `web/clawgym.css` |
 | [files/learning-scripts/INTEGRATION.md](files/learning-scripts/INTEGRATION.md) | `files/learning-scripts/INTEGRATION.md` | `8515df90fe65…` | Что оркестратор отправляет агенту для обучения и как разбирать ответы `/case-capture` и `/skill-curator` |
 | [files/learning-scripts/README.md](files/learning-scripts/README.md) | `files/learning-scripts/README.md` | `0416c5dceb1a…` | Устройство комплекта обучения: раскладка workspace, capture, curator, журнал |

@@ -21,6 +21,8 @@ export interface BaseEvent {
   ts: string;
   type: EventType;
   hidden?: boolean;
+  /** HTTP-обмен этого события: запрос к агенту или запрос агента к MCP. */
+  httpId?: string | null;
 }
 
 export type ToolOutcome =

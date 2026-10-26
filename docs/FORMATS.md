@@ -186,11 +186,15 @@ learningKit: версия комплекта обучения
 ```yaml
 id: op-a
 roles: [operator]                     # agent | operator | judge
-provider: openai-compatible           # openai-compatible | anthropic | deployment | agent-request
+provider: openai-compatible           # openai-compatible | gigachat-v1 | gigachat-v2 | anthropic | deployment | agent-request
 baseUrl: ${env:LLM_BASE_URL}
+path: /chat/completions               # необязательно: путь метода, если шлюз отличается от стандартного
 apiKey: ${env:LLM_API_KEY}
 model: ${env:LLM_OPERATOR_MODEL}
 headers: {}
+tls:                                  # необязательно: клиентский сертификат (mTLS)
+  cert: ${env:LLM_CERT_FILE}          # клиентский сертификат, PEM
+  key: ${env:LLM_KEY_FILE}            # закрытый ключ, PEM
 params:
   temperature: 0.3                    # не передаётся в Anthropic Messages API
   maxTokens: 4000
@@ -203,6 +207,47 @@ params:
 ```
 
 Для роли `agent` используются провайдеры `deployment` (модель задана развёртыванием) и `agent-request` (значение `model` уходит в запрос агенту). Ответы оператора и судьи проверяются по JSON-схеме; при ошибке формата модель переспрашивается один раз.
+
+### GigaChat — `gigachat-v1` и `gigachat-v2`
+
+Формат — по OpenAPI-спецификации GigaChat API на developers.sber.ru, прочитанной 26 октября 2026 года. С настоящим GigaChat не проверялся. Пример — `models/op-gigachat.yaml` (v1) и `models/judge-gigachat.yaml` (v2).
+
+```yaml
+id: judge-gigachat
+roles: [judge]
+provider: gigachat-v2                 # gigachat-v1 — POST {baseUrl}/v1/chat/completions; gigachat-v2 — POST {baseUrl}/v2/chat/completions
+baseUrl: ${env:GIGACHAT_BASE_URL}     # корень API без версии: https://gigachat.devices.sberbank.ru/api или http://… внутри Istio
+path: /v2/chat/completions            # необязательно: другой путь, если его требует шлюз контура
+model: ${env:GIGACHAT_JUDGE_MODEL:-GigaChat-2-Max}
+tls:                                  # необязательно
+  cert: ${env:GIGACHAT_CERT_FILE:-}   # клиентский сертификат, PEM; пусто — вызов без сертификата
+  key: ${env:GIGACHAT_KEY_FILE:-}     # закрытый ключ, PEM
+  # pfx: ${env:GIGACHAT_PFX_FILE:-}   # или сертификат с ключом в PKCS#12 — вместо cert и key
+  passphrase: ${env:GIGACHAT_KEY_PASSPHRASE:-}
+  ca: ${env:GIGACHAT_CA_FILE:-}       # корневой сертификат сервера, если его нет в хранилище Node.js
+params:
+  temperature: 0.01                   # GigaChat принимает только больше 0
+  maxTokens: 4000
+  timeoutMs: 120000
+  retries: 2
+  responseFormat: json_schema         # json_schema | none
+```
+
+- **Авторизация** — клиентский сертификат (mTLS), если заданы его файлы. Файлы читаются при каждом вызове: новый сертификат подхватывается без перезапуска.
+- **Без сертификата** — если файлы не заданы, ClawGym вызывает адрес как есть. Так работает установка внутри Istio: `baseUrl` — http-адрес внутри сетки, а mTLS до GigaChat делает sidecar или egress-шлюз. Решение владельца от 26 октября 2026 года. Http без сертификата используйте только внутри сетки: иначе запросы к модели идут без шифрования.
+- **Сертификат задаётся целиком:** `tls.cert` и `tls.key` вместе или один `tls.pfx`. Только по https: сертификат вместе с http-адресом — ошибка настройки, а не тихий отказ от mTLS. Только `tls.ca` — для https без клиентского сертификата.
+- **Токен.** Заголовок `Authorization: Bearer …` добавляется, только если задан `apiKey`; получение токена OAuth не реализовано.
+- **Сертификат сервера.** Если сертификат сервера выдан центром, которого нет в хранилище Node.js, укажите `tls.ca`, например, корневой сертификат НУЦ Минцифры. Другой вариант — переменная `NODE_EXTRA_CA_CERTS`.
+- **Запрос v1:** `messages` из строк `system` и `user`, `temperature`, `max_tokens`, `stream: false`, `response_format`.
+- **Запрос v2:** части `content: [{ text }]`, параметры — внутри `model_options`.
+- **Структурированный ответ** — `response_format: { type: json_schema, schema, strict: true }`, схема без обёртки OpenAI. Если GigaChat отклонит схему (HTTP 422), задайте `responseFormat: none`: ответ всё равно проверяется, при ошибке формата модель переспрашивается.
+- **Ответ:**
+  - текст берётся из `choices[0].message.content` (v1) или из частей `messages[].content[].text` (v2);
+  - токены — из `usage`;
+  - `finish_reason: length` — обрезка ответа;
+  - `blacklist` и другие срабатывания фильтра — отказ модели.
+- **Трассировка.** Каждый вызов получает свой `X-Request-ID`; он попадает в текст ошибки, чтобы найти запрос в журналах GigaChat. Дополнительные заголовки, например `X-Client-ID`, задаются в `headers`.
+- **Ошибки сертификата** объясняют, что исправить: нет `tls.ca`, сервер не принял клиентский сертификат, ключ не подходит или неверен пароль. Такие ошибки не повторяются.
 
 ## Набор скиллов — `skillsets/<id>.yaml`
 

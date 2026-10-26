@@ -1,5 +1,5 @@
 // Экран «Разбор кейса»: журнал с ролями, вызовы и заглушки, решения оператора, оценка, режим «что видел агент» (SOL-02–06, RES-01).
-import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, mk, STATUS_TITLES, TECH } from '../lib.js';
+import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH } from '../lib.js';
 
 export const title = (ctx) => `Разбор ${ctx.params[1]}`;
 
@@ -74,7 +74,9 @@ export async function render(ctx) {
   const [id, name] = ctx.params;
   const [ex, run] = await Promise.all([get(`/api/runs/${id}/executions/${name}`), get(`/api/runs/${id}`)]);
   const item = ex.item;
-  const full = ctx.state.view !== 'agent';
+  const view = ctx.state.view ?? 'full';
+  const full = view !== 'agent';
+  const http = view === 'http' ? await get(`/api/runs/${id}/executions/${name}/http`) : null;
   const cases = run.lines.flatMap((l) => l.items).filter((i) => i.kind === 'case' && i.execName);
   const idx = cases.findIndex((i) => i.execName === name);
   const prev = cases[idx - 1];
@@ -95,13 +97,21 @@ export async function render(ctx) {
 <section class="mn" aria-label="Журнал выполнения" style="gap: 24px">
 <div class="row" style="justify-content: space-between; gap: 16px">
 <div class="seg" role="group" aria-label="Вид журнала">
-<button type="button" class="${full ? 'on' : ''}" data-action="view" data-view="full" aria-pressed="${full}">${icon('eye')}Полный журнал</button>
-<button type="button" class="${full ? '' : 'on'}" data-action="view" data-view="agent" aria-pressed="${!full}">${icon('hidden')}Что видел агент</button>
+<button type="button" class="${view === 'full' ? 'on' : ''}" data-action="view" data-view="full" aria-pressed="${view === 'full'}">${icon('eye')}Полный журнал</button>
+<button type="button" class="${view === 'agent' ? 'on' : ''}" data-action="view" data-view="agent" aria-pressed="${view === 'agent'}">${icon('hidden')}Что видел агент</button>
+<button type="button" class="${view === 'http' ? 'on' : ''}" data-action="view" data-view="http" aria-pressed="${view === 'http'}">${icon('plug')}HTTP-обмены${ex.httpCount === undefined ? '' : ` · ${ex.httpCount}`}</button>
 </div>
 ${legend()}
 </div>
-${full ? '' : hint('Так диалог выглядел для агента: без инструкции и решений оператора, разметки поправок, имён заглушек и оценки. Эталон кейса в запрос агенту не подмешивается.', 'hidden')}
-${feed(ex.events, { full })}
+${view === 'agent' ? hint('Так диалог выглядел для агента: без инструкции и решений оператора, разметки поправок, имён заглушек и оценки. Эталон кейса в запрос агенту не подмешивается.', 'hidden') : ''}
+${view === 'http'
+    ? exchangesView(http, {
+        filter: ctx.state.httpFilter ?? 'all',
+        download: `/api/runs/${id}/executions/${name}/http?download=1`,
+        empty: ex.httpCount === undefined ? 'Обмены этого кейса не записаны: прогон выполнен до того, как стенд начал сохранять HTTP-обмены.' : 'HTTP-обменов пока нет.',
+        note: 'Каждый запрос ClawGym к агенту и каждый запрос агента к MCP-серверу ClawGym с этим x-task-id: заголовки (авторизация скрыта), тело, статус и время. Запросы MCP без x-task-id — initialize, tools/list — относятся к сессии MCP, а не к кейсу: они в журнале стенда на странице «Прогоны».',
+      })
+    : feed(ex.events, { full, httpLinks: true })}
 </section>
 <aside class="sd" style="gap: 32px">
 ${verdict(item, ex)}
@@ -113,6 +123,20 @@ ${stats(ex, item)}
 export const refreshOn = (msg, ctx) => msg.topic === `run:${ctx.params[0]}` && msg.type === 'exec' && msg.data?.name === ctx.params[1];
 
 export const actions = {
+  showHttp(el, ctx) {
+    ctx.state.view = 'http';
+    ctx.state.focus = `http-${el.dataset.http}`;
+    return ctx.rerender();
+  },
+  toEvent(el, ctx) {
+    ctx.state.view = 'full';
+    ctx.state.focus = `ev-${el.dataset.seq}`;
+    return ctx.rerender();
+  },
+  httpFilter(el, ctx) {
+    ctx.state.httpFilter = el.dataset.filter;
+    return ctx.rerender();
+  },
   view(el, ctx) {
     ctx.state.view = el.dataset.view;
     return ctx.rerender();

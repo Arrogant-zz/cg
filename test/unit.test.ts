@@ -15,6 +15,8 @@ import { resolveRun } from '../src/runner/resolve.js';
 import { loadEnv } from '../src/env.js';
 import { checkAllowedHost } from '../src/agent/client.js';
 import { HOME } from './helpers.js';
+import { BODY_LIMIT, clip, maskedHeaders, startExchange } from '../src/util/httplog.js';
+import { maskHeaders } from '../src/util/core.js';
 
 const stub = (s: Partial<StubDef>, index: number): StubDef => ({ id: `s${index}`, tool: 't', origin: 'case', index, ...s });
 
@@ -110,4 +112,24 @@ test('битая ссылка в корзине: ошибка с файлом и
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('журнал HTTP: авторизация скрыта, большое тело обрезается', () => {
+  const h = maskedHeaders({ Authorization: 'Bearer secret-token-123', 'x-task-id': 'cg-1', 'Set-Cookie': 'sid=abcdef123456', 'X-Gateway-Token': 'gw-secret-777', 'X-Gateway-Key': 'gw-key-888888', 'Mcp-Session-Id': 'abc-session-42' });
+  assert.equal(h['x-task-id'], 'cg-1');
+  assert.equal(h['mcp-session-id'], 'abc-session-42');
+  assert.ok(!h.authorization.includes('secret-token-123'));
+  assert.ok(!h['set-cookie'].includes('abcdef123456'));
+  assert.ok(!h['x-gateway-token'].includes('gw-secret-777') && !h['x-gateway-key'].includes('gw-key-888888'));
+  // Значение из окружения скрывается при любом имени заголовка.
+  assert.ok(!maskHeaders({ 'X-Tenant': 'tenant-from-env-1' }, ['X-Tenant'])['X-Tenant'].includes('tenant-from-env-1'));
+  const x = startExchange('agent', 't', { method: 'POST', url: 'https://user:pa55word@stand.local/a2a?api_key=k-123456789&lang=ru', headers: {}, body: '{}' });
+  assert.ok(!x.request.url.includes('pa55word') && !x.request.url.includes('k-123456789') && x.request.url.includes('lang=ru'));
+  assert.equal(startExchange('mcp', 't', { method: 'POST', url: '/mcp', headers: {}, body: '' }).request.url, '/mcp');
+  for (const ch of ['я', '€', '😀']) {
+    const big = clip(ch.repeat(BODY_LIMIT));
+    assert.equal(big.truncated, true);
+    assert.ok(Buffer.byteLength(big.body) <= BODY_LIMIT && !big.body.endsWith('\uFFFD'));
+  }
+  assert.equal(clip('{}').truncated, false);
 });

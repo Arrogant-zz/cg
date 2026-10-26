@@ -115,3 +115,20 @@ details.raw pre{margin:0;padding:10px 14px;background:#FAFAF8;font-family:'IBM P
 .kv:first-of-type{border-top:0}
 .kv .k{color:#69716B;font-size:12px;line-height:16px}
 .kv .mono{word-break:break-all}
+
+/* HTTP-обмены: запрос и ответ */
+details.xch{width:100%}
+details.xch>summary{list-style:none;cursor:pointer}
+details.xch>summary::-webkit-details-marker{display:none}
+details.xch>summary:hover{background:#FAFAF8}
+details.xch[open]>summary{border-bottom:1px solid #EEEFEB}
+.xch-meta{padding:8px 14px 0}
+.xch-b{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(360px,100%),1fr));gap:12px;padding:10px 14px 14px}
+.xch-part{display:flex;flex-direction:column;gap:8px;min-width:0}
+.xch-part .tool-b{border:1px solid #EEEFEB;border-radius:10px;max-height:420px;overflow:auto;margin:0}
+.hdrs{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 12px;margin:0;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:18px}
+.hdrs dt{color:#69716B}
+.hdrs dd{margin:0;word-break:break-all;color:#3E4641}
+a.ev{text-decoration:none;color:#69716B}
+a.ev:hover{color:#A84A16}
+.who a.ev,.tool-h a.ev,.cmd a.ev{padding:0 4px;border-radius:5px;box-shadow:inset 0 0 0 1px #E4E6E1}

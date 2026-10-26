@@ -94,6 +94,12 @@ export class ManualManager {
     return this.live.get(id)?.exec;
   }
 
+  async http(id: number): Promise<unknown[]> {
+    this.get(id);
+    const l = this.live.get(id);
+    return l ? l.exec.http : ((await this.app.store.loadSessionHttp(id)) ?? []);
+  }
+
   async create(req: ManualCreate): Promise<ManualRecord> {
     const app = this.app;
     const reg = app.registry;
@@ -357,6 +363,7 @@ export class ManualManager {
     rec.status = 'closed';
     rec.closedAt = nowIso();
     rec.execution = l.exec.toJSON();
+    await this.app.store.saveSessionHttp(id, l.exec.http);
     this.app.bindings.unbindAll(l.exec);
     this.app.sessions.release(l.owner);
     this.live.delete(id);
@@ -373,7 +380,10 @@ export class ManualManager {
       const rec = this.sessions.get(id);
       if (!rec) return;
       const l = this.live.get(id);
-      if (l) rec.execution = l.exec.toJSON();
+      if (l) {
+        rec.execution = l.exec.toJSON();
+        this.app.store.saveSessionHttp(id, l.exec.http).catch((e) => log.error('Сохранение HTTP-обменов сессии', e));
+      }
       this.app.store.saveSession(id, rec).catch((e) => log.error('Сохранение сессии', e));
       this.app.publish(`manual:${id}`, 'manual', { id, busy: rec.busy, status: rec.status });
       this.app.publish('runs', 'manual', { id, status: rec.status });

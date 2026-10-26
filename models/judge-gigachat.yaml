@@ -1,0 +1,20 @@
+# Модель оценки через GigaChat API v2: POST {baseUrl}/v2/chat/completions. Адрес, сертификат и имя модели — из окружения.
+# С сертификатом: https-адрес и файлы GIGACHAT_CERT_FILE, GIGACHAT_KEY_FILE — ClawGym сам делает mTLS.
+# Без сертификата: http-адрес внутри Istio, файлы не задаются — mTLS до GigaChat делает sidecar или egress-шлюз.
+id: judge-gigachat
+title: judge-gigachat · GigaChat v2
+roles: [judge]
+provider: gigachat-v2
+baseUrl: ${env:GIGACHAT_BASE_URL}              # корень API без версии: https://gigachat.devices.sberbank.ru/api или http://… внутри Istio
+model: ${env:GIGACHAT_JUDGE_MODEL:-GigaChat-2-Max}
+tls:
+  cert: ${env:GIGACHAT_CERT_FILE:-}
+  key: ${env:GIGACHAT_KEY_FILE:-}
+  passphrase: ${env:GIGACHAT_KEY_PASSPHRASE:-}
+  ca: ${env:GIGACHAT_CA_FILE:-}
+params:
+  temperature: 0.01                            # GigaChat не принимает 0
+  maxTokens: 4000
+  timeoutMs: 120000
+  retries: 2
+  responseFormat: json_schema

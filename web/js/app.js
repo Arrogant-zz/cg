@@ -86,6 +86,20 @@ async function render(ctx, mod, my, keepScroll) {
     if (mod.patch && keepScroll) mod.patch(main, out, ctx);
     else main.innerHTML = String(out);
     if (keepScroll) window.scrollTo(0, y);
+    // Раскрытые блоки остаются раскрытыми после обновления по SSE.
+    for (const id of ctx.state.openIds ?? []) {
+      const d = document.getElementById(id);
+      if (d && d.tagName === 'DETAILS') d.open = true;
+    }
+    // Переход к событию или обмену, запрошенный действием страницы.
+    if (ctx.state.focus) {
+      const el = document.getElementById(ctx.state.focus);
+      ctx.state.focus = null;
+      if (el) {
+        if (el.tagName === 'DETAILS') el.open = true;
+        el.scrollIntoView({ block: 'center' });
+      }
+    }
     tick();
   } catch (e) {
     if (my !== token) return;
@@ -109,10 +123,64 @@ document.addEventListener('click', (ev) => {
   navigate(href);
 });
 
+main.addEventListener(
+  'toggle',
+  (ev) => {
+    const d = ev.target;
+    if (!current || d.tagName !== 'DETAILS' || !d.id) return;
+    const set = (current.ctx.state.openIds ??= new Set());
+    if (d.open) set.add(d.id);
+    else set.delete(d.id);
+  },
+  true,
+);
+
+// Копирование тела запроса или ответа.
+async function copyFrom(el) {
+  const target = document.getElementById(el.dataset.target);
+  if (!target) return;
+  try {
+    await navigator.clipboard.writeText(target.textContent ?? '');
+    toast('Скопировано');
+  } catch {
+    const r = document.createRange();
+    r.selectNodeContents(target);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    toast('Текст выделен — скопируйте его сочетанием клавиш');
+  }
+}
+
+// Enter отправляет: data-enter — по Enter (Shift+Enter — перенос строки), data-enter-mod — по Cmd/Ctrl+Enter.
+main.addEventListener('keydown', async (ev) => {
+  if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229 || !current) return;
+  const el = ev.target.closest('[data-enter],[data-enter-mod]');
+  if (!el || el.disabled) return;
+  const mod = ev.metaKey || ev.ctrlKey;
+  let name = null;
+  if (el.dataset.enter && !ev.shiftKey && !ev.altKey) name = el.dataset.enter;
+  else if (el.dataset.enterMod && mod) name = el.dataset.enterMod;
+  if (!name) return;
+  const fn = current.mod.actions?.[name];
+  if (!fn) return;
+  ev.preventDefault();
+  try {
+    await fn(el, current.ctx, ev);
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
 // Действия страниц: data-action на кнопках, data-change на полях, data-submit на формах.
 main.addEventListener('click', async (ev) => {
   const el = ev.target.closest('[data-action]');
   if (!el || !current) return;
+  if (el.dataset.action === 'copy') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    return copyFrom(el);
+  }
   const fn = current.mod.actions?.[el.dataset.action];
   if (!fn) return;
   ev.preventDefault();

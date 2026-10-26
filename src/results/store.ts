@@ -38,7 +38,7 @@ export class ResultsStore {
     // Номер не должен совпасть с уже сохранённым результатом.
     const dir = kind === 'run' ? this.resultsDir : this.sessionsDir;
     const key = kind === 'run' ? runKey : sessionKey;
-    const existing = kind === 'run' ? await listDirs(dir) : (await fsp.readdir(dir).catch(() => [] as string[])).map((f) => f.replace(/\.json$/, ''));
+    const existing = kind === 'run' ? await listDirs(dir) : (await fsp.readdir(dir).catch(() => [] as string[])).map((f) => f.replace(/(\.http)?\.json$/, ''));
     while (existing.includes(key(n))) n++;
     c[kind] = n;
     await writeJsonAtomic(file, c);
@@ -70,6 +70,22 @@ export class ResultsStore {
     return readJsonIf(path.join(this.runDir(runId), 'executions', `${name}.json`));
   }
 
+  async saveHttp(runId: number, name: string, list: unknown[]): Promise<void> {
+    await writeJsonAtomic(path.join(this.runDir(runId), 'executions', `${name}.http.json`), list);
+  }
+
+  async loadHttp(runId: number, name: string): Promise<any[] | undefined> {
+    return readJsonIf(path.join(this.runDir(runId), 'executions', `${name}.http.json`));
+  }
+
+  async saveSessionHttp(id: number, list: unknown[]): Promise<void> {
+    await writeJsonAtomic(path.join(this.sessionsDir, `${sessionKey(id)}.http.json`), list);
+  }
+
+  async loadSessionHttp(id: number): Promise<any[] | undefined> {
+    return readJsonIf(path.join(this.sessionsDir, `${sessionKey(id)}.http.json`));
+  }
+
   async saveFiles(runId: number, sub: string, files: { path: string; content: string }[]): Promise<void> {
     const base = path.join(this.runDir(runId), sub);
     await fsp.rm(base, { recursive: true, force: true });
@@ -94,7 +110,7 @@ export class ResultsStore {
 
   async loadSessions(): Promise<any[]> {
     const out: any[] = [];
-    for (const f of (await fsp.readdir(this.sessionsDir).catch(() => [] as string[])).filter((x) => x.endsWith('.json')).sort()) {
+    for (const f of (await fsp.readdir(this.sessionsDir).catch(() => [] as string[])).filter((x) => x.endsWith('.json') && !x.endsWith('.http.json')).sort()) {
       const s = await readJsonIf(path.join(this.sessionsDir, f)).catch(() => undefined);
       if (s) out.push(s);
     }

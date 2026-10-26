@@ -2,9 +2,10 @@
 import crypto from 'node:crypto';
 import type { AgentDef } from '../config/types.js';
 import { resolveEnvRefs } from '../config/loader.js';
-import { deepClone, maskHeaders } from '../util/core.js';
+import { deepClone, maskHeaders, maskUrl } from '../util/core.js';
 import { queryPath, setPath, PathError } from '../util/jsonpath.js';
 import { renderDeep } from '../util/template.js';
+import { finishExchange, maskedHeaders, startExchange, type HttpExchange } from '../util/httplog.js';
 
 export type AgentErrorKind = 'timeout' | 'http' | 'network' | 'parse' | 'aborted' | 'agent' | 'config';
 
@@ -14,6 +15,8 @@ export class AgentError extends Error {
     message: string,
     public httpStatus?: number,
     public body?: string,
+    /** HTTP-обмен, если запрос до агента был отправлен. */
+    public exchange?: HttpExchange,
   ) {
     super(message);
   }
@@ -33,6 +36,7 @@ export interface AgentReply {
   durationMs: number;
   request: { url: string; headers: Record<string, string>; body: unknown };
   raw: unknown;
+  exchange: HttpExchange;
 }
 
 export interface SendOptions {
@@ -43,6 +47,10 @@ export interface SendOptions {
   signal?: AbortSignal;
   /** Значение модели для model.switch: request. */
   modelValue?: string | null;
+  /** Подпись обмена в журнале HTTP: реплика, стартовое сообщение, команда. */
+  label?: string;
+  /** Обмен создан (start) и завершён (end): журнал HTTP видит и висящий запрос. */
+  onExchange?: (x: HttpExchange, phase: 'start' | 'end') => void;
 }
 
 /** Хост адреса агента должен быть в AGENT_ALLOWED_HOSTS: стенд нельзя направить на ПРОМ. */
@@ -63,10 +71,12 @@ export function buildRequest(agent: AgentDef, env: NodeJS.ProcessEnv, opts: Omit
   const url = resolveEnvRefs(agent.request.url, env);
   missing.push(...url.missing);
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const envHeaders: string[] = [];
   for (const [k, v] of Object.entries(agent.request.headers)) {
     const r = resolveEnvRefs(v, env);
     missing.push(...r.missing);
     headers[k] = r.value;
+    if (v.includes('${env:')) envHeaders.push(k);
   }
   headers[agent.request.taskIdHeader] = opts.taskId;
   headers[agent.request.senderIdHeader] = opts.senderId;
@@ -78,7 +88,7 @@ export function buildRequest(agent: AgentDef, env: NodeJS.ProcessEnv, opts: Omit
   } catch (e) {
     throw new AgentError('config', e instanceof PathError ? e.message : String(e));
   }
-  return { url: url.value, headers, body, missing };
+  return { url: url.value, headers, envHeaders, body, missing };
 }
 
 function joinTexts(values: unknown[]): string {
@@ -122,45 +132,66 @@ export class AgentClient {
     if (req.missing.length) throw new AgentError('config', `Не заданы переменные окружения: ${[...new Set(req.missing)].join(', ')}`);
     const hostErr = checkAllowedHost(req.url, this.allowedHosts);
     if (hostErr) throw new AgentError('config', hostErr);
+    const bodyText = JSON.stringify(req.body);
+    const x = startExchange(
+      'agent',
+      opts.label ?? 'Запрос к агенту',
+      { method: this.def.request.method, url: req.url, headers: maskHeaders(req.headers, req.envHeaders), body: bodyText },
+      { taskId: opts.taskId, senderId: opts.senderId },
+    );
+    opts.onExchange?.(x, 'start');
+    const fail = (err: AgentError): AgentError => {
+      if (!x.finishedAt) finishExchange(x, null, err.message);
+      err.exchange = x;
+      opts.onExchange?.(x, 'end');
+      return err;
+    };
     const started = Date.now();
     const timeout = AbortSignal.timeout(this.def.request.timeoutMs ?? opts.timeoutMs);
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let res: Response;
     try {
-      res = await fetch(req.url, { method: this.def.request.method, headers: req.headers, body: JSON.stringify(req.body), signal });
+      res = await fetch(req.url, { method: this.def.request.method, headers: req.headers, body: bodyText, signal });
     } catch (e: any) {
-      if (opts.signal?.aborted) throw new AgentError('aborted', 'Запрос агенту прерван остановкой');
-      if (timeout.aborted) throw new AgentError('timeout', `Агент не ответил за ${Math.round((this.def.request.timeoutMs ?? opts.timeoutMs) / 1000)} с`);
-      throw new AgentError('network', `Агент недоступен: ${e?.cause?.code ?? e?.message ?? e}`);
+      if (opts.signal?.aborted) throw fail(new AgentError('aborted', 'Запрос агенту прерван остановкой'));
+      if (timeout.aborted) throw fail(new AgentError('timeout', `Агент не ответил за ${Math.round((this.def.request.timeoutMs ?? opts.timeoutMs) / 1000)} с`));
+      throw fail(new AgentError('network', `Агент недоступен: ${e?.cause?.code ?? e?.message ?? e}`));
     }
     let text: string;
     try {
       text = await res.text();
     } catch (e: any) {
-      if (timeout.aborted) throw new AgentError('timeout', 'Агент не дослал ответ до таймаута');
-      throw new AgentError('network', `Ответ агента оборвался: ${e?.message ?? e}`);
+      if (timeout.aborted) throw fail(new AgentError('timeout', 'Агент не дослал ответ до таймаута'));
+      throw fail(new AgentError('network', `Ответ агента оборвался: ${e?.message ?? e}`));
     }
-    if (!res.ok) throw new AgentError('http', `Агент вернул HTTP ${res.status}`, res.status, text.slice(0, 2000));
+    finishExchange(x, { status: res.status, headers: maskedHeaders(res.headers), body: text });
+    if (!res.ok) throw fail(new AgentError('http', `Агент вернул HTTP ${res.status}`, res.status, text.slice(0, 2000)));
     let raw: unknown;
     try {
       raw = JSON.parse(text);
     } catch {
-      throw new AgentError('parse', 'Ответ агента — не JSON', res.status, text.slice(0, 2000));
+      throw fail(new AgentError('parse', 'Ответ агента — не JSON', res.status, text.slice(0, 2000)));
     }
-    const parsed = parseReply(this.def, raw);
-    if (parsed.agentError) throw new AgentError('agent', `Агент сообщил об ошибке: ${parsed.agentError}`, res.status, text.slice(0, 2000));
+    let parsed: ReturnType<typeof parseReply>;
+    try {
+      parsed = parseReply(this.def, raw);
+    } catch (e) {
+      throw fail(e instanceof AgentError ? e : new AgentError('parse', String(e)));
+    }
+    if (parsed.agentError) throw fail(new AgentError('agent', `Агент сообщил об ошибке: ${parsed.agentError}`, res.status, text.slice(0, 2000)));
+    opts.onExchange?.(x, 'end');
     return {
       text: parsed.text,
       status: parsed.status,
       usage: parsed.usage,
       httpStatus: res.status,
       durationMs: Date.now() - started,
-      request: { url: req.url, headers: maskHeaders(req.headers), body: req.body },
+      request: { url: maskUrl(req.url), headers: maskHeaders(req.headers, req.envHeaders), body: req.body },
       raw,
+      exchange: x,
     };
   }
 
-  /** ok: null — доступность не проверялась: у подключения нет healthUrl. */
   async health(): Promise<{ ok: boolean | null; note: string }> {
     const base = resolveEnvRefs(this.def.request.url, this.env);
     if (base.missing.length) return { ok: false, note: `не заданы ${base.missing.join(', ')}` };

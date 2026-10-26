@@ -567,9 +567,11 @@ function loadModel(c: Collector, p: Parsed): ModelDef | null {
     roles: d.roles,
     provider: d.provider,
     baseUrl: d.baseUrl ?? null,
+    path: d.path ?? null,
     apiKey: d.apiKey ?? null,
     model: d.model ?? null,
     headers: stringMap(d.headers),
+    tls: d.tls ? { cert: d.tls.cert ?? null, key: d.tls.key ?? null, pfx: d.tls.pfx ?? null, passphrase: d.tls.passphrase ?? null, ca: d.tls.ca ?? null } : null,
     params: d.params ?? {},
     description: d.description ?? '',
     source: src(p),
@@ -587,6 +589,23 @@ function loadModel(c: Collector, p: Parsed): ModelDef | null {
     c.warn(p.rel, 'temperature не передаётся в Anthropic Messages API: параметр больше не принимается', { field: 'params.temperature' });
   }
   if (m.provider === 'agent-request' && !m.model) c.error(p.rel, 'Для agent-request нужно model — значение, которое уйдёт агенту', { field: 'model' });
+  const gigachat = m.provider === 'gigachat-v1' || m.provider === 'gigachat-v2';
+  if (gigachat) {
+    if (!m.baseUrl || !m.model) c.error(p.rel, `Для ${m.provider} нужны baseUrl и model`, { field: 'baseUrl' });
+    if (m.params.responseFormat === 'json_object') c.error(p.rel, 'GigaChat не поддерживает json_object: используйте json_schema или none', { field: 'params.responseFormat' });
+    if (m.params.temperature === 0) c.error(p.rel, 'GigaChat принимает temperature больше 0: уберите параметр или задайте, например, 0.01', { field: 'params.temperature' });
+  }
+  if (m.tls) {
+    const t = m.tls;
+    if (m.provider !== 'openai-compatible' && !gigachat) c.error(p.rel, `Клиентский сертификат поддерживается для openai-compatible и gigachat, а не для ${m.provider}`, { field: 'tls' });
+    // Сертификат необязателен; если задан, то целиком. Только tls.ca — для https без клиентского сертификата.
+    if (t.pfx && (t.cert || t.key)) c.error(p.rel, 'Укажите либо tls.cert и tls.key, либо tls.pfx', { field: 'tls' });
+    else if (!t.pfx && !!t.cert !== !!t.key) c.error(p.rel, 'Для клиентского сертификата нужны оба файла: tls.cert и tls.key', { field: t.cert ? 'tls.key' : 'tls.cert' });
+    if (t.passphrase && !hasEnvRef(t.passphrase)) c.warn(p.rel, 'Пароль ключа задайте ссылкой ${env:NAME}: файл настроек попадает в снимок прогона', { field: 'tls.passphrase' });
+    const literalCert = [t.cert, t.key, t.pfx].some((x) => x && !hasEnvRef(x));
+    if (literalCert && m.baseUrl && !hasEnvRef(m.baseUrl) && !m.baseUrl.startsWith('https://')) c.error(p.rel, 'Клиентский сертификат передаётся только по https', { field: 'baseUrl' });
+  }
+  if (m.apiKey && !hasEnvRef(m.apiKey)) c.warn(p.rel, 'Ключ задайте ссылкой ${env:NAME}: файл настроек попадает в снимок прогона', { field: 'apiKey' });
   return m;
 }
 

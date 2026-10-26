@@ -1,5 +1,5 @@
 // Экран «Прогоны»: что идёт сейчас, очередь, завершённые с успехом среди оценённых (RUN-03, RES-02).
-import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtDur, since, plural, hint, ver, toast } from '../lib.js';
+import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtTime, fmtDur, since, plural, hint, ver, mk, exchangeCard, toast } from '../lib.js';
 
 export const title = 'Прогоны';
 
@@ -78,8 +78,18 @@ function comparePair(done) {
   return null;
 }
 
+function standSection(status, traffic) {
+  const entries = status.stand ?? [];
+  if (!entries.length && !traffic.length) return '';
+  return html`<section class="sec" aria-labelledby="stand-h">
+<div class="sec-h"><h2 class="h2" id="stand-h">Журнал стенда</h2><span class="cap">События вне кейсов: вызовы MCP без привязки, сбои стенда</span></div>
+${entries.length ? html`<div class="col" style="gap: 0">${entries.slice(0, 12).map((e) => html`<div class="okr">${mk(e.level === 'info' ? 'na' : 'tech')}<span>${e.message}${e.data?.httpId ? html` · <a href="#http-${e.data.httpId}" data-action="openUnbound" data-http="${e.data.httpId}">HTTP</a>` : ''}</span><span class="cap num">${fmtTime(e.ts)}</span></div>`)}</div>` : ''}
+${traffic.length ? html`<details class="raw" id="mcp-unbound"><summary>MCP-запросы без привязки к кейсу · ${traffic.length}: initialize, tools/list и вызовы без известного x-task-id</summary><div class="col" style="gap: 8px; padding: 8px 0">${traffic.slice(0, 60).map(exchangeCard)}</div></details>` : ''}
+</section>`;
+}
+
 export async function render() {
-  const { runs, manual } = await get('/api/runs');
+  const [{ runs, manual }, status, traffic] = await Promise.all([get('/api/runs'), get('/api/status'), get('/api/mcp/traffic?unbound=1')]);
   const active = runs.filter((r) => r.status === 'running');
   const queued = runs.filter((r) => r.status === 'queued').sort((a, b) => a.id - b.id);
   const done = runs.filter((r) => !['running', 'queued'].includes(r.status));
@@ -110,12 +120,18 @@ ${done.length
       )}</tbody></table></div>`
     : html`<div class="empty">Завершённых прогонов пока нет.</div>`}
 ${hint('Успех считается среди оценённых кейсов. Технические сбои, неоценённые и не начатые кейсы показаны отдельно и не превращаются в неуспех агента.')}
-</section>`;
+</section>
+${standSection(status, traffic)}`;
 }
 
-export const refreshOn = (msg) => (msg.type === 'run' && msg.topic === 'runs') || msg.type === 'manual' || (msg.type === 'exec' && false);
+export const refreshOn = (msg) => (msg.type === 'run' && msg.topic === 'runs') || msg.type === 'manual' || msg.type === 'stand';
 
 export const actions = {
+  openUnbound(el, ctx) {
+    (ctx.state.openIds ??= new Set()).add('mcp-unbound');
+    ctx.state.focus = `http-${el.dataset.http}`;
+    return ctx.rerender();
+  },
   async stop(el, ctx) {
     await post(`/api/runs/${el.dataset.id}/stop`);
     toast('Остановка отправлена: новые кейсы не начнутся');

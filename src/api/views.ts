@@ -6,7 +6,7 @@ import { buildPlan, describePlan } from '../runner/plan.js';
 import { resolveRun, type RunOverrides } from '../runner/resolve.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import type { RunRecord } from '../runner/types.js';
-import { modelReadiness } from '../llm/provider.js';
+import { endpointOf, modelAuth, modelReadiness } from '../llm/provider.js';
 import { diffTrees } from '../util/diff.js';
 import { HttpError } from '../util/http.js';
 
@@ -266,6 +266,8 @@ export function directory(app: App) {
     provider: m.provider,
     model: m.model,
     baseUrl: m.baseUrl,
+    endpoint: endpointOf(m),
+    auth: modelAuth(m, env),
     params: m.params,
     description: m.description,
     file: m.source.file,

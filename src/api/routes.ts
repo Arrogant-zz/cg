@@ -82,6 +82,14 @@ export function buildRoutes(app: App): Router {
     if (!saved) throw new HttpError(404, 'Журнал кейса не найден');
     return { ...saved, item: item ?? saved.item, live: false };
   });
+  r.get('/api/runs/:id/executions/:name/http', async ({ params, query, res }) => {
+    const id = num(params.id);
+    app.runs.get(id);
+    const live = app.runs.liveExecution(id, params.name);
+    const list = live ? live.http : ((await app.store.loadHttp(id, params.name)) ?? []);
+    if (query.get('download')) return sendFile(res, `${runKey(id)}-${params.name}-http.json`, JSON.stringify(list, null, 2), 'application/json');
+    return list;
+  });
   r.get('/api/runs/:id/materials.zip', async ({ params, res }) => {
     const id = num(params.id);
     app.runs.get(id);
@@ -130,6 +138,16 @@ export function buildRoutes(app: App): Router {
     return { ok: true };
   });
   r.post('/api/manual/:id/finish', async ({ params, body }) => app.manual.finish(num(params.id), await body()));
+  r.get('/api/manual/:id/http', async ({ params, query, res }) => {
+    const id = num(params.id);
+    const list = await app.manual.http(id);
+    if (query.get('download')) return sendFile(res, `${app.manual.get(id).key}-http.json`, JSON.stringify(list, null, 2), 'application/json');
+    return list;
+  });
+  r.get('/api/mcp/traffic', ({ query }) => {
+    const unbound = query.get('unbound') === '1';
+    return app.mcp.traffic.filter((x) => !unbound || !x.execId).slice().reverse();
+  });
   r.get('/api/manual/:id/export', ({ params, res }) => {
     const s = app.manual.get(num(params.id));
     sendFile(res, `${s.key}.json`, JSON.stringify(s, null, 2), 'application/json');

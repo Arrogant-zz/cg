@@ -112,3 +112,17 @@ export function fakeJudge(ctx: { reference: { criteria: { id: string; text: stri
     summary: 'Оценка fake-llm по подсказкам критериев',
   };
 }
+
+/** Роль по системной подсказке: у судьи в ней метка версии judge-v. */
+export const fakeRole = (system: string): 'judge' | 'operator' => (system.includes('judge-v') ? 'judge' : 'operator');
+
+/** Ответ «модели» по контексту ClawGym из блока ```json в сообщении пользователя. */
+export function fakeAnswer(system: string, user: string): string {
+  try {
+    const m = /```json\s*([\s\S]*?)```/.exec(user);
+    const ctx = JSON.parse(m ? m[1] : user);
+    return JSON.stringify(fakeRole(system) === 'judge' ? fakeJudge(ctx) : fakeOperator(ctx));
+  } catch (e: any) {
+    return JSON.stringify({ error: `fake-llm не понял контекст: ${e?.message}` });
+  }
+}

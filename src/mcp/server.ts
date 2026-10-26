@@ -10,6 +10,7 @@ import { readBody } from '../util/http.js';
 import { nowIso } from '../util/core.js';
 import { renderString } from '../util/template.js';
 import { logger } from '../util/log.js';
+import { clip, finishExchange, maskedHeaders, startExchange, type HttpExchange } from '../util/httplog.js';
 
 const log = logger('mcp');
 
@@ -75,8 +76,18 @@ interface McpSession {
   lastSeen: string;
 }
 
+/** Контекст одного HTTP-запроса агента: обмен для журнала и выполнение, к которому он привязан. */
+interface CallCtx {
+  x: HttpExchange;
+  exec: Execution | null;
+}
+
+const TRAFFIC_LIMIT = 300;
+
 export class McpServer {
   sessions = new Map<string, McpSession>();
+  /** Последние HTTP-обмены MCP; без привязки к кейсу — initialize, tools/list и вызовы без x-task-id. */
+  traffic: HttpExchange[] = [];
 
   constructor(
     private env: Env,
@@ -87,50 +98,73 @@ export class McpServer {
   ) {}
 
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const taskHeader = req.headers[this.env.mcpTaskIdHeader];
+    const x = startExchange(
+      'mcp',
+      req.method ?? 'POST',
+      { method: req.method ?? 'POST', url: req.url ?? this.env.mcpPath, headers: maskedHeaders(req.headers), body: '' },
+      { taskId: typeof taskHeader === 'string' ? taskHeader : null, mcpSessionId: typeof req.headers['mcp-session-id'] === 'string' ? req.headers['mcp-session-id'] : null },
+    );
+    this.traffic.push(x);
+    if (this.traffic.length > TRAFFIC_LIMIT) this.traffic.shift();
+    const ctx: CallCtx = { x, exec: null };
+    const send = (status: number, headers: Record<string, string | number>, body: string) => {
+      res.writeHead(status, headers);
+      res.end(body);
+      const h: Record<string, string> = {};
+      for (const [k, v] of Object.entries(headers)) h[k.toLowerCase()] = String(v);
+      finishExchange(x, { status, headers: h, body });
+      ctx.exec?.updateHttp(x);
+    };
     if (req.method === 'GET') {
       // Сервер не открывает поток уведомлений: допустимо по спецификации Streamable HTTP.
-      res.writeHead(405, { Allow: 'POST, DELETE' }).end();
+      x.label = 'GET: поток уведомлений не поддержан';
+      send(405, { Allow: 'POST, DELETE' }, '');
       return;
     }
     if (req.method === 'DELETE') {
       const sid = String(req.headers['mcp-session-id'] ?? '');
       this.sessions.delete(sid);
-      res.writeHead(204).end();
+      x.label = 'DELETE: закрытие сессии';
+      send(204, {}, '');
       return;
     }
     if (req.method !== 'POST') {
-      res.writeHead(405, { Allow: 'POST, DELETE' }).end();
+      send(405, { Allow: 'POST, DELETE' }, '');
       return;
     }
     let payload: any;
     try {
-      payload = JSON.parse((await readBody(req)).toString('utf8'));
+      const raw = (await readBody(req)).toString('utf8');
+      Object.assign(x.request, clip(raw));
+      payload = JSON.parse(raw);
     } catch {
-      this.reply(res, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+      x.label = 'нераспознанный JSON';
+      this.reply(send, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
       return;
     }
     const batch = Array.isArray(payload);
     const list: RpcRequest[] = batch ? payload : [payload];
+    x.label = list
+      .map((m) => (m?.method === 'tools/call' && typeof m.params?.name === 'string' ? `tools/call ${m.params.name}` : String(m?.method ?? '?')))
+      .join(', ');
     const sessionHeader: Record<string, string> = {};
-    const results = await Promise.all(list.map((m) => this.dispatch(m, req, sessionHeader)));
+    const results = await Promise.all(list.map((m) => this.dispatch(m, req, sessionHeader, ctx)));
     const responses = results.filter((r) => r !== null);
     if (!responses.length) {
-      res.writeHead(202, sessionHeader).end();
+      send(202, sessionHeader, '');
       return;
     }
-    this.reply(res, batch ? responses : responses[0], sessionHeader, req);
+    this.reply(send, batch ? responses : responses[0], sessionHeader, req);
   }
 
-  private reply(res: ServerResponse, body: unknown, headers: Record<string, string> = {}, req?: IncomingMessage) {
+  private reply(send: (status: number, headers: Record<string, string>, body: string) => void, body: unknown, headers: Record<string, string> = {}, req?: IncomingMessage) {
     const accept = String(req?.headers.accept ?? '');
     if (this.env.mcpResponseMode === 'sse' && accept.includes('text/event-stream')) {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', ...headers });
-      res.end(`event: message\ndata: ${JSON.stringify(body)}\n\n`);
+      send(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', ...headers }, `event: message\ndata: ${JSON.stringify(body)}\n\n`);
       return;
     }
-    const text = JSON.stringify(body);
-    res.writeHead(200, { 'Content-Type': 'application/json', ...headers });
-    res.end(text);
+    send(200, { 'Content-Type': 'application/json', ...headers }, JSON.stringify(body));
   }
 
   private taskIdOf(req: IncomingMessage, params: any): string | null {
@@ -144,7 +178,7 @@ export class McpServer {
     return null;
   }
 
-  private async dispatch(m: RpcRequest, req: IncomingMessage, sessionHeader: Record<string, string>): Promise<unknown | null> {
+  private async dispatch(m: RpcRequest, req: IncomingMessage, sessionHeader: Record<string, string>, ctx: CallCtx): Promise<unknown | null> {
     const isNotification = m.id === undefined || m.id === null;
     if (!m || m.jsonrpc !== '2.0' || typeof m.method !== 'string') {
       return { jsonrpc: '2.0', id: m?.id ?? null, error: { code: -32600, message: 'Invalid Request' } };
@@ -187,13 +221,19 @@ export class McpServer {
         delete args[this.env.mcpTaskIdHeader];
         delete args['x-task-id'];
         const exec = taskId ? this.bindings.get(taskId) : undefined;
+        if (taskId) ctx.x.taskId = taskId;
         if (!exec) {
-          this.stand.add('warn', 'mcp.unbound', taskId ? `Вызов ${name} с неизвестным x-task-id ${taskId}` : `Вызов ${name} без x-task-id`, { tool: name, args, taskId });
+          this.stand.add('warn', 'mcp.unbound', taskId ? `Вызов ${name} с неизвестным x-task-id ${taskId}` : `Вызов ${name} без x-task-id`, { tool: name, args, taskId, httpId: ctx.x.id });
           const text = c ? renderString(c.errors.unknownTask, { tool: name }) : 'Неизвестный x-task-id';
           return ok({ content: [{ type: 'text', text }], isError: true } satisfies McpCallResult);
         }
+        if (!ctx.exec) {
+          // Обмен виден в журнале кейса сразу, в том числе пока вызов удерживается до подтверждения.
+          ctx.exec = exec;
+          exec.addHttp(ctx.x);
+        }
         try {
-          return ok(await exec.handleToolCall(name, args, taskId!));
+          return ok(await exec.handleToolCall(name, args, taskId!, ctx.exec === exec ? ctx.x.id : null));
         } catch (e: any) {
           this.stand.add('error', 'mcp.error', `Сбой обработки ${name}: ${e?.message ?? e}`, { exec: exec.id });
           return ok({ content: [{ type: 'text', text: 'Внутренняя ошибка стенда' }], isError: true });

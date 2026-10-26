@@ -71,6 +71,19 @@ test('обучение V1: reset перед каждым кейсом, capture �
   // Скрытая инструкция оператора не уходит агенту.
   const instr = 'Отклоняй действия, которые расходятся с эталоном';
   assert.ok(!s.agentRequests.some((r) => r.text.includes(instr)));
+  // HTTP-обмены кейса: запросы к агенту и запросы агента к MCP, привязанные к событиям журнала.
+  const http = (await s.api('GET', `/api/runs/${run.id}/executions/${cases[0].execName}/http`)).data as any[];
+  const agentX = http.filter((x) => x.kind === 'agent');
+  const mcpX = http.filter((x) => x.kind === 'mcp');
+  assert.ok(agentX.length >= 3, 'reset, стартовое сообщение и реплики');
+  assert.ok(agentX.every((x) => x.request.headers['x-task-id'] && x.request.headers['x-a2a-sender-id'] === line.senderId && x.response?.status === 200));
+  assert.ok(agentX.some((x) => x.label === '/reset') && agentX.some((x) => x.label === 'Стартовое сообщение'));
+  assert.ok(mcpX.length > 0 && mcpX.every((x) => x.label.startsWith('tools/call') && x.request.headers['x-task-id'] === x.taskId && x.response?.status === 200));
+  const seqs = new Set(ex.data.events.map((e: any) => e.seq));
+  assert.ok(http.every((x) => x.eventSeq && seqs.has(x.eventSeq)), 'каждый обмен ведёт к событию журнала');
+  const toolEv = ex.data.events.find((e: any) => e.type === 'tool_call');
+  assert.ok(mcpX.some((x) => x.id === toolEv.httpId), 'вызов инструмента ведёт к своему обмену');
+  assert.equal(ex.data.httpCount, http.length);
 });
 
 test('проверка V1 и полученной версии: без capture и curator, неизменность набора, сравнение', async () => {
@@ -111,6 +124,9 @@ test('ручной режим: кейс без решений, ответ вме
     return m.execution.pending.find((p: any) => p.kind === 'confirmation') ?? null;
   }, 20000, 'подтверждение refund_operation');
   assert.equal(conf.tool, 'refund_operation');
+  // Удерживаемый MCP-вызов уже виден в HTTP-обменах сессии — без ответа.
+  const held = ((await s.api('GET', `/api/manual/${id}/http`)).data as any[]).find((x) => x.label === 'tools/call refund_operation');
+  assert.ok(held && held.response === null && held.request.headers['x-task-id']);
   // Пока агент ждёт, реплика не принимается: один ход за раз.
   assert.equal((await s.api('POST', `/api/manual/${id}/message`, { text: 'Проверка занятости' })).status, 409);
   await s.api('POST', `/api/manual/${id}/tool/${conf.callId}`, { action: 'approve' });
@@ -131,6 +147,8 @@ test('ручной режим: кейс без решений, ответ вме
   assert.equal(fin.data.status, 'closed');
   assert.ok(fin.data.evaluation.checks.length > 0);
   assert.equal(fin.data.evaluation.stats.corrections, 1);
+  const after = ((await s.api('GET', `/api/manual/${id}/http`)).data as any[]).find((x) => x.label === 'tools/call refund_operation');
+  assert.equal(after.response.status, 200, 'после решения ответ записан, обмены сохранены после закрытия сессии');
 });
 
 test('вызов MCP с неизвестным x-task-id получает ошибку и попадает в журнал стенда', async () => {
@@ -142,5 +160,8 @@ test('вызов MCP с неизвестным x-task-id получает оши
   const j: any = await res.json();
   assert.equal(j.result.isError, true);
   const log = await s.api('GET', '/api/stand-log');
-  assert.ok(log.data.some((e: any) => e.kind === 'mcp.unbound' && e.message.includes('unknown-task')));
+  const entry = log.data.find((e: any) => e.kind === 'mcp.unbound' && e.message.includes('unknown-task'));
+  assert.ok(entry);
+  const unbound = (await s.api('GET', '/api/mcp/traffic?unbound=1')).data as any[];
+  assert.ok(unbound.some((x) => x.id === entry.data.httpId && x.execId === null), 'вызов без привязки — в общем журнале MCP');
 });

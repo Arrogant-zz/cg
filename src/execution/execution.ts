@@ -7,6 +7,7 @@ import { StubState, matchStub, renderResponse, templateContext, yamlSnippet } fr
 import { renderString } from '../util/template.js';
 import { isAbortError, nowIso, randomHex, sleep } from '../util/core.js';
 import type { ExecEvent, MessageEvent, ToolCallEvent } from './events.js';
+import type { HttpExchange } from '../util/httplog.js';
 
 export interface McpCallResult {
   content: { type: 'text'; text: string }[];
@@ -45,7 +46,7 @@ export interface ExecutionInit {
   run: { runId: number; line: number; position: number } | null;
 }
 
-export type ExecChange = { kind: 'event'; event: ExecEvent } | { kind: 'status' };
+export type ExecChange = { kind: 'event'; event: ExecEvent } | { kind: 'status' } | { kind: 'http'; id: string };
 
 export class Execution {
   readonly id: string;
@@ -74,6 +75,8 @@ export class Execution {
   operatorCalls = 0;
   flags = { operatorTimeout: false, stopped: false };
   pending = new Map<string, Pending>();
+  /** HTTP-обмены выполнения: запросы к агенту и запросы агента к MCP. В toJSON не входят — отдаются отдельно. */
+  http: HttpExchange[] = [];
   abort = new AbortController();
   /** Автоматический режим: решение по подтверждению принимает LLM-оператор. */
   confirmationHandler: ((ev: ToolCallEvent) => Promise<ConfirmDecision>) | null = null;
@@ -138,6 +141,17 @@ export class Execution {
 
   update(ev: ExecEvent): void {
     this.emit({ kind: 'event', event: ev });
+  }
+
+  addHttp(x: HttpExchange): void {
+    x.execId = this.id;
+    this.http.push(x);
+    this.emit({ kind: 'http', id: x.id });
+  }
+
+  /** Обмен меняется на месте: пришёл ответ или привязано событие. */
+  updateHttp(x: HttpExchange): void {
+    this.emit({ kind: 'http', id: x.id });
   }
 
   setStatus(status: string, reason = ''): void {
@@ -220,10 +234,11 @@ export class Execution {
     if (!this.abort.signal.aborted) this.abort.abort(new Error(reason));
   }
 
-  async handleToolCall(name: string, args: Record<string, unknown>, taskId: string): Promise<McpCallResult> {
+  async handleToolCall(name: string, args: Record<string, unknown>, taskId: string, httpId: string | null = null): Promise<McpCallResult> {
     const t0 = Date.now();
     const tool = this.contract.tools.find((t) => t.name === name);
     const ev = this.add<ToolCallEvent>({
+      httpId,
       type: 'tool_call',
       callId: crypto.randomUUID(),
       tool: name,
@@ -242,6 +257,11 @@ export class Execution {
       unexpected: false,
       durationMs: null,
     });
+    const x = httpId ? this.http.find((h) => h.id === httpId) : undefined;
+    if (x) {
+      x.eventSeq = ev.seq;
+      this.updateHttp(x);
+    }
     if (!tool) return this.finish(ev, { outcome: 'unknown_tool', isError: true, result: this.errText('unknownTool', name), unexpected: true }, t0);
     if (this.flags.stopped) return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name) }, t0);
 
@@ -353,6 +373,7 @@ export class Execution {
       state: this.stub.snapshot(),
       events: this.events,
       pending: this.pendingList(),
+      httpCount: this.http.length,
     };
   }
 }

@@ -83,10 +83,38 @@ export function maskSecret(v: string): string {
   return v.slice(0, 4) + '***';
 }
 
-export const MASKED_HEADERS = ['authorization', 'proxy-authorization', 'x-api-key', 'api-key', 'cookie'];
+export const MASKED_HEADERS = ['authorization', 'proxy-authorization', 'x-api-key', 'api-key', 'cookie', 'set-cookie'];
+const SECRET_NAME = /auth|token|secret|passw|key|cookie|signature|credential/i;
 
-export function maskHeaders(h: Record<string, string>): Record<string, string> {
+/** Имя заголовка или параметра адреса, значение которого нельзя показывать. */
+export const isSecretName = (name: string) => MASKED_HEADERS.includes(name.toLowerCase()) || SECRET_NAME.test(name);
+
+/** extra — заголовки, значения которых подставлены из окружения (${env:NAME}): они скрываются при любом имени. */
+export function maskHeaders(h: Record<string, string>, extra: string[] = []): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(h)) out[k] = MASKED_HEADERS.includes(k.toLowerCase()) ? maskSecret(String(v)) : String(v);
+  for (const [k, v] of Object.entries(h)) out[k] = isSecretName(k) || extra.includes(k) ? maskSecret(String(v)) : String(v);
   return out;
+}
+
+/** Пароль в адресе и секретные параметры запроса скрываются; относительный адрес остаётся относительным. */
+export function maskUrl(raw: string): string {
+  const base = 'http://relative.invalid';
+  let u: URL;
+  try {
+    u = new URL(raw, base);
+  } catch {
+    return raw;
+  }
+  let changed = false;
+  if (u.password) {
+    u.password = '***';
+    changed = true;
+  }
+  for (const [k, v] of [...u.searchParams]) {
+    if (!isSecretName(k)) continue;
+    u.searchParams.set(k, maskSecret(v));
+    changed = true;
+  }
+  if (!changed) return raw;
+  return u.origin === base ? u.pathname + u.search + u.hash : u.toString();
 }

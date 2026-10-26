@@ -24,6 +24,7 @@ import {
   later,
   feed,
   changesList,
+  exchangeCard,
   toast,
   STATUS_TITLES,
 } from '../lib.js';
@@ -98,6 +99,7 @@ function curatorPass(p) {
 <span class="row m5" style="gap: 8px; padding-bottom: 6px"><span class="pb cu" style="height: 24px; padding: 0 8px">${icon('curator')}${title}</span>после позиции ${p.afterPos}${p.durationMs ? ` · ${fmtDur(p.durationMs)}` : ''}${st}</span>
 ${p.changes ? changesList(p.changes) : html`<span class="cap">${p.exportNote || 'изменения не выгружены'}</span>`}
 ${p.status === 'failed' && p.changes?.length ? html`<span class="cap" style="padding-top: 6px">Частичный проход: правки могли примениться до ошибки команды — состояние сохранено.</span>` : ''}
+${p.http?.length ? html`<details class="raw" id="cur-http-${p.pass}-${p.startedAt}"><summary>HTTP-обмены прохода · ${p.http.length}</summary><div class="col" style="gap: 8px; padding: 8px 0">${p.http.map(exchangeCard)}</div></details>` : ''}
 </div>`;
 }
 

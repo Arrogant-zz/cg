@@ -451,7 +451,7 @@ export class RunManager {
     rec.startedAt = nowIso();
     line.current = { index: item.index, execName: name, phase: 'диалог' };
     let persistTimer: NodeJS.Timeout | null = null;
-    const persist = () => app.store.saveExecution(run.id, name, { ...exec.toJSON(), item: rec });
+    const persist = () => Promise.all([app.store.saveExecution(run.id, name, { ...exec.toJSON(), item: rec }), app.store.saveHttp(run.id, name, exec.http)]);
     exec.onChange((c) => {
       // Шаг /reset отмечается сразу, не дожидаясь конца диалога.
       if (c.kind === 'event' && c.event.type === 'command' && c.event.name === 'reset' && c.event.status !== 'running' && !rec.steps.reset) {
@@ -539,6 +539,7 @@ export class RunManager {
     if (run.settings.basket.curator && (run.settings.basket.curator as any).resetBefore) {
       const rs = await channel.rawCommand(line.senderId, taskId, 'reset', signal);
       rec.reset = { status: rs.status, durationMs: rs.durationMs, error: rs.error };
+      rec.http = [...rs.http];
       if (rs.status !== 'ok') {
         rec.status = 'failed';
         rec.error = `Сбой /reset перед curator: ${rs.error ?? rs.status}`;
@@ -549,7 +550,7 @@ export class RunManager {
       }
     }
     const c = await channel.rawCommand(line.senderId, taskId, 'curator', signal);
-    Object.assign(rec, { text: c.text, reply: c.reply, parsed: c.parsed, status: c.status, error: c.error, durationMs: Date.now() - t0 });
+    Object.assign(rec, { text: c.text, reply: c.reply, parsed: c.parsed, status: c.status, error: c.error, durationMs: Date.now() - t0, http: [...(rec.http ?? []), ...c.http] });
     line.counter = 0;
     // Изменения выгружаются и при сбое команды: правки могли примениться до ошибки.
     let next = prev;

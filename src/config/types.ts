@@ -212,15 +212,29 @@ export interface AgentDef {
 
 export type ModelRole = 'agent' | 'operator' | 'judge';
 
+/** Клиентский сертификат (mTLS): пути к файлам и пароль ключа, обычно ссылками ${env:NAME}. */
+export interface ModelTls {
+  cert: string | null;
+  key: string | null;
+  pfx: string | null;
+  passphrase: string | null;
+  ca: string | null;
+}
+
+export type LlmProviderName = 'openai-compatible' | 'anthropic' | 'gigachat-v1' | 'gigachat-v2';
+
 export interface ModelDef {
   id: string;
   title: string;
   roles: ModelRole[];
-  provider: 'openai-compatible' | 'anthropic' | 'deployment' | 'agent-request';
+  provider: LlmProviderName | 'deployment' | 'agent-request';
   baseUrl: string | null;
+  /** Путь метода относительно baseUrl; по умолчанию — путь провайдера. */
+  path: string | null;
   apiKey: string | null;
   model: string | null;
   headers: Record<string, string>;
+  tls: ModelTls | null;
   params: {
     temperature?: number;
     maxTokens?: number;

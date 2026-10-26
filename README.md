@@ -35,9 +35,10 @@ npm run demo
 1. «Запуск прогона» → «Обучение · карты · fake-agent» → «Запустить прогон». Прогон обучает рабочую копию набора `cards` V1, и в конце появляется версия V2.
 2. Запустите «Проверка · карты · V1» и «Проверка · карты · последняя версия»: это одна проверяющая корзина на V1 и на V2.
 3. «Сравнение» покажет, что условия различаются только версией скиллов и какие кейсы стали лучше.
-4. «Ручной режим» → кейс `card-double-charge`. Для `get_merchant_info` заглушки нет: ответьте вместо инструмента, затем решите подтверждение возврата.
+4. «Ручной режим» → кейс `card-double-charge`. Для `get_merchant_info` заглушки нет: ответьте вместо инструмента (Cmd/Ctrl+Enter), затем решите подтверждение возврата. Реплика уходит по Enter, Shift+Enter переносит строку.
+5. Во вкладке «HTTP-обмены» сессии или кейса видны все запросы к агенту и запросы агента к MCP — см. «Журнал HTTP-обменов».
 
-Тесты работают офлайн: сборка, сквозные сценарии на fake-agent и fake-llm, модульные тесты.
+Тесты работают офлайн: сборка, сквозные сценарии на fake-agent и fake-llm, модульные тесты. Тесты GigaChat создают временные сертификаты через `openssl`; без него они пропускаются.
 
 ```bash
 npm test
@@ -63,6 +64,10 @@ npm run validate
 | `LLM_BASE_URL`, `LLM_API_KEY` | OpenAI-совместимый шлюз для LLM-оператора и судьи (`models/op-a.yaml`, `models/judge-a.yaml`) |
 | `LLM_OPERATOR_MODEL`, `LLM_JUDGE_MODEL` | Имена моделей оператора и судьи в шлюзе |
 | `ANTHROPIC_API_KEY` | Для моделей `provider: anthropic` (`models/op-claude.yaml`, `models/judge-claude.yaml`), если такой доступ есть |
+| `GIGACHAT_BASE_URL` | Корень GigaChat API без версии для `models/op-gigachat.yaml` (v1) и `models/judge-gigachat.yaml` (v2): `https://gigachat.devices.sberbank.ru/api` или http-адрес внутри Istio |
+| `GIGACHAT_CERT_FILE`, `GIGACHAT_KEY_FILE` | Клиентский сертификат и ключ GigaChat (PEM) для mTLS. Необязательны: внутри Istio задайте только http-адрес, сертификат подставит сетка |
+| `GIGACHAT_KEY_PASSPHRASE`, `GIGACHAT_CA_FILE` | Пароль ключа и корневой сертификат сервера — если нужны |
+| `GIGACHAT_OPERATOR_MODEL`, `GIGACHAT_JUDGE_MODEL` | Имена моделей; по умолчанию `GigaChat-2-Max` |
 | `AGENT_MCP_TIMEOUT_MS` | Таймаут MCP-вызова, настроенный в агенте. По нему считаются обратный отсчёт и срок решения оператора; по умолчанию 600000 |
 
 4. Запустите `runs/stand-cards-check.yaml`. Сейчас он работает со стартовыми скиллами сборки: установка выбранного набора в AEFClaw не подтверждена.
@@ -145,12 +150,39 @@ node dist/src/cli.js run demo-cards-check-v1 --skillset-version V2
 | GET | `/api/runs`, `/api/runs/:id` | Прогоны; запись прогона с метриками |
 | POST | `/api/runs/:id/stop` | Остановить или убрать из очереди |
 | GET | `/api/runs/:id/executions/:name` | Журнал кейса, например `L1-P03` |
+| GET | `/api/runs/:id/executions/:name/http` | HTTP-обмены кейса; `?download=1` — файлом |
 | GET | `/api/runs/:id/materials.zip` | Снимок, журналы, файлы скиллов, материалы capture и curator |
 | GET | `/api/compare?a=&b=` | Сравнение двух прогонов |
 | POST | `/api/manual` и `/api/manual/:id/...` | Ручной режим: `message`, `command`, `tool/:callId`, `mark`, `finish`, `export` |
+| GET | `/api/manual/:id/http` | HTTP-обмены ручной сессии; `?download=1` — файлом |
+| GET | `/api/mcp/traffic` | Последние 300 запросов к MCP; `?unbound=1` — только без привязки к кейсу |
 | GET | `/api/cases`, `/api/baskets`, `/api/skillsets`, `/api/directory` | Справочники из файлов |
 | GET | `/api/events` | Server-Sent Events для интерфейса |
 | POST | `/mcp` | MCP-сервер для агента |
+
+## Журнал HTTP-обменов
+
+Стенд записывает каждый HTTP-обмен с агентом в обе стороны:
+
+- запросы ClawGym к агенту: `/reset`, стартовое сообщение, реплики оператора или человека, `/case-capture`, `/skill-curator`;
+- запросы агента к MCP-серверу ClawGym с `x-task-id` кейса.
+
+У обмена есть метод, адрес, заголовки, тело запроса, статус, заголовки и тело ответа, время и длительность.
+
+Где смотреть:
+
+- **Разбор кейса** — вид «HTTP-обмены» с фильтром по направлению. У событий журнала есть ссылка «HTTP», у обмена — обратные ссылки на событие и ответ агента.
+- **Ручная сессия** — вкладка «HTTP-обмены». Удерживаемый вызов MCP виден сразу, ответ появляется после решения.
+- **Результат прогона** — у прохода curator обмены `/reset` и `/skill-curator`.
+- **Прогоны** — «Журнал стенда»: запросы MCP без привязки к кейсу, например `initialize`, `notifications/initialized` или вызов с неизвестным `x-task-id`.
+
+Секреты скрываются:
+
+- значения заголовков, в имени которых есть `auth`, `token`, `secret`, `key`, `passw`, `cookie`, `signature` или `credential`: например, `Authorization`, `X-Api-Key`, `Set-Cookie`;
+- заголовки, подставленные из окружения через `${env:NAME}`, — при любом имени;
+- пароль в адресе и секретные параметры запроса.
+
+Тела длиннее 256 КБ обрезаются с пометкой. Обмены сохраняются рядом с журналами: `var/results/run-NNNN/executions/<позиция>.http.json` и `var/sessions/m-NNNN.http.json`. Проходы curator хранят обмены в `run.json`. Запросы MCP без привязки держатся только в памяти.
 
 ## Устройство
 
@@ -161,12 +193,12 @@ node dist/src/cli.js run demo-cards-check-v1 --skillset-version V2
 | `src/mcp/` | MCP по Streamable HTTP, привязка вызовов по `x-task-id`, журнал стенда |
 | `src/agent/` | REST-клиент агента, служебные команды и разбор строк результата по `INTEGRATION.md` |
 | `src/execution/` | Выполнение кейса: журнал событий, удержание вызовов, автоматический диалог, оценка |
-| `src/operator/`, `src/judge/`, `src/llm/` | LLM-оператор, отдельная оценка, провайдеры и проверка структурированного ответа |
+| `src/operator/`, `src/judge/`, `src/llm/` | LLM-оператор, отдельная оценка, провайдеры (OpenAI-совместимый, GigaChat v1 и v2 с клиентским сертификатом, Anthropic) и проверка структурированного ответа |
 | `src/runner/` | Разрешение настроек прогона, план команд, очередь, линии повторений, curator, версии |
 | `src/skillsets/` | Версии наборов и адаптеры установки: `none`, `directory`, `http` |
 | `src/metrics/`, `src/results/` | Встроенные метрики, хранение результатов, сравнение |
 | `src/manual/` | Ручной режим |
 | `web/` | Интерфейс без сборки: `clawgym.css` из дизайна, страницы в `web/js/pages/` |
-| `dev/` | `fake-agent`, `fake-llm` и `demo` для офлайн-разработки |
+| `dev/` | `fake-agent`, `fake-llm`, `fake-gigachat` (GigaChat v1 и v2 по mTLS для тестов) и `demo` для офлайн-разработки |
 
 Правила, которые реализация приняла сверх решений владельца, перечислены в [docs/CONTRACTS.md](docs/CONTRACTS.md#правила-принятые-реализацией): это предложения, их нужно подтвердить.

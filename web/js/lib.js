@@ -337,7 +337,10 @@ export function toolPill(e) {
 }
 
 /** Карточка вызова инструмента. full=false — «что видел агент»: без имён заглушек. */
-export function toolCard(e, { full = true, actions = null } = {}) {
+/** Ссылка из события журнала на его HTTP-обмен. */
+export const httpLink = (e) => (e.httpId ? html`<a class="ev" href="#http-${e.httpId}" data-action="showHttp" data-http="${e.httpId}" title="Запрос и ответ HTTP">HTTP</a>` : '');
+
+export function toolCard(e, { full = true, actions = null, http = false } = {}) {
   const cls = e.awaiting === 'confirmation' ? 'wait' : e.awaiting === 'answer' || e.outcome === 'no_stub' || e.outcome === 'unknown_tool' ? 'miss' : '';
   const stub = full && e.stub ? html`<span class="cap">заглушка <span class="mono">${e.stub.id}</span>${e.stub.origin === 'default' ? ' · по умолчанию' : ''}${e.stub.candidates > 1 ? ` · из ${e.stub.candidates} подходящих` : ''}${e.effect ? ` · ${Object.entries(e.effect).map(([k, v]) => `${k} → ${v}`).join(', ')}` : ''}</span>` : '';
   const conf = e.requiresConfirmation && !e.awaiting && !e.confirmation ? html`<span class="cap">требует подтверждения</span>` : '';
@@ -345,14 +348,14 @@ export function toolCard(e, { full = true, actions = null } = {}) {
   const body = [`→ ${JSON.stringify(e.args)}`];
   if (e.outcome !== 'pending' && !e.awaiting) body.push(`← ${typeof e.result === 'string' ? e.result : JSON.stringify(e.result)}`);
   return html`<div class="tool ${cls}" id="ev-${e.seq}">
-<div class="tool-h">${icon('tool')}<span class="nm">${e.tool}</span>${stub}${conf}${e.awaiting ? toolPill(e) : ''}${deadline}${!e.awaiting ? toolPill(e) : ''}<span class="ev">#${e.seq}</span></div>
+<div class="tool-h">${icon('tool')}<span class="nm">${e.tool}</span>${stub}${conf}${e.awaiting ? toolPill(e) : ''}${deadline}${!e.awaiting ? toolPill(e) : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>
 <div class="tool-b">${body.join('\n')}</div>
 ${actions ?? ''}
 ${full && e.yaml ? html`<details class="raw"><summary>YAML-фрагмент для файла кейса</summary><pre>${e.yaml}</pre></details>` : ''}
 </div>`;
 }
 
-export function commandLine(e) {
+export function commandLine(e, { http = false } = {}) {
   const titles = { reset: '/reset', capture: '/case-capture', curator: '/skill-curator' };
   let text = '';
   const p = e.parsed;
@@ -361,10 +364,11 @@ export function commandLine(e) {
   else if (e.name === 'capture') text = p?.kind === 'captured' ? `кейс сохранён · signal ${p.signal} · ${fmtDur(e.durationMs)}` : p?.kind === 'skipped' ? 'capture пропущен агентом' : p?.kind === 'failed' ? `не сохранён: ${p.reason}` : `строка результата не найдена${e.error ? `: ${e.error}` : ''}`;
   else text = p?.kind === 'complete' ? `обработано ${p.processed}, изменено ${p.updated}, создано ${p.created} · ${fmtDur(e.durationMs)}` : p?.kind === 'empty' ? 'очередь пуста' : p?.kind === 'failed' ? `сбой: ${p.reason}` : `строка результата не найдена${e.error ? `: ${e.error}` : ''}`;
   const bad = e.status === 'failed' || e.status === 'unrecognized';
-  return html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon(e.name === 'reset' ? 'reset' : e.name === 'capture' ? 'capture' : 'curator')}${titles[e.name]}</span>${bad ? html`<span class="pill tech">${text}</span>` : html`<span>${text}</span>`}${e.by === 'human' ? html`<span class="cap">вы</span>` : ''}<span class="ev">#${e.seq}</span></div>`;
+  return html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon(e.name === 'reset' ? 'reset' : e.name === 'capture' ? 'capture' : 'curator')}${titles[e.name]}</span>${bad ? html`<span class="pill tech">${text}</span>` : html`<span>${text}</span>`}${e.by === 'human' ? html`<span class="cap">вы</span>` : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>`;
 }
 
-export function messageView(e, { full = true, human = false } = {}) {
+export function messageView(e, { full = true, human = false, http = false } = {}) {
+  const hl = http ? httpLink(e) : '';
   const marks = e.marks;
   const kv = [];
   if (full && marks) {
@@ -376,13 +380,13 @@ export function messageView(e, { full = true, human = false } = {}) {
   }
   if (full && e.queued) kv.push(html`<span>реплика к отклонению — после конца хода</span>`);
   if (e.type === 'start_message') {
-    return html`<div class="msg" id="ev-${e.seq}"><span class="who"><span class="av cg"></span>ClawGym · стартовое сообщение<span class="ev">#${e.seq}</span></span><div class="bub sys" style="white-space: pre-wrap">${e.text}</div></div>`;
+    return html`<div class="msg" id="ev-${e.seq}"><span class="who"><span class="av cg"></span>ClawGym · стартовое сообщение${hl}<span class="ev">#${e.seq}</span></span><div class="bub sys" style="white-space: pre-wrap">${e.text}</div></div>`;
   }
   if (e.type === 'agent_message') {
-    return html`<div class="msg" id="ev-${e.seq}"><span class="who"><span class="av ag"></span>Pagurus${e.turn ? ` · ход ${e.turn}` : ''}${e.durationMs ? html` <span class="cap">${fmtDur(e.durationMs)}</span>` : ''}<span class="ev">#${e.seq}</span></span><div class="bub" style="white-space: pre-wrap">${e.text}</div></div>`;
+    return html`<div class="msg" id="ev-${e.seq}"><span class="who"><span class="av ag"></span>Pagurus${e.turn ? ` · ход ${e.turn}` : ''}${e.durationMs ? html` <span class="cap">${fmtDur(e.durationMs)}</span>` : ''}${hl}<span class="ev">#${e.seq}</span></span><div class="bub" style="white-space: pre-wrap">${e.text}</div></div>`;
   }
   const who = e.type === 'human_message' || human ? html`Вы<span class="av hu"></span>` : html`LLM-оператор<span class="av op">${icon('bot')}</span>`;
-  return html`<div class="msg r" id="ev-${e.seq}"><span class="who"><span class="ev">#${e.seq}</span>${who}</span><div class="bub" style="white-space: pre-wrap">${e.text}</div>${kv.length ? html`<div class="kvh" style="justify-content: flex-end">${kv}</div>` : ''}</div>`;
+  return html`<div class="msg r" id="ev-${e.seq}"><span class="who"><span class="ev">#${e.seq}</span>${hl}${who}</span><div class="bub" style="white-space: pre-wrap">${e.text}</div>${kv.length ? html`<div class="kvh" style="justify-content: flex-end">${kv}</div>` : ''}</div>`;
 }
 
 export function decisionBlock(e) {
@@ -420,22 +424,23 @@ export function checksBlock(items) {
 }
 
 /** Лента событий выполнения. full=false — только то, что видел агент. */
-export function feed(events, { full = true, toolActions = null } = {}) {
+export function feed(events, { full = true, toolActions = null, httpLinks = false } = {}) {
   const out = [];
+  const http = full && httpLinks;
   for (const e of events) {
     if (e.hidden && !full) continue;
     switch (e.type) {
       case 'command':
-        out.push(commandLine(e));
+        out.push(commandLine(e, { http }));
         break;
       case 'start_message':
       case 'agent_message':
       case 'operator_message':
       case 'human_message':
-        out.push(messageView(e, { full }));
+        out.push(messageView(e, { full, http }));
         break;
       case 'tool_call':
-        out.push(toolCard(e, { full, actions: toolActions ? toolActions(e) : null }));
+        out.push(toolCard(e, { full, actions: toolActions ? toolActions(e) : null, http }));
         break;
       case 'operator_decision':
         out.push(decisionBlock(e));
@@ -456,7 +461,7 @@ export function feed(events, { full = true, toolActions = null } = {}) {
         if (full) out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon('layers')}скиллы</span><span>${e.text}</span></div>`);
         break;
       case 'note':
-        out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="pill tech">${icon('bolt')}${e.text}</span></div>`);
+        out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="pill tech">${icon('bolt')}${e.text}</span>${http ? httpLink(e) : ''}</div>`);
         break;
     }
   }
@@ -481,4 +486,73 @@ export function diffView(unified) {
   if (!unified) return '';
   const lines = unified.split('\n').map((l) => (l.startsWith('+') ? html`<span class="p">${l}</span>` : l.startsWith('-') ? html`<span class="m">${l}</span>` : l === '@@' ? html`<span class="g">⋯</span>` : html`${l}`));
   return html`<pre class="diff">${lines.reduce((a, b) => html`${a}\n${b}`)}</pre>`;
+}
+
+// ----------------------------------------------------------------- HTTP-обмены
+
+function prettyBody(body) {
+  if (!body) return '';
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    return body;
+  }
+}
+
+function headersList(h) {
+  const entries = Object.entries(h ?? {});
+  if (!entries.length) return html`<span class="cap">нет заголовков</span>`;
+  return html`<dl class="hdrs">${entries.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`;
+}
+
+const kb = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1).replace('.', ',')} КБ` : `${n} Б`);
+
+function httpPart(id, title, line, part) {
+  const body = prettyBody(part.body);
+  return html`<div class="xch-part">
+<div class="row" style="justify-content: space-between; gap: 8px"><span class="lbl">${title}</span>${body ? html`<button class="btn ghost" type="button" data-action="copy" data-target="${id}" style="min-height: 32px; padding: 0 10px">Копировать тело</button>` : ''}</div>
+${line ? html`<span class="mono sm" style="word-break: break-all">${line}</span>` : ''}
+${headersList(part.headers)}
+${body ? html`<pre class="tool-b" id="${id}">${body}</pre>` : html`<span class="cap">тело пустое</span>`}
+${part.truncated ? html`<span class="cap">Показаны первые ${kb(part.body.length)} из ${kb(part.bytes)}: тело обрезано при записи</span>` : ''}
+</div>`;
+}
+
+/** Обмен целиком: кто кого вызвал, запрос и ответ с заголовками и телом. */
+export function exchangeCard(x) {
+  const out = x.kind === 'agent';
+  const dir = out ? html`<span class="pill">${icon('arrow')}ClawGym → агент</span>` : html`<span class="pill dark">${icon('tool')}агент → MCP</span>`;
+  let path = x.request.url;
+  try {
+    const u = new URL(x.request.url, 'http://clawgym');
+    path = u.pathname + u.search;
+  } catch {
+    /* оставить как есть */
+  }
+  const status = x.response
+    ? html`<span class="pill ${x.response.status < 400 ? 'pass' : 'tech'}">HTTP ${x.response.status}</span>`
+    : x.error
+      ? html`<span class="pill tech">${icon('bolt')}${x.error}</span>`
+      : html`<span class="pill live">${icon('clock')}ждёт ответа</span>`;
+  const links = [x.eventSeq ? html`<a class="ev" href="#ev-${x.eventSeq}" data-action="toEvent" data-seq="${x.eventSeq}">#${x.eventSeq}</a>` : '', x.replySeq ? html`<a class="ev" href="#ev-${x.replySeq}" data-action="toEvent" data-seq="${x.replySeq}">ответ #${x.replySeq}</a>` : ''];
+  return html`<details class="tool xch" id="http-${x.id}">
+<summary class="tool-h">${dir}<span class="nm">${x.request.method} ${path}</span><span class="cap">${x.label}</span>${status}<span class="cap num">${x.durationMs === null ? '' : x.durationMs < 1000 ? `${x.durationMs} мс` : fmtDur(x.durationMs)}</span><span class="row" style="gap: 8px; margin-left: auto">${links}</span></summary>
+<div class="xch-meta cap">${fmtDate(x.startedAt)} · ${[x.taskId ? `x-task-id ${x.taskId}` : out ? '' : 'без x-task-id', x.senderId ? `x-a2a-sender-id ${x.senderId}` : '', x.mcpSessionId ? `Mcp-Session-Id ${x.mcpSessionId.slice(0, 8)}…` : ''].filter(Boolean).join(' · ')}</div>
+<div class="xch-b">
+${httpPart(`http-${x.id}-req`, 'Запрос', `${x.request.method} ${x.request.url}`, x.request)}
+${x.response ? httpPart(`http-${x.id}-res`, `Ответ · HTTP ${x.response.status}`, '', x.response) : html`<div class="xch-part"><span class="lbl">Ответ</span><span class="cap">${x.error ?? 'Ещё не получен: соединение удерживается'}</span></div>`}
+</div>
+</details>`;
+}
+
+/** Список обменов с фильтром по направлению. */
+export function exchangesView(list, { filter = 'all', download = null, note = '', empty = 'HTTP-обменов пока нет.' } = {}) {
+  const shown = list.filter((x) => filter === 'all' || x.kind === filter).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const n = (k) => list.filter((x) => k === 'all' || x.kind === k).length;
+  const seg = (k, label) => html`<button type="button" class="${filter === k ? 'on' : ''}" data-action="httpFilter" data-filter="${k}" aria-pressed="${filter === k}">${label} · ${n(k)}</button>`;
+  return html`<div class="col" style="gap: 14px">
+<div class="row" style="justify-content: space-between; gap: 12px"><div class="seg" role="group" aria-label="Направление">${seg('all', 'Все')}${seg('agent', 'ClawGym → агент')}${seg('mcp', 'Агент → MCP')}</div>${download && list.length ? html`<a class="btn ghost" href="${download}" download>${icon('download')}Скачать JSON</a>` : ''}</div>
+${note ? html`<p class="hint">${icon('info')}<span>${note}</span></p>` : ''}
+${shown.length ? html`<div class="col" style="gap: 10px">${shown.map(exchangeCard)}</div>` : html`<div class="empty">${list.length ? 'В этом направлении обменов нет.' : empty}</div>`}
+</div>`;
 }

@@ -1,5 +1,5 @@
 // Ручная сессия: чат с заглушками, ответ вместо инструмента, подтверждения, команды, разметка (MAN-02–04, CASE-03).
-import { html, icon, get, post, feed, legend, toolPill, checksBlock, mk, fmtDur, hint, toast, plural } from '../lib.js';
+import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural } from '../lib.js';
 
 export const title = (ctx) => `Ручной кейс ${ctx.params[0]}`;
 
@@ -9,8 +9,8 @@ function toolActions(e, closed) {
     return html`<div class="tool-f"><button class="btn pri" type="button" data-action="decide" data-call="${e.callId}" data-decision="approve">${icon('check')}Разрешить</button><button class="btn" type="button" data-action="decide" data-call="${e.callId}" data-decision="reject">${icon('x')}Отклонить</button><span class="cap">Без решения вызов отклонится по таймауту агента</span></div>`;
   }
   return html`<div class="tool-f" style="flex-direction: column; align-items: stretch">
-<label class="field"><span class="lbl">Ответьте вместо инструмента — агент ждёт этот ответ (JSON или текст)</span><textarea class="input mono" rows="3" id="ans-${e.callId}" data-keep style="font-size: 12px">{}</textarea></label>
-<div class="row"><button class="btn pri" type="button" data-action="answer" data-call="${e.callId}">${icon('send')}Отправить ответ</button><button class="btn" type="button" data-action="toolError" data-call="${e.callId}">Вернуть ошибку</button><span class="cap">В автоматическом прогоне здесь была бы ошибка инструмента</span></div>
+<label class="field"><span class="lbl">Ответьте вместо инструмента — агент ждёт этот ответ (JSON или текст)</span><textarea class="input mono" rows="3" id="ans-${e.callId}" data-keep data-enter-mod="answer" data-call="${e.callId}" style="font-size: 12px">{}</textarea></label>
+<div class="row"><button class="btn pri" type="button" data-action="answer" data-call="${e.callId}">${icon('send')}Отправить ответ</button><button class="btn" type="button" data-action="toolError" data-call="${e.callId}">Вернуть ошибку</button><span class="cap">Cmd/Ctrl+Enter — отправить ответ. В автоматическом прогоне здесь была бы ошибка инструмента</span></div>
 </div>`;
 }
 
@@ -52,7 +52,7 @@ function composer(s, lessons) {
   const busy = closed || !!s.busy || (s.execution?.pending ?? []).length > 0;
   const placeholder = closed ? 'Сессия закрыта' : s.busy ? `${s.busy} — реплика уйдёт после конца хода` : 'Например: срок возврата в данных не указан, не обещайте его клиенту';
   return html`<div class="composer ${busy ? 'busy' : ''}">
-<label class="field"><span class="lbl">Сообщение агенту</span><textarea class="input" rows="2" id="msg-text" data-keep placeholder="${placeholder}" ${busy ? 'disabled' : ''}></textarea></label>
+<label class="field"><span class="lbl">Сообщение агенту</span><textarea class="input" rows="2" id="msg-text" data-keep data-enter="send" placeholder="${placeholder}" ${busy ? 'disabled' : ''}></textarea></label>
 <div class="row" style="gap: 16px">
 <label class="chk" style="min-height: 0; padding: 0"><input type="checkbox" id="msg-corr" data-keep ${busy ? 'disabled' : ''}><span class="sm">Это поправка</span></label>
 <select class="input" id="msg-lesson" data-keep style="width: auto; min-height: 36px; padding-top: 6px; padding-bottom: 6px" ${busy ? 'disabled' : ''}><option value="">урок не указан</option>${lessons.map((l) => html`<option value="${l.id}">${l.id} · ${l.rule.slice(0, 60)}</option>`)}</select>
@@ -65,7 +65,7 @@ function composer(s, lessons) {
 </div>
 <button class="btn ${busy ? 'off' : 'pri'}" type="button" data-action="send" ${busy ? 'disabled' : ''}>${icon('send')}Отправить</button>
 </div>
-<span class="cap">${busy && !closed ? 'Реплики и команды доступны после конца хода агента: в одной сессии один ход за раз.' : 'Команда и её ответ сохранятся в истории. После /reset кейс начнётся заново с теми же заглушками.'}</span>
+<span class="cap">${busy && !closed ? 'Реплики и команды доступны после конца хода агента: в одной сессии один ход за раз.' : 'Enter — отправить, Shift+Enter — новая строка. Команда и её ответ сохранятся в истории; после /reset кейс начнётся заново с теми же заглушками.'}</span>
 </div>`;
 }
 
@@ -118,11 +118,24 @@ export async function render(ctx) {
   }
   const judges = dir.models.filter((m) => m.roles.includes('judge'));
   const closed = s.status === 'closed';
+  const view = ctx.state.view ?? 'chat';
+  const http = view === 'http' ? await get(`/api/manual/${id}/http`) : null;
+  const n = s.execution?.httpCount;
+  const body = view === 'http'
+    ? exchangesView(http, {
+        filter: ctx.state.httpFilter ?? 'all',
+        download: `/api/manual/${id}/http?download=1`,
+        empty: s.execution && n === undefined ? 'Обмены этой сессии не записаны: она прошла до того, как стенд начал сохранять HTTP-обмены.' : 'HTTP-обменов пока нет.',
+        note: 'Каждый запрос ClawGym к агенту и каждый запрос агента к MCP-серверу ClawGym в этой сессии: заголовки (авторизация скрыта), тело, статус и время. Висящий вызов MCP виден сразу, ответ появляется после вашего решения.',
+      })
+    : s.execution
+      ? feed(s.execution.events, { full: true, toolActions: (e) => toolActions(e, closed), httpLinks: true })
+      : html`<p class="loading">Подготовка…</p>`;
   return html`<div id="m-head">${head(s)}</div>
 <div class="split">
 <section class="mn" aria-label="Диалог с агентом" style="gap: 20px">
-<div class="row" style="justify-content: flex-end">${legend()}</div>
-<div id="m-feed">${s.execution ? feed(s.execution.events, { full: true, toolActions: (e) => toolActions(e, closed) }) : html`<p class="loading">Подготовка…</p>`}</div>
+<div id="m-tabs" class="row" style="justify-content: space-between; gap: 12px"><div class="seg" role="group" aria-label="Вид"><button type="button" class="${view === 'chat' ? 'on' : ''}" data-action="view" data-view="chat" aria-pressed="${view === 'chat'}">${icon('chat')}Диалог</button><button type="button" class="${view === 'http' ? 'on' : ''}" data-action="view" data-view="http" aria-pressed="${view === 'http'}">${icon('plug')}HTTP-обмены${n === undefined ? '' : ` · ${n}`}</button></div>${view === 'chat' ? legend() : ''}</div>
+<div id="m-feed">${body}</div>
 <div id="m-composer">${composer(s, ctx.state.lessons)}</div>
 ${hint('Если для вызова нет заглушки, он ждёт вашего ответа. Для введённого ответа доступен YAML-фрагмент, который можно добавить в файл кейса.', 'tool')}
 </section>
@@ -137,7 +150,7 @@ export function patch(root, out) {
   const focused = document.activeElement?.id;
   const tpl = document.createElement('template');
   tpl.innerHTML = String(out);
-  for (const id of ['m-head', 'm-feed', 'm-composer', 'm-side']) {
+  for (const id of ['m-head', 'm-tabs', 'm-feed', 'm-composer', 'm-side']) {
     const fresh = tpl.content.getElementById(id);
     const cur = root.querySelector(`#${id}`);
     if (fresh && cur) cur.innerHTML = fresh.innerHTML;
@@ -154,6 +167,24 @@ export function patch(root, out) {
 export const refreshOn = (msg, ctx) => msg.type === 'manual' && msg.topic === `manual:${ctx.params[0]}`;
 
 export const actions = {
+  view(el, ctx) {
+    ctx.state.view = el.dataset.view;
+    return ctx.rerender();
+  },
+  showHttp(el, ctx) {
+    ctx.state.view = 'http';
+    ctx.state.focus = `http-${el.dataset.http}`;
+    return ctx.rerender();
+  },
+  toEvent(el, ctx) {
+    ctx.state.view = 'chat';
+    ctx.state.focus = `ev-${el.dataset.seq}`;
+    return ctx.rerender();
+  },
+  httpFilter(el, ctx) {
+    ctx.state.httpFilter = el.dataset.filter;
+    return ctx.rerender();
+  },
   async decide(el, ctx) {
     await post(`/api/manual/${ctx.params[0]}/tool/${el.dataset.call}`, { action: el.dataset.decision });
   },
@@ -168,11 +199,17 @@ export const actions = {
   },
   async send(el, ctx) {
     const ta = document.getElementById('msg-text');
+    if (!ta || ta.disabled || ctx.state.sending) return;
     const text = ta.value.trim();
     if (!text) return toast('Введите сообщение', true);
     const correction = document.getElementById('msg-corr').checked;
     const lessonId = document.getElementById('msg-lesson').value || null;
-    await post(`/api/manual/${ctx.params[0]}/message`, { text, correction, lessonId });
+    ctx.state.sending = true;
+    try {
+      await post(`/api/manual/${ctx.params[0]}/message`, { text, correction, lessonId });
+    } finally {
+      ctx.state.sending = false;
+    }
     ta.value = '';
     document.getElementById('msg-corr').checked = false;
     return ctx.rerender();

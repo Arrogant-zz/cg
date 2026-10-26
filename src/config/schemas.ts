@@ -263,11 +263,17 @@ export const modelSchema = {
     id,
     title: str,
     roles: { type: 'array', minItems: 1, items: { enum: ['agent', 'operator', 'judge'] } },
-    provider: { enum: ['openai-compatible', 'anthropic', 'deployment', 'agent-request'] },
+    provider: { enum: ['openai-compatible', 'anthropic', 'gigachat-v1', 'gigachat-v2', 'deployment', 'agent-request'] },
     baseUrl: str,
+    path: { type: 'string', pattern: '^/' },
     apiKey: str,
     model: str,
     headers: strMap,
+    tls: {
+      type: 'object',
+      properties: { cert: str, key: str, pfx: str, passphrase: str, ca: str },
+      additionalProperties: false,
+    },
     description: str,
     params: {
       type: 'object',

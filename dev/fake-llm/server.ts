@@ -2,12 +2,7 @@
 // Заголовок X-Fake-Fail: operator | judge | format — имитация сбоев модели.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { fakeJudge, fakeOperator } from './brain.js';
-
-function extract(user: string): any {
-  const m = /```json\s*([\s\S]*?)```/.exec(user);
-  return JSON.parse(m ? m[1] : user);
-}
+import { fakeAnswer, fakeRole } from './brain.js';
 
 export async function startFakeLlm(port = 0, host = '127.0.0.1'): Promise<{ server: http.Server; port: number; url: string }> {
   const server = http.createServer(async (req, res) => {
@@ -30,19 +25,13 @@ export async function startFakeLlm(port = 0, host = '127.0.0.1'): Promise<{ serv
     }
     const system = String(body.messages?.find((m: any) => m.role === 'system')?.content ?? '');
     const user = String(body.messages?.find((m: any) => m.role === 'user')?.content ?? '');
-    const role = system.includes('judge-v') ? 'judge' : 'operator';
+    const role = fakeRole(system);
     const fail = String(req.headers['x-fake-fail'] ?? '');
     if (fail === role) {
       res.writeHead(503, { 'Content-Type': 'application/json' }).end('{"error":{"message":"fake-llm: модель недоступна"}}');
       return;
     }
-    let content: string;
-    try {
-      const ctx = extract(user);
-      content = fail === 'format' ? 'Не JSON, а рассуждение' : JSON.stringify(role === 'judge' ? fakeJudge(ctx) : fakeOperator(ctx));
-    } catch (e: any) {
-      content = JSON.stringify({ error: `fake-llm не понял контекст: ${e?.message}` });
-    }
+    const content = fail === 'format' ? 'Не JSON, а рассуждение' : fakeAnswer(system, user);
     const out = {
       id: `fake-${Date.now()}`,
       object: 'chat.completion',
