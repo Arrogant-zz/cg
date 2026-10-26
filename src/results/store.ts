@@ -1,7 +1,7 @@
 // Хранение результатов отдельно от настроек: var/results/run-NNNN/, var/sessions/.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, listDirs, readJsonIf, safeJoin, walkFiles, writeJsonAtomic, writeText } from '../util/fsx.js';
+import { ensureDir, listDirs, readJsonIf, safeJoin, settleWrites, walkFiles, writeJsonAtomic, writeText } from '../util/fsx.js';
 import { randomHex } from '../util/core.js';
 
 export const runKey = (id: number) => `run-${String(id).padStart(4, '0')}`;
@@ -84,6 +84,21 @@ export class ResultsStore {
 
   async loadSessionHttp(id: number): Promise<any[] | undefined> {
     return readJsonIf(path.join(this.sessionsDir, `${sessionKey(id)}.http.json`));
+  }
+
+  /** Каталог прогона целиком: запись, журналы кейсов, HTTP-обмены, файлы скиллов и материалы. */
+  async deleteRun(id: number): Promise<void> {
+    const dir = this.runDir(id);
+    await settleWrites(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+
+  async deleteSession(id: number): Promise<void> {
+    for (const f of [`${sessionKey(id)}.json`, `${sessionKey(id)}.http.json`]) {
+      const file = path.join(this.sessionsDir, f);
+      await settleWrites(file);
+      await fsp.rm(file, { force: true });
+    }
   }
 
   async saveFiles(runId: number, sub: string, files: { path: string; content: string }[]): Promise<void> {

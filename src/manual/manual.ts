@@ -371,6 +371,21 @@ export class ManualManager {
     return rec;
   }
 
+  /** Удаление закрытой сессии с журналом и HTTP-обменами (уточнение владельца от 26.10.2026). Активную сессию сначала завершают. */
+  async delete(id: number): Promise<void> {
+    const s = this.sessions.get(id);
+    if (!s) throw new HttpError(404, `Ручная сессия ${sessionKey(id)} не найдена`);
+    if (s.status === 'active' || this.live.has(id)) throw new HttpError(409, `Сессия ${s.key} активна: сначала завершите её`);
+    const t = this.timers.get(id);
+    if (t) clearTimeout(t);
+    this.timers.delete(id);
+    this.sessions.delete(id);
+    await this.app.store.deleteSession(id);
+    this.app.publish(`manual:${id}`, 'manual', { id, status: 'deleted' });
+    this.app.publish('runs', 'manual', { id, status: 'deleted' });
+    log.info(`Ручная сессия ${s.key} удалена`);
+  }
+
   private schedule(id: number, now = false): void {
     const t = this.timers.get(id);
     if (t && !now) return;

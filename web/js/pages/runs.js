@@ -1,5 +1,5 @@
 // Экран «Прогоны»: что идёт сейчас, очередь, завершённые с успехом среди оценённых (RUN-03, RES-02).
-import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtTime, fmtDur, since, plural, hint, ver, mk, exchangeCard, toast } from '../lib.js';
+import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtTime, fmtDur, since, plural, hint, ver, mk, exchangeCard, toast, removeRun } from '../lib.js';
 
 export const title = 'Прогоны';
 
@@ -107,7 +107,7 @@ ${now.length ? html`<div style="display: grid; grid-template-columns: repeat(aut
 <div class="sec-h"><h2 class="h2" id="done-h">Завершённые</h2>${pair ? html`<a class="btn" href="/compare?a=${pair[0].id}&b=${pair[1].id}">${icon('compare')}Сравнить #${pair[0].id} и #${pair[1].id}</a>` : ''}</div>
 ${done.length
     ? html`<div class="tw"><table class="tbl">
-<thead><tr><th>Прогон</th><th>Тип</th><th>Набор скиллов</th><th>Успех среди оценённых</th><th>Вне оценки</th><th class="r">Завершён</th></tr></thead>
+<thead><tr><th>Прогон</th><th>Тип</th><th>Набор скиллов</th><th>Успех среди оценённых</th><th>Вне оценки</th><th class="r">Завершён</th><th aria-label="Удаление"></th></tr></thead>
 <tbody>${done.map(
         (r) => html`<tr>
 <td><a class="rl" href="/runs/${r.id}">#${r.id} ${r.title}</a><div class="cap mono">${r.configFile}</div></td>
@@ -116,6 +116,7 @@ ${done.length
 <td>${r.success.evaluated ? html`<div class="col" style="gap: 6px"><span class="num m5">${r.success.passed} из ${r.success.evaluated}</span><div class="bar" style="width: 128px" aria-hidden="true">${r.bar.map((c) => html`<i class="${c}"></i>`)}</div></div>` : html`<span class="pill na">нет оценённых</span>`}</td>
 <td>${outside(r)}</td>
 <td class="r nw num">${fmtDate(r.finishedAt)}</td>
+<td class="r"><button class="btn ghost ib del" type="button" data-action="remove" data-id="${r.id}" data-title="${r.title}" data-versions="${r.newVersions.map((v) => v.id).join(',')}" aria-label="Удалить прогон #${r.id}" title="Удалить прогон">${icon('trash')}</button></td>
 </tr>`,
       )}</tbody></table></div>`
     : html`<div class="empty">Завершённых прогонов пока нет.</div>`}
@@ -127,6 +128,10 @@ ${standSection(status, traffic)}`;
 export const refreshOn = (msg) => (msg.type === 'run' && msg.topic === 'runs') || msg.type === 'manual' || msg.type === 'stand';
 
 export const actions = {
+  async remove(el, ctx) {
+    const versions = el.dataset.versions ? el.dataset.versions.split(',') : [];
+    if (await removeRun({ id: Number(el.dataset.id), title: el.dataset.title, versions })) return ctx.rerender();
+  },
   openUnbound(el, ctx) {
     (ctx.state.openIds ??= new Set()).add('mcp-unbound');
     ctx.state.focus = `http-${el.dataset.http}`;

@@ -142,6 +142,7 @@ test('ручной режим: кейс без решений, ответ вме
   // Разметка реплики как поправки и завершение с автоматическими проверками.
   const human = m.execution.events.find((e: any) => e.type === 'human_message');
   assert.equal((await s.api('POST', `/api/manual/${id}/mark`, { seq: human.seq, correction: true, lessonId: 'L-test-1' })).status, 200);
+  assert.equal((await s.api('DELETE', `/api/manual/${id}`)).status, 409, 'активную сессию удалить нельзя');
   const fin = await s.api('POST', `/api/manual/${id}/finish`, { judge: 'fake-judge' });
   assert.equal(fin.status, 200, JSON.stringify(fin.data));
   assert.equal(fin.data.status, 'closed');
@@ -164,4 +165,40 @@ test('вызов MCP с неизвестным x-task-id получает оши
   assert.ok(entry);
   const unbound = (await s.api('GET', '/api/mcp/traffic?unbound=1')).data as any[];
   assert.ok(unbound.some((x) => x.id === entry.data.httpId && x.execId === null), 'вызов без привязки — в общем журнале MCP');
+});
+
+test('удаление: завершённый прогон и закрытая сессия удаляются с файлами, идущий прогон — нет, версия скиллов остаётся', async () => {
+  const runDir = (id: number) => path.join(s.dataDir, 'results', `run-${String(id).padStart(4, '0')}`);
+  // Прогон в очереди или в работе удалить нельзя.
+  const created = await s.api('POST', '/api/runs', { config: 'demo-cards-check-v1' });
+  const busy = await s.api('DELETE', `/api/runs/${created.data.id}`);
+  assert.equal(busy.status, 409);
+  const run = await s.waitRun(created.data.id);
+  assert.ok(fs.existsSync(path.join(runDir(run.id), 'run.json')));
+  assert.equal((await s.api('DELETE', `/api/runs/${run.id}`)).status, 200);
+  assert.ok(!fs.existsSync(runDir(run.id)), 'каталог прогона удалён целиком');
+  assert.equal((await s.api('GET', `/api/runs/${run.id}`)).status, 404);
+  assert.ok(!(await s.api('GET', '/api/runs')).data.runs.some((r: any) => r.id === run.id));
+  // Обучающий прогон удаляется, а полученная им версия остаётся с пометкой «прогон удалён».
+  const train = (await s.api('GET', '/api/runs')).data.runs.find((r: any) => r.type === 'training' && r.newVersions.length);
+  assert.ok(train, 'обучающий прогон из первого теста');
+  const vid = train.newVersions[0].id;
+  assert.equal((await s.api('DELETE', `/api/runs/${train.id}`)).status, 200);
+  const v = (await s.api('GET', '/api/skillsets')).data.find((x: any) => x.id === 'cards').versions.find((x: any) => x.id === vid);
+  assert.ok(v, 'версия скиллов осталась');
+  assert.equal(v.origin.run, train.id);
+  assert.equal(v.runDeleted, true);
+  assert.equal((await s.api('GET', `/api/skillsets/cards`)).status, 200);
+  // Закрытая ручная сессия удаляется вместе с журналом и HTTP-обменами.
+  const closed = (await s.api('GET', '/api/manual')).data.find((x: any) => x.status === 'closed');
+  assert.ok(closed, 'закрытая сессия из теста ручного режима');
+  const files = ['json', 'http.json'].map((ext) => path.join(s.dataDir, 'sessions', `${closed.key}.${ext}`));
+  assert.ok(files.every((f) => fs.existsSync(f)));
+  assert.equal((await s.api('DELETE', `/api/manual/${closed.id}`)).status, 200);
+  assert.ok(files.every((f) => !fs.existsSync(f)), 'файлы сессии удалены');
+  assert.equal((await s.api('GET', `/api/manual/${closed.id}`)).status, 404);
+  // Номер удалённого прогона не занимается повторно.
+  const next = await s.api('POST', '/api/runs', { config: 'demo-cards-check-v1' });
+  assert.ok(next.data.id > run.id);
+  await s.waitRun(next.data.id);
 });

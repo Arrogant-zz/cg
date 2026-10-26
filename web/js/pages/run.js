@@ -27,6 +27,7 @@ import {
   exchangeCard,
   toast,
   STATUS_TITLES,
+  removeRun,
 } from '../lib.js';
 
 export const title = (ctx) => `Прогон #${ctx.params[0]}`;
@@ -269,7 +270,8 @@ function headerActions(run, configs) {
   const nv = run.lines.map((l) => l.skills.newVersion).find((v) => v && v.status === 'ready');
   const ss = run.settings.skillset;
   const checkCfg = nv && ss && ss !== 'build' ? configs.find((c) => c.basket.type === 'checking' && c.skillset.startsWith(ss.title)) : null;
-  return html`<div class="ph-a"><a class="btn" href="/compare?b=${run.id}">${icon('compare')}Сравнить</a>${nv ? html`<a class="btn pri" href="/runs/new?${checkCfg ? `config=${encodeURIComponent(checkCfg.id)}&` : ''}skillsetVersion=${nv.id}">${icon('play')}Проверить ${nv.id}</a>` : ''}</div>`;
+  const versions = run.lines.map((l) => l.skills.newVersion?.id).filter(Boolean);
+  return html`<div class="ph-a"><a class="btn" href="/compare?b=${run.id}">${icon('compare')}Сравнить</a>${nv ? html`<a class="btn pri" href="/runs/new?${checkCfg ? `config=${encodeURIComponent(checkCfg.id)}&` : ''}skillsetVersion=${nv.id}">${icon('play')}Проверить ${nv.id}</a>` : ''}<button class="btn ghost del" type="button" data-action="remove" data-title="${run.title}" data-versions="${versions.join(',')}">${icon('trash')}Удалить</button></div>`;
 }
 
 export async function render(ctx) {
@@ -347,6 +349,10 @@ export const actions = {
   line(el, ctx) {
     ctx.state.line = Number(el.dataset.line);
     return ctx.rerender();
+  },
+  async remove(el, ctx) {
+    const versions = el.dataset.versions ? el.dataset.versions.split(',') : [];
+    if (await removeRun({ id: Number(ctx.params[0]), title: el.dataset.title, versions })) ctx.navigate('/');
   },
   async stop(el, ctx) {
     await post(`/api/runs/${ctx.params[0]}/stop`);

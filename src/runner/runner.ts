@@ -236,6 +236,7 @@ export class RunManager {
       run.finishedAt = nowIso();
       for (const l of run.lines) l.status = 'stopped';
       live?.abort.abort(new Error('Прогон остановлен'));
+      this.live.delete(id);
       await this.app.store.saveRun(run);
       this.publish(run);
       return run;
@@ -244,6 +245,21 @@ export class RunManager {
     live.abort.abort(new Error('Прогон остановлен пользователем'));
     for (const e of live.execs.values()) if (!e.terminal) e.stop('Прогон остановлен пользователем');
     return run;
+  }
+
+  /** Удаление завершённого прогона с журналами и материалами (уточнение владельца от 26.10.2026). Версии скиллов, полученные прогоном, остаются. */
+  async delete(id: number): Promise<void> {
+    const run = this.get(id);
+    if (run.status === 'queued') throw new HttpError(409, `Прогон #${id} в очереди: сначала уберите его из очереди`);
+    if (run.status === 'running' || this.live.has(id)) throw new HttpError(409, `Прогон #${id} идёт: сначала остановите его и дождитесь завершения`);
+    const t = this.saveTimers.get(id);
+    if (t) clearTimeout(t);
+    this.saveTimers.delete(id);
+    this.runs.delete(id);
+    await this.app.store.deleteRun(id);
+    this.app.publish('runs', 'run', { id, status: 'deleted' });
+    this.app.publish(`run:${id}`, 'run', { id, status: 'deleted' });
+    log.info(`Прогон #${id} удалён`);
   }
 
   private tick(): void {
@@ -658,6 +674,7 @@ export class RunManager {
     if (t) clearTimeout(t);
     const doSave = () => {
       this.saveTimers.delete(run.id);
+      if (!this.runs.has(run.id)) return;
       this.app.store.saveRun(run).catch((e) => log.error('Сохранение прогона', e));
       this.publish(run);
     };

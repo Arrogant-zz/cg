@@ -184,12 +184,15 @@ export function basketDetail(app: App, id: string) {
   };
 }
 
+/** Версия скиллов остаётся после удаления прогона, который её создал: ссылка на прогон становится пометкой. */
+const runDeleted = (app: App, run: number | null | undefined) => typeof run === 'number' && !app.runs.runs.has(run);
+
 export function skillsets(app: App) {
   return [...app.registry.skillsets.values()].map((s) => ({
     id: s.id,
     title: s.title,
     file: s.source.file,
-    versions: s.versions.map((v) => ({ id: v.id, generated: v.generated, status: v.status, origin: v.origin })),
+    versions: s.versions.map((v) => ({ id: v.id, generated: v.generated, status: v.status, origin: v.origin, runDeleted: runDeleted(app, v.origin.run) })),
     inRuns: app.runs
       .list()
       .filter((r) => r.status === 'running' && r.settings.skillset && r.settings.skillset !== 'build' && r.settings.skillset.id === s.id)
@@ -210,6 +213,7 @@ export function skillsetDetail(app: App, id: string) {
       status: v.status,
       createdAt: v.createdAt,
       origin: v.origin,
+      runDeleted: runDeleted(app, v.origin.run),
       checksum: v.checksum,
       files: v.files.map((f) => {
         const ch = changes?.find((c) => c.path === f.path) ?? null;

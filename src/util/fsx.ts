@@ -43,6 +43,12 @@ export function writeJsonAtomic(file: string, data: unknown): Promise<void> {
   return next;
 }
 
+/** Дожидается начатых записей в файл или каталог: удаление не должно обогнать запись и оставить файл после себя. */
+export async function settleWrites(target: string): Promise<void> {
+  const pending = [...writeChains.entries()].filter(([f]) => f === target || f.startsWith(target + path.sep)).map(([, p]) => p.catch(() => undefined));
+  await Promise.all(pending);
+}
+
 export async function writeText(file: string, text: string | Buffer): Promise<void> {
   await ensureDir(path.dirname(file));
   await fsp.writeFile(file, text);

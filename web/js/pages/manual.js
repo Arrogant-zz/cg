@@ -1,5 +1,5 @@
 // Ручной режим: запуск любого кейса без автоматического решения и список ручных сессий (MAN-01).
-import { html, icon, get, post, fmtDate, hint, plural, toast } from '../lib.js';
+import { html, icon, get, post, fmtDate, hint, plural, toast, removeSession } from '../lib.js';
 
 export const title = 'Ручной режим';
 
@@ -32,7 +32,12 @@ ${hint(installable ? 'Модель агента выбирается, тольк
 <h2 class="h3" id="ses-h">Сессии · ${sessions.length}</h2>
 ${sessions.length
     ? html`<div class="col" style="gap: 4px">${sessions.map(
-        (s) => html`<a class="li" href="/manual/${s.id}"><span class="row" style="justify-content: space-between"><span class="mono sm m5">${s.case.id}</span>${s.status === 'active' ? html`<span class="st"><span class="dot live"></span>идёт</span>` : html`<span class="cap">${fmtDate(s.closedAt)}</span>`}</span><span class="sm">${s.case.title}</span><span class="cap">${s.key} · ${s.agent.title}${s.evaluation ? ` · ${s.evaluation.outcome === 'passed' ? 'пройден' : s.evaluation.outcome === 'failed' ? 'не пройден' : 'не оценён'}` : ''}</span></a>`,
+        (s) => {
+          const item = html`<a class="li" href="/manual/${s.id}"><span class="row" style="justify-content: space-between"><span class="mono sm m5">${s.case.id}</span>${s.status === 'active' ? html`<span class="st"><span class="dot live"></span>идёт</span>` : html`<span class="cap">${fmtDate(s.closedAt)}</span>`}</span><span class="sm">${s.case.title}</span><span class="cap">${s.key} · ${s.agent.title}${s.evaluation ? ` · ${s.evaluation.outcome === 'passed' ? 'пройден' : s.evaluation.outcome === 'failed' ? 'не пройден' : 'не оценён'}` : ''}</span></a>`;
+          // Активную сессию сначала завершают: кнопка удаления только у закрытых.
+          if (s.status === 'active') return item;
+          return html`<div class="li-row">${item}<button class="btn ghost ib del" type="button" data-action="remove" data-id="${s.id}" data-key="${s.key}" data-case="${s.case.id}" data-title="${s.case.title}" aria-label="Удалить сессию ${s.key}" title="Удалить сессию">${icon('trash')}</button></div>`;
+        },
       )}</div>`
     : html`<div class="empty">Ручных сессий ещё не было.</div>`}
 </aside>
@@ -42,6 +47,9 @@ ${sessions.length
 export const refreshOn = (msg) => msg.type === 'manual' && msg.topic === 'runs';
 
 export const actions = {
+  async remove(el, ctx) {
+    if (await removeSession({ id: Number(el.dataset.id), key: el.dataset.key, caseId: el.dataset.case, caseTitle: el.dataset.title })) return ctx.rerender();
+  },
   field(el, ctx) {
     ctx.state[el.dataset.key] = el.value;
     return ctx.rerender();

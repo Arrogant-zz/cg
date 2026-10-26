@@ -56,6 +56,7 @@ const P = {
   chevRight: '<path d="M9.5 6l6 6-6 6"/>',
   download: '<path d="M12 4.5v11M7 11l5 5 5-5"/><path d="M5 19.5h14"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M4.5 7h15M9.5 7V5.2a.7.7 0 0 1 .7-.7h3.6a.7.7 0 0 1 .7.7V7"/><path d="M6.5 7l.9 11.6a1 1 0 0 0 1 .9h7.2a1 1 0 0 0 1-.9L17.5 7M10.2 10.5v5.5M13.8 10.5v5.5"/>',
   send: '<path d="M5 12l14.5-7-5 15-3-6z"/><path d="M11.5 14l8-9"/>',
   swap: '<path d="M4.5 9h14M15 5.5L18.5 9 15 12.5"/><path d="M19.5 15h-14M9 11.5L5.5 15 9 18.5"/>',
   layers: '<path d="M12 4l8.5 4.3L12 12.6 3.5 8.3z"/><path d="M3.5 12.2L12 16.5l8.5-4.3"/><path d="M3.5 16L12 20.3l8.5-4.3"/>',
@@ -112,6 +113,7 @@ export async function api(method, path, body) {
 }
 export const get = (p) => api('GET', p);
 export const post = (p, b = {}) => api('POST', p, b);
+export const del = (p) => api('DELETE', p);
 
 const listeners = new Set();
 let source = null;
@@ -131,6 +133,49 @@ export function onEvent(fn) {
     for (const t of ['run', 'exec', 'manual', 'stand', 'health', 'config']) source.addEventListener(t, dispatch);
   }
   return () => listeners.delete(fn);
+}
+
+/** Подтверждение необратимого действия в модальном окне. По умолчанию фокус на «Отмена»; Esc — отмена. */
+export function confirmAction({ title, text, ok = 'Удалить', cancel = 'Отмена' }) {
+  return new Promise((resolve) => {
+    const d = document.createElement('dialog');
+    d.className = 'confirm';
+    d.setAttribute('aria-labelledby', 'confirm-h');
+    d.innerHTML = String(html`<form method="dialog" class="col" style="gap: 14px">
+<h2 class="h3" id="confirm-h">${title}</h2>
+<p class="sm t2">${text}</p>
+<div class="row" style="justify-content: flex-end; gap: 8px; margin-top: 6px"><button class="btn ghost" value="cancel" autofocus>${cancel}</button><button class="btn stop" value="ok">${icon('trash')}${ok}</button></div>
+</form>`);
+    d.addEventListener(
+      'close',
+      () => {
+        resolve(d.returnValue === 'ok');
+        d.remove();
+      },
+      { once: true },
+    );
+    document.body.appendChild(d);
+    d.showModal();
+  });
+}
+
+/** Удаление прогона после подтверждения; версии скиллов, полученные прогоном, остаются. */
+export async function removeRun({ id, title, versions = [] }) {
+  const kept = !versions.length ? '' : versions.length === 1 ? ` Версия скиллов ${versions[0]}, полученная этим прогоном, останется.` : ` Версии скиллов ${versions.join(', ')}, полученные этим прогоном, останутся.`;
+  const ok = await confirmAction({ title: `Удалить прогон #${id}?`, text: `«${title}». Удалятся журналы кейсов, HTTP-обмены, снимок настроек и материалы — восстановить их будет нельзя.${kept}` });
+  if (!ok) return false;
+  await del(`/api/runs/${id}`);
+  toast(`Прогон #${id} удалён`);
+  return true;
+}
+
+/** Удаление закрытой ручной сессии после подтверждения. */
+export async function removeSession({ id, key, caseId, caseTitle }) {
+  const ok = await confirmAction({ title: `Удалить сессию ${key}?`, text: `${caseId} · ${caseTitle}. Удалятся журнал, HTTP-обмены и разметка — восстановить их будет нельзя.` });
+  if (!ok) return false;
+  await del(`/api/manual/${id}`);
+  toast(`Сессия ${key} удалена`);
+  return true;
 }
 
 export function toast(text, bad = false) {

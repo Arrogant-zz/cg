@@ -7,10 +7,10 @@ function lineage(set) {
   const out = [];
   for (const v of set.versions) {
     if (v.origin.from) {
-      out.push(html`<div class="vedge"><span>обучение</span><span class="ln"></span>${v.origin.run ? html`<a href="/runs/${v.origin.run}">прогон #${v.origin.run}</a>` : ''}<span>на рабочей копии ${v.origin.from}</span></div>`);
+      out.push(html`<div class="vedge"><span>обучение</span><span class="ln"></span>${v.origin.run ? (v.runDeleted ? html`<span>прогон #${v.origin.run} удалён</span>` : html`<a href="/runs/${v.origin.run}">прогон #${v.origin.run}</a>`) : ''}<span>на рабочей копии ${v.origin.from}</span></div>`);
     }
     out.push(
-      html`<div class="vnode ${v.generated ? 'on' : ''}"><span class="row" style="gap: 8px">${ver(v.id, v.generated ? '' : 'src')}<span class="m5">${v.generated ? 'результат обучения' : 'исходная'}</span>${v.status === 'partial' ? html`<span class="pill na">частичная</span>` : ''}</span><span class="sm t2">${v.generated ? `Ссылки: ${v.origin.from} и прогон #${v.origin.run}` : v.origin.note || 'импорт'}${v.createdAt ? ` · ${fmtDate(v.createdAt, v.generated)}` : ''}</span><span class="cap">${v.files.length} ${plural(v.files.length, 'файл', 'файла', 'файлов')} · не перезаписывается</span></div>`,
+      html`<div class="vnode ${v.generated ? 'on' : ''}"><span class="row" style="gap: 8px">${ver(v.id, v.generated ? '' : 'src')}<span class="m5">${v.generated ? 'результат обучения' : 'исходная'}</span>${v.status === 'partial' ? html`<span class="pill na">частичная</span>` : ''}</span><span class="sm t2">${v.generated ? `Ссылки: ${v.origin.from} и прогон #${v.origin.run}${v.runDeleted ? ' (удалён)' : ''}` : v.origin.note || 'импорт'}${v.createdAt ? ` · ${fmtDate(v.createdAt, v.generated)}` : ''}</span><span class="cap">${v.files.length} ${plural(v.files.length, 'файл', 'файла', 'файлов')} · не перезаписывается</span></div>`,
     );
   }
   return html`<div class="row" style="gap: 12px; align-items: stretch; flex-wrap: wrap">${out}</div>`;
@@ -50,7 +50,7 @@ ${lineage(set)}
 <section class="sec" aria-labelledby="files-h">
 <div class="sec-h"><h3 class="h2" id="files-h">Состав версии</h3><div class="seg" role="group" aria-label="Версия">${set.versions.map((x) => html`<button type="button" class="${x.id === vid ? 'on' : ''}" data-action="ver" data-v="${x.id}" aria-pressed="${x.id === vid}">${x.id}</button>`)}</div></div>
 <dl class="kvs sm">
-<dt>Источник</dt><dd>${v.generated ? html`результат обучения <a href="/runs/${v.origin.run}">#${v.origin.run}</a> из ${v.origin.from}${v.origin.line && v.origin.line > 1 ? `, линия ${v.origin.line}` : ''}` : v.origin.note || 'импорт'}</dd>
+<dt>Источник</dt><dd>${v.generated ? html`результат обучения ${v.runDeleted ? `прогона #${v.origin.run} (прогон удалён)` : html`<a href="/runs/${v.origin.run}">#${v.origin.run}</a>`} из ${v.origin.from}${v.origin.line && v.origin.line > 1 ? `, линия ${v.origin.line}` : ''}` : v.origin.note || 'импорт'}</dd>
 <dt>Совместимость</dt><dd>${set.compatibility.agent ?? 'не указана'}${set.compatibility.learningKit ? `, комплект обучения ${set.compatibility.learningKit}` : ''}</dd>
 <dt>Контрольная сумма</dt><dd class="mono">sha256 ${v.checksum.slice(0, 4)}…${v.checksum.slice(-4)}</dd>
 </dl>

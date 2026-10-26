@@ -90,6 +90,10 @@ export function buildRoutes(app: App): Router {
     if (query.get('download')) return sendFile(res, `${runKey(id)}-${params.name}-http.json`, JSON.stringify(list, null, 2), 'application/json');
     return list;
   });
+  r.delete('/api/runs/:id', async ({ params }) => {
+    await app.runs.delete(num(params.id));
+    return { ok: true };
+  });
   r.get('/api/runs/:id/materials.zip', async ({ params, res }) => {
     const id = num(params.id);
     app.runs.get(id);
@@ -138,6 +142,10 @@ export function buildRoutes(app: App): Router {
     return { ok: true };
   });
   r.post('/api/manual/:id/finish', async ({ params, body }) => app.manual.finish(num(params.id), await body()));
+  r.delete('/api/manual/:id', async ({ params }) => {
+    await app.manual.delete(num(params.id));
+    return { ok: true };
+  });
   r.get('/api/manual/:id/http', async ({ params, query, res }) => {
     const id = num(params.id);
     const list = await app.manual.http(id);

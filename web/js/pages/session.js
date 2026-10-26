@@ -1,5 +1,5 @@
 // Ручная сессия: чат с заглушками, ответ вместо инструмента, подтверждения, команды, разметка (MAN-02–04, CASE-03).
-import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural } from '../lib.js';
+import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural, removeSession } from '../lib.js';
 
 export const title = (ctx) => `Ручной кейс ${ctx.params[0]}`;
 
@@ -35,7 +35,7 @@ function head(s) {
 <p class="lede">${s.case.solutions ? 'Кейс проходится вручную: LLM-оператор в этой сессии не отправляет реплик.' : 'У кейса нет автоматических решений.'} Реплики, решения по действиям и служебные команды задаёте вы. Агент получает ответы из заглушек кейса.</p>
 ${s.note ? html`<p class="cap">${s.note}</p>` : ''}
 </div>
-<div class="ph-a"><a class="btn" href="/manual?case=${s.case.id}">${icon('plus')}Новый ручной кейс</a><a class="btn ghost" href="/api/manual/${s.id}/export" download>${icon('download')}Журнал JSON</a></div>
+<div class="ph-a"><a class="btn" href="/manual?case=${s.case.id}">${icon('plus')}Новый ручной кейс</a><a class="btn ghost" href="/api/manual/${s.id}/export" download>${icon('download')}Журнал JSON</a>${s.status === 'closed' ? html`<button class="btn ghost del" type="button" data-action="remove">${icon('trash')}Удалить</button>` : ''}</div>
 </header>
 <div class="setup">
 <button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Кейс</span><span class="m5">${s.case.id}</span></span>${icon('lock', 't3')}</button>
@@ -167,6 +167,10 @@ export function patch(root, out) {
 export const refreshOn = (msg, ctx) => msg.type === 'manual' && msg.topic === `manual:${ctx.params[0]}`;
 
 export const actions = {
+  async remove(el, ctx) {
+    const s = await get(`/api/manual/${ctx.params[0]}`);
+    if (await removeSession({ id: s.id, key: s.key, caseId: s.case.id, caseTitle: s.case.title })) ctx.navigate('/manual');
+  },
   view(el, ctx) {
     ctx.state.view = el.dataset.view;
     return ctx.rerender();
