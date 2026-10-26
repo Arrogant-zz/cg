@@ -1,0 +1,90 @@
+# Встроенные расчёты первой версии (MET-01). Пользовательские формулы — позднее.
+metrics:
+  - id: action-checks
+    builtin: action-checks
+    title: Проверки действий
+    description: Обязательные выполнены, запрещённые не вызваны; события-доказательства сохраняются
+    unit: кейсы
+    level: [кейс, корзина]
+    needs: журнал инструментов
+    version: v1
+  - id: answer-quality
+    builtin: answer-quality
+    title: Качество ответа
+    description: Вердикт LLM по критериям эталона с объяснением каждого непройденного
+    unit: критерии
+    level: [кейс]
+    needs: ответ, эталон, вызов судьи
+    version: v1
+  - id: success
+    builtin: success
+    title: Итоговый успех
+    description: Все обязательные проверки пройдены; без оценки — «не оценено», а не неуспех
+    unit: кейсы
+    level: [кейс, корзина]
+    needs: обе проверки
+    version: v1
+  - id: corrections
+    builtin: corrections
+    title: Поправки оператора
+    description: Обучающие поправки оператора или человека; один урок в кейсе считается один раз; сбои оператора — отдельно
+    unit: поправки
+    level: [кейс, корзина]
+    needs: разметка оператора
+    version: v1
+  - id: repeated-corrections
+    builtin: repeated-corrections
+    title: Повторные поправки
+    description: Известный урок снова встречается в той же линии обучения
+    unit: поправки
+    level: [корзина]
+    needs: идентификаторы уроков
+    version: v1
+  - id: rejected-actions
+    builtin: rejected-actions
+    title: Отклонённые действия
+    description: Отклонения подтверждений; отклонения по таймауту — отдельно
+    unit: вызовы
+    level: [кейс, корзина]
+    needs: подтверждения
+    version: v1
+  - id: unexpected-tools
+    builtin: unexpected-tools
+    title: Неожиданные инструменты
+    description: Вызовы без подходящей заглушки; не смешиваются с запрещёнными
+    unit: вызовы
+    level: [кейс, корзина]
+    needs: журнал инструментов
+    version: v1
+  - id: turns-duration
+    builtin: turns-duration
+    title: Длительность
+    description: Ходы диалога и время по ролям — агент, оператор, судья, команды
+    unit: время
+    level: [кейс, корзина]
+    needs: метки времени
+    version: v1
+  - id: tokens
+    builtin: tokens
+    title: Токены
+    description: По ролям, если источник отдаёт usage; иначе «нет данных»
+    unit: токены
+    level: [кейс, корзина]
+    needs: usage в ответах
+    version: v1
+  - id: skill-changes
+    builtin: skill-changes
+    title: Изменения скиллов
+    description: Созданные, изменённые и удалённые файлы после каждого curator и за прогон; в проверке — неизменность набора
+    unit: файлы
+    level: [прогон]
+    needs: файлы набора до и после
+    version: v1
+  - id: operator-errors
+    builtin: operator-errors
+    title: Сбои LLM-оператора
+    description: Ошибки модели и формата, таймауты и нарушения режима — отдельно от неуспеха агента
+    unit: случаи
+    level: [кейс, корзина]
+    needs: вызовы LLM-оператора
+    version: v1

@@ -1,0 +1,7 @@
+# Ответы по умолчанию, если в кейсе нет подходящей заглушки. Порядок поиска: кейс → этот файл → нет заглушки.
+tools:
+  postpone_case:
+    - id: default-ok
+      result:
+        json: { case_id: "{{args.case_id}}", status: POSTPONED, until: "{{args.until}}" }
+      effect: { case: postponed }

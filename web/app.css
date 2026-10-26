@@ -1,0 +1,117 @@
+/* Шрифты из комплекта (IBM Plex, SIL OFL 1.1, web/fonts/OFL-IBM-Plex.txt): без внешних CDN — стенд в закрытом контуре. */
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:400;font-display:swap;src:url(/static/fonts/ibm-plex-sans-cyrillic-400-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:400;font-display:swap;src:url(/static/fonts/ibm-plex-sans-latin-400-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;font-display:swap;src:url(/static/fonts/ibm-plex-sans-cyrillic-500-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;font-display:swap;src:url(/static/fonts/ibm-plex-sans-latin-500-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:600;font-display:swap;src:url(/static/fonts/ibm-plex-sans-cyrillic-600-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:600;font-display:swap;src:url(/static/fonts/ibm-plex-sans-latin-600-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:700;font-display:swap;src:url(/static/fonts/ibm-plex-sans-cyrillic-700-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:700;font-display:swap;src:url(/static/fonts/ibm-plex-sans-latin-700-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/static/fonts/ibm-plex-mono-cyrillic-400-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/static/fonts/ibm-plex-mono-latin-400-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url(/static/fonts/ibm-plex-mono-cyrillic-500-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url(/static/fonts/ibm-plex-mono-latin-500-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:600;font-display:swap;src:url(/static/fonts/ibm-plex-mono-cyrillic-600-normal.woff2) format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:600;font-display:swap;src:url(/static/fonts/ibm-plex-mono-latin-600-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
+/* Детали экранов из канваса «ClawGym — дизайн интерфейса» поверх общего clawgym.css. */
+.main{min-height:calc(100vh - 16px)}
+a{color:inherit}
+a:hover{color:#A84A16}
+.hidden{display:none !important}
+.empty{padding:28px 24px;border:1px dashed #C9CDC4;border-radius:16px;color:#4A524D;font-size:14px;line-height:22px}
+.loading{color:#69716B;font-size:14px}
+.toast{position:fixed;right:20px;bottom:20px;z-index:50;max-width:min(460px,calc(100vw - 40px));padding:14px 18px;border-radius:14px;background:#171C19;color:#F3F4F1;font-size:14px;line-height:20px}
+.toast.bad{background:#A51C14}
+select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='16' height='16' fill='none' stroke='%2369716B' stroke-width='1.6'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.btn[aria-busy="true"]{opacity:.7;cursor:progress}
+
+/* Запуск прогона */
+.cfg{display:grid;grid-template-columns:minmax(150px,200px) minmax(0,1fr);gap:6px 28px;padding:14px 0;border-top:1px solid #EEEFEB}
+@media (max-width:640px){.cfg{grid-template-columns:minmax(0,1fr)}}
+
+/* Ход и результат прогона */
+.strip{display:flex;flex-wrap:wrap;gap:10px 28px;font-size:13px;line-height:20px}
+.strip>span{display:flex;flex-direction:column;gap:2px}
+.it{display:grid;grid-template-columns:28px minmax(0,1fr) 140px 56px;grid-template-areas:"pos case res time" ". steps steps steps";gap:8px 20px;align-items:center;padding:14px 0;border-top:1px solid #EEEFEB;color:inherit;text-decoration:none}
+a.it:hover{background:#FAFAF8}
+.it>:nth-child(1){grid-area:pos}.it>:nth-child(2){grid-area:case}.it>:nth-child(3){grid-area:steps}.it>:nth-child(4){grid-area:res}.it>:nth-child(5){grid-area:time}
+.it.hd>:nth-child(3){display:none}
+.it.cur{background:#FAFAF8;border-radius:14px;border-top-color:transparent;padding:14px 12px;margin:0 -12px}
+.it .pos{font-weight:600;font-variant-numeric:tabular-nums;color:#3E4641}
+@media (max-width:640px){.it{grid-template-columns:28px minmax(0,1fr) auto;grid-template-areas:"pos case time" ". res res" ". steps steps"}}
+.cv-grid{stroke:#EEEFEB;stroke-width:1}
+.cv-base{stroke:#C9CDC4;stroke-width:1}
+.cv-line{fill:none;stroke:#171C19;stroke-width:2;stroke-linejoin:round}
+.cv-band{fill:#171C19;opacity:.08}
+.cv-gap{fill:none;stroke:#A6ADA7;stroke-width:1.5;stroke-dasharray:3 5}
+.cv-cur{stroke:#F17A35;stroke-width:1.5;stroke-dasharray:4 4}
+.cv-pt{fill:#171C19}
+.cv-rep{fill:#FFFFFF;stroke:#F17A35;stroke-width:3}
+.cv-tech{fill:#FFFFFF;stroke:#6A55C9;stroke-width:2;stroke-dasharray:3 2}
+.cv-na{fill:#FFFFFF;stroke:#A6ADA7;stroke-width:1.5;stroke-dasharray:2 2}
+.chart .tm{text-anchor:middle}
+.chart .te{text-anchor:end}
+.chart .cu{fill:#8F3E10;font-weight:500}
+.chart .tv{fill:#4B3BA0}
+.pass3{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:20px 36px}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bars .row{flex-wrap:nowrap;gap:12px}
+.bars .b{height:8px;border-radius:4px;background:#171C19;flex:none}
+.bars .b.live{background:#FFFFFF;box-shadow:inset 0 0 0 1px #F17A35}
+.bars .b.zero{width:3px;background:#C9CDC4}
+
+/* Разбор кейса */
+.kvh{display:flex;flex-wrap:wrap;gap:6px}
+.kvh>span{display:inline-flex;align-items:center;gap:6px;min-height:24px;padding:2px 9px;border-radius:999px;background:#FFFFFF;box-shadow:inset 0 0 0 1px #E4E6E1;font-size:12px;line-height:16px;color:#3E4641}
+.kvh>span.lesson{background:#FDEFE5;color:#8F3E10;box-shadow:none;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;line-height:16px;color:#4A524D}
+.legend>span{display:inline-flex;align-items:center;gap:6px}
+.sw-hid{width:16px;height:12px;border-radius:4px;border:1px dashed #8A918B;background:#FAFAF8}
+.mt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;font-size:13px;line-height:20px;padding:10px 0;border-top:1px solid #EEEFEB}
+.tool-b{max-height:240px;overflow:auto}
+details.raw summary{cursor:pointer;color:#69716B;font-size:12px;padding:6px 14px;border-top:1px solid #EEEFEB}
+details.raw pre{margin:0;padding:10px 14px;background:#FAFAF8;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
+
+/* Сравнение */
+.pair{display:grid;grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr);gap:12px;align-items:center}
+@media (max-width:760px){.pair{grid-template-columns:minmax(0,1fr)}}
+.kpi .v .ar{font-size:22px;color:#69716B;font-weight:400}
+.delta{font-size:13px;line-height:20px;font-weight:500}
+.up{color:#17603F}.same{color:#69716B}.down{color:#A51C14}
+
+/* Ручной режим */
+.setup{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px}
+.log{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:10px 0;border-top:1px solid #EEEFEB;font-size:13px;line-height:20px}
+.composer{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid #E4E6E1;border-radius:16px;background:#FFFFFF}
+.composer.busy{background:#F7F7F4;border-style:dashed}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:16px}
+
+/* Кейсы, корзины, наборы */
+.lst{flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:4px}
+.det{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:36px}
+.sol{display:flex;flex-direction:column;gap:12px;padding:20px;border:1px solid #E4E6E1;border-radius:16px}
+.quote{padding:12px 14px;border-radius:12px;background:#F7F7F4;font-size:13px;line-height:20px;color:#3E4641}
+.steps-ol{display:flex;flex-direction:column;gap:8px}
+.steps-ol li{display:grid;grid-template-columns:24px minmax(0,1fr);gap:10px;font-size:14px;line-height:22px}
+.steps-ol li span:first-child{width:24px;height:24px;border-radius:50%;background:#F0F1ED;color:#3E4641;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center}
+.types{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(360px,100%),1fr));gap:16px}
+.types>div{display:flex;flex-direction:column;gap:12px;padding:20px 22px;border-radius:16px}
+.types li{display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;font-size:14px;line-height:22px}
+.types li .ic{margin-top:3px}
+.vnode{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid #E4E6E1;border-radius:16px;background:#FFFFFF;min-width:200px;flex:1 1 200px}
+.vnode.on{border-color:#171C19}
+.vedge{display:flex;flex-direction:column;align-items:center;gap:4px;color:#69716B;font-size:12px;line-height:16px;flex:0 1 150px;text-align:center}
+.vedge .ln{width:100%;height:1px;background:#C9CDC4;position:relative}
+.vedge .ln::after{content:"";position:absolute;right:-1px;top:-4px;border-left:7px solid #C9CDC4;border-top:4.5px solid transparent;border-bottom:4.5px solid transparent}
+.uses{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;line-height:20px;color:#4A524D}
+.diff{margin:0;padding:12px 14px;border:1px solid #EEEFEB;border-radius:12px;background:#FAFAF8;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto}
+.diff .p{color:#17603F}.diff .m{color:#A51C14}.diff .g{color:#8A918B}
+
+/* Справочники */
+.ag{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:28px 36px}
+.ag>div{display:flex;flex-direction:column;gap:0;min-width:0}
+.kv{display:flex;flex-direction:column;gap:2px;padding:10px 0;border-top:1px solid #EEEFEB;font-size:13px;line-height:20px;min-width:0}
+.kv:first-of-type{border-top:0}
+.kv .k{color:#69716B;font-size:12px;line-height:16px}
+.kv .mono{word-break:break-all}

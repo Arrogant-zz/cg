@@ -1,0 +1,13 @@
+id: judge-a
+title: judge-a
+roles: [judge]
+provider: openai-compatible
+baseUrl: ${env:LLM_BASE_URL}
+apiKey: ${env:LLM_API_KEY}
+model: ${env:LLM_JUDGE_MODEL}
+params:
+  temperature: 0
+  maxTokens: 4000
+  timeoutMs: 120000
+  retries: 2
+  responseFormat: json_schema

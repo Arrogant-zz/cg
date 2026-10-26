@@ -1,0 +1,256 @@
+{
+  "version": "synthetic-2026-10-25",
+  "conditional": true,
+  "note": "Синтетический контракт для стенда и fake-agent. Имена, описания и схемы инструментов, обёртку результата и тексты ошибок нужно заменить на снятые с кода Java-оркестратора (plan.md, этап 0; docs/CONTRACTS.md).",
+  "result": {
+    "mode": "text"
+  },
+  "errors": {
+    "rejected": "Оператор отклонил вызов инструмента {{tool}}.",
+    "noStub": "Инструмент {{tool}} вернул ошибку: данные для этих аргументов не найдены.",
+    "unknownTool": "Инструмент {{tool}} не найден.",
+    "unknownTask": "Вызов не привязан к обращению: неизвестный или отсутствующий x-task-id.",
+    "timeout": "Время ожидания решения по вызову {{tool}} истекло.",
+    "stopped": "Обращение остановлено на стенде."
+  },
+  "startMessage": "contracts/start-message.txt",
+  "tools": [
+    {
+      "name": "get_card_status",
+      "description": "Статус карты клиента: активна, заблокирована, причина блокировки.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "type": "string",
+            "description": "Маскированный номер карты"
+          }
+        },
+        "required": [
+          "card"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "kind": "info"
+    },
+    {
+      "name": "get_client_profile",
+      "description": "Профиль клиента: имя, адрес доставки, контакты.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "kind": "info"
+    },
+    {
+      "name": "get_recent_operations",
+      "description": "Последние операции по карте с признаками подозрительности.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "card"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "kind": "info"
+    },
+    {
+      "name": "get_operation_details",
+      "description": "Подробности операции: сумма, магазин, связанные операции.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "kind": "info"
+    },
+    {
+      "name": "get_merchant_info",
+      "description": "Сведения о магазине по идентификатору.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "merchant_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "merchant_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "kind": "info"
+    },
+    {
+      "name": "get_client_limits",
+      "description": "Лимиты клиента по операциям.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "kind": "info"
+    },
+    {
+      "name": "unblock_card",
+      "description": "Разблокировать карту. Требует подтверждения оператора.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "card"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "kind": "action"
+    },
+    {
+      "name": "reissue_card",
+      "description": "Перевыпустить карту. Требует подтверждения оператора.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "card"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "kind": "action"
+    },
+    {
+      "name": "refund_operation",
+      "description": "Оформить возврат по операции. Требует подтверждения оператора.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "kind": "action"
+    },
+    {
+      "name": "close_case",
+      "description": "Закрыть обращение. Требует подтверждения оператора.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "case_id": {
+            "type": "string"
+          },
+          "resolution": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "kind": "action"
+    },
+    {
+      "name": "postpone_case",
+      "description": "Отложить обращение до даты. Требует подтверждения оператора.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "case_id": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "kind": "action"
+    },
+    {
+      "name": "create_expertise",
+      "description": "Завести экспертизу — запрос в другое подразделение. Требует подтверждения оператора.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "case_id": {
+            "type": "string"
+          },
+          "department": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "department",
+          "question"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "kind": "action"
+    }
+  ]
+}

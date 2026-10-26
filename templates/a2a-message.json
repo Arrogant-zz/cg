@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": "{{messageId}}",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "messageId": "{{messageId}}",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "{{text}}"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,33 @@
+# Локальная заглушка агента из dev/fake-agent. Формат запроса и ответа — условный A2A.
+id: fake-agent
+title: fake-agent · локально
+request:
+  url: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/a2a/message
+  method: POST
+  body: templates/a2a-message.json
+  taskIdHeader: x-task-id
+  senderIdHeader: x-a2a-sender-id
+  taskIdScope: execution
+response:
+  mode: sync
+  replyPath: $.result.parts[*].text
+  statusPath: $.result.metadata.status
+  errorPath: $.error.message
+  usage:
+    inputPath: $.result.metadata.usage.input_tokens
+    outputPath: $.result.metadata.usage.output_tokens
+mcp:
+  contract: contracts/tools.json
+  protocolVersion: 2025-06-18
+  taskIdFrom: [header]
+model:
+  switch: request
+  path: $.params.metadata.model
+sessions:
+  max: 3
+skills:
+  installer: http
+  baseUrl: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/admin
+healthUrl: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/health
+build: fake-agent 0.1
+learningKit: learning-scripts (имитация)

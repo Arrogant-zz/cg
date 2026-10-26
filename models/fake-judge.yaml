@@ -1,0 +1,12 @@
+id: fake-judge
+title: fake-judge
+roles: [judge]
+provider: openai-compatible
+baseUrl: ${env:FAKE_LLM_URL:-http://127.0.0.1:8092/v1}
+model: fake-judge
+params:
+  temperature: 0
+  timeoutMs: 30000
+  retries: 1
+  devHints: true
+description: Детерминированная заглушка судьи из dev/fake-llm — только для офлайн-разработки.

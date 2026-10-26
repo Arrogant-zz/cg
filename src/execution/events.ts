@@ -1,0 +1,180 @@
+// События журнала выполнения кейса (RES-01). Роли и источники сообщений разделены;
+// hidden — сведения, которых агент не видел: решения оператора, разметка, оценка.
+
+export type EventType =
+  | 'command'
+  | 'start_message'
+  | 'agent_message'
+  | 'operator_message'
+  | 'human_message'
+  | 'operator_decision'
+  | 'tool_call'
+  | 'judge'
+  | 'checks'
+  | 'status'
+  | 'note'
+  | 'mode_violation'
+  | 'skills';
+
+export interface BaseEvent {
+  seq: number;
+  ts: string;
+  type: EventType;
+  hidden?: boolean;
+}
+
+export type ToolOutcome =
+  | 'pending'
+  | 'stub'
+  | 'default'
+  | 'manual'
+  | 'manual_error'
+  | 'no_stub'
+  | 'unknown_tool'
+  | 'rejected'
+  | 'timeout'
+  | 'stopped';
+
+export interface ToolCallEvent extends BaseEvent {
+  type: 'tool_call';
+  callId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  taskId: string;
+  requiresConfirmation: boolean;
+  stub: { id: string; origin: 'case' | 'default'; candidates: number; call: number } | null;
+  confirmation: null | {
+    decision: 'approve' | 'reject' | 'pending';
+    by: 'operator' | 'human' | 'auto' | 'timeout' | 'stopped' | null;
+    waitedMs: number | null;
+    deadline: string | null;
+    decisionSeq: number | null;
+  };
+  awaiting: null | 'confirmation' | 'answer';
+  deadline: string | null;
+  outcome: ToolOutcome;
+  isError: boolean;
+  result: unknown;
+  effect: Record<string, unknown> | null;
+  /** Выполнение состоялось: инструмент вернул ответ заглушки или человека без ошибки. */
+  executed: boolean;
+  unexpected: boolean;
+  durationMs: number | null;
+  yaml?: string;
+}
+
+export interface MessageEvent extends BaseEvent {
+  type: 'start_message' | 'agent_message' | 'operator_message' | 'human_message';
+  text: string;
+  turn?: number;
+  durationMs?: number;
+  usage?: { input: number | null; output: number | null; total: number | null } | null;
+  taskId?: string;
+  marks?: { correction: boolean; lessonId: string | null; lessonNote: string | null; explanation: boolean; approval: boolean; finish: boolean; manual?: boolean; repeated?: boolean };
+  decisionSeq?: number;
+  queued?: boolean;
+}
+
+export interface CommandEvent extends BaseEvent {
+  type: 'command';
+  name: 'reset' | 'capture' | 'curator';
+  text: string;
+  status: 'running' | 'ok' | 'failed' | 'skipped' | 'unrecognized';
+  reply: string | null;
+  parsed: unknown;
+  durationMs: number | null;
+  error?: string;
+  by: 'runner' | 'human';
+  pass?: number;
+}
+
+export interface DecisionEvent extends BaseEvent {
+  type: 'operator_decision';
+  hidden: true;
+  event: 'turn_end' | 'confirmation';
+  callId?: string;
+  decision: Record<string, unknown> | null;
+  model: string;
+  durationMs: number;
+  usage: { input: number | null; output: number | null } | null;
+  attempts: { n: number; ok: boolean; kind?: string; error?: string; durationMs: number }[];
+  error?: string;
+  forced?: string;
+}
+
+export interface JudgeEvent extends BaseEvent {
+  type: 'judge';
+  hidden: true;
+  status: 'ok' | 'failed' | 'skipped';
+  model: string | null;
+  criteria: { id: string; text: string; passed: boolean; reason: string }[];
+  summary: string;
+  durationMs: number | null;
+  usage: { input: number | null; output: number | null } | null;
+  error?: string;
+}
+
+export interface CheckItem {
+  id: string;
+  kind: 'required' | 'forbidden' | 'final';
+  text: string;
+  passed: boolean | null;
+  evidence: number[];
+  note: string;
+}
+
+export interface ChecksEvent extends BaseEvent {
+  type: 'checks';
+  hidden: true;
+  items: CheckItem[];
+}
+
+export interface StatusEvent extends BaseEvent {
+  type: 'status';
+  status: string;
+  reason: string;
+}
+
+export interface NoteEvent extends BaseEvent {
+  type: 'note' | 'mode_violation' | 'skills';
+  text: string;
+  data?: unknown;
+}
+
+export type ExecEvent = ToolCallEvent | MessageEvent | CommandEvent | DecisionEvent | JudgeEvent | ChecksEvent | StatusEvent | NoteEvent;
+
+/** Технические статусы: не неуспех агента (фиолетовые в интерфейсе). */
+export const TECH_STATUSES = new Set([
+  'reset_failed',
+  'agent_error',
+  'agent_timeout',
+  'operator_error',
+  'operator_format_error',
+  'operator_timeout',
+  'operator_mode_violation',
+  'stopped',
+  'internal_error',
+  'prepare_failed',
+]);
+
+export const LIMIT_STATUSES = new Set(['limit_turns', 'limit_duration', 'limit_operator_calls']);
+
+export const STATUS_TITLES: Record<string, string> = {
+  preparing: 'Подготовка',
+  running: 'Выполняется',
+  completed: 'Завершён',
+  limit_turns: 'Исчерпан лимит ходов',
+  limit_duration: 'Исчерпан лимит времени',
+  limit_operator_calls: 'Исчерпан лимит запросов оператора',
+  reset_failed: 'Сбой /reset',
+  agent_error: 'Сбой агента',
+  agent_timeout: 'Таймаут агента',
+  operator_error: 'Сбой LLM-оператора',
+  operator_format_error: 'Ошибка формата оператора',
+  operator_timeout: 'Таймаут оператора',
+  operator_mode_violation: 'Нарушение режима проверки',
+  stopped: 'Остановлен',
+  internal_error: 'Внутренняя ошибка стенда',
+  prepare_failed: 'Сбой подготовки',
+  closed: 'Закрыт',
+};

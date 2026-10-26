@@ -1,0 +1,9 @@
+Новое обращение {{execution.caseNumber}}.
+Тематика: {{case.topic}}
+request_ref: {{execution.requestRef}}
+Канал: {{start.channel}}
+Клиент: {{start.client.name}}
+ID клиента: {{start.client.id}}
+Карта: {{start.card}}
+Операция: {{start.operation}}
+Сообщение клиента: {{start.description}}

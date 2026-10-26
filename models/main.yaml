@@ -1,0 +1,5 @@
+id: main
+title: main · развёртывание
+roles: [agent]
+provider: deployment
+description: Модель агента задана развёртыванием AEFClaw на стенде; запросом не переключается.

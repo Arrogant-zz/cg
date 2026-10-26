@@ -1,0 +1,31 @@
+# Подключение к Pagurus на тестовом стенде. Формат запроса и пути в ответе — УСЛОВНЫЕ:
+# их нужно снять с кода оркестратора (docs/CONTRACTS.md). Секреты — только ссылками на окружение.
+id: pagurus-stand
+title: Pagurus · стенд
+request:
+  url: ${env:AGENT_URL}
+  method: POST
+  headers:
+    Authorization: Bearer ${env:PAGURUS_STAND_TOKEN}
+  body: templates/a2a-message.json
+  taskIdHeader: x-task-id
+  senderIdHeader: x-a2a-sender-id
+  taskIdScope: execution
+response:
+  mode: sync
+  replyPath: $.result.parts[*].text
+  statusPath: $.result.status.state
+  errorPath: $.error.message
+mcp:
+  contract: contracts/tools.json
+  protocolVersion: 2025-06-18
+model:
+  switch: none
+  fixed: main
+sessions:
+  max: 3
+skills:
+  installer: none
+  note: Установка набора скиллов в AEFClaw не подтверждена — стартовые скиллы задаются сборкой агента
+build: стенд (метка сборки не получена)
+learningKit: learning-scripts (версия на стенде не подтверждена)
