@@ -33,7 +33,6 @@ export class AgentChannel {
     public agent: AgentDef,
     private env: Env,
     private locks: KeyedMutex,
-    public modelValue: string | null,
   ) {
     this.client = new AgentClient(agent, env.raw, env.allowedHosts);
   }
@@ -70,7 +69,7 @@ export class AgentChannel {
         } else exec.updateHttp(x);
       };
       try {
-        const r = await this.client.send({ text, taskId, senderId: exec.senderId, timeoutMs: this.timeoutFor('message'), signal: signal ?? exec.abort.signal, modelValue: this.modelValue, label: LABELS[kind], onExchange });
+        const r = await this.client.send({ text, taskId, senderId: exec.senderId, timeoutMs: this.timeoutFor('message'), signal: signal ?? exec.abort.signal, label: LABELS[kind], onExchange });
         const turn = exec.turns + 1;
         const ev = exec.add<MessageEvent>({ type: 'agent_message', text: r.text, turn, durationMs: r.durationMs, usage: r.usage, taskId, httpId: r.exchange.id });
         r.exchange.replySeq = ev.seq;
@@ -126,7 +125,7 @@ export class AgentChannel {
       onExchange?.(x, phase);
     };
     try {
-      const r = await this.client.send({ text, taskId, senderId, timeoutMs: this.timeoutFor(name), signal, modelValue: this.modelValue, label: COMMAND_LABELS[name], onExchange: track });
+      const r = await this.client.send({ text, taskId, senderId, timeoutMs: this.timeoutFor(name), signal, label: COMMAND_LABELS[name], onExchange: track });
       const base = { name, text, reply: r.text, durationMs: Date.now() - t0, startedAt, http };
       if (name === 'reset') return { ...base, status: 'ok', parsed: null };
       if (name === 'capture') {

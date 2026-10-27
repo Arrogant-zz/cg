@@ -6,9 +6,9 @@ import { resolveEnvRefs } from '../config/loader.js';
 import { buildPlan, describePlan } from '../runner/plan.js';
 import { resolveRun, type RunOverrides } from '../runner/resolve.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
+import { operatorLabel } from '../results/compare.js';
 import type { RunRecord } from '../runner/types.js';
 import { endpointOf, modelAuth, modelReadiness } from '../llm/provider.js';
-import { diffTrees } from '../util/diff.js';
 import { HttpError } from '../util/http.js';
 
 export function issueCounts(issues: Issue[]) {
@@ -193,51 +193,6 @@ export function basketDetail(app: App, id: string) {
   };
 }
 
-/** Версия скиллов остаётся после удаления прогона, который её создал: ссылка на прогон становится пометкой. */
-const runDeleted = (app: App, run: number | null | undefined) => typeof run === 'number' && !app.runs.runs.has(run);
-
-export function skillsets(app: App) {
-  return [...app.registry.skillsets.values()].map((s) => ({
-    id: s.id,
-    title: s.title,
-    file: s.source.file,
-    versions: s.versions.map((v) => ({ id: v.id, generated: v.generated, status: v.status, origin: v.origin, runDeleted: runDeleted(app, v.origin.run) })),
-    inRuns: app.runs
-      .list()
-      .filter((r) => r.status === 'running' && r.settings.skillset && r.settings.skillset !== 'build' && r.settings.skillset.id === s.id)
-      .map((r) => ({ id: r.id, version: (r.settings.skillset as any).version })),
-  }));
-}
-
-export function skillsetDetail(app: App, id: string) {
-  const s = app.registry.skillsets.get(id);
-  if (!s) throw new HttpError(404, `Набор «${id}» не найден`);
-  const runs = app.runs.list().filter((r) => r.settings.skillset && r.settings.skillset !== 'build' && r.settings.skillset.id === id);
-  const versions = s.versions.map((v) => {
-    const from = v.origin.from ? s.versions.find((x) => x.id === v.origin.from) : null;
-    const changes = from ? diffTrees(from.files, v.files, false) : null;
-    return {
-      id: v.id,
-      generated: v.generated,
-      status: v.status,
-      createdAt: v.createdAt,
-      origin: v.origin,
-      runDeleted: runDeleted(app, v.origin.run),
-      checksum: v.checksum,
-      files: v.files.map((f) => {
-        const ch = changes?.find((c) => c.path === f.path) ?? null;
-        return { path: f.path, sha256: f.sha256, size: f.size, change: ch ? { kind: ch.kind, added: ch.added, removed: ch.removed } : null };
-      }),
-      removed: changes?.filter((c) => c.kind === 'removed').map((c) => c.path) ?? [],
-      checks: runs
-        .filter((r) => r.type === 'checking' && (r.settings.skillset as any).version === v.id)
-        .map((r) => ({ id: r.id, status: r.status, success: successOf(r) })),
-      trainings: runs.filter((r) => r.type === 'training' && (r.settings.skillset as any).version === v.id).map((r) => ({ id: r.id, status: r.status, produced: r.lines.map((l) => l.skills.newVersion?.id).filter(Boolean) })),
-    };
-  });
-  return { id: s.id, title: s.title, description: s.description, file: s.source.file, compatibility: s.compatibility, versions, issues: app.registry.issues.filter((i) => i.file === s.source.file) };
-}
-
 export function directory(app: App) {
   const reg = app.registry;
   const env = app.env.raw;
@@ -264,7 +219,6 @@ export function directory(app: App) {
       mcp: a.mcp,
       model: a.model,
       sessions: a.sessions,
-      skills: a.skills.kind === 'http' ? { kind: 'http', baseUrl: a.skills.baseUrl } : a.skills.kind === 'directory' ? { kind: 'directory', root: a.skills.root, skillsDir: a.skills.skillsDir } : { kind: 'none', note: a.skills.note },
       build: a.build,
       learningKit: a.learningKit,
       health: app.health.get(a.id) ?? null,
@@ -285,8 +239,6 @@ export function directory(app: App) {
     description: m.description,
     file: m.source.file,
     readiness: modelReadiness(m, env),
-    switching:
-      m.provider === 'deployment' ? 'задаётся развёртыванием агента' : m.provider === 'agent-request' ? 'параметр запроса агенту' : 'параметр вызова ClawGym',
     issues: reg.issues.filter((i) => i.file === m.source.file),
   }));
   const metrics = [...reg.metrics.values()].map((m) => ({ id: m.id, builtin: m.builtin, title: m.title, description: m.description, unit: m.unit, level: m.level, needs: m.needs, params: m.params, version: m.version, file: m.source.file }));
@@ -298,16 +250,17 @@ export function runConfigs(app: App) {
   return [...reg.runs.values()]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((r) => {
-      const p = resolveRun(reg, app.env, r.id);
+      const p = resolveRun(reg, app.env, r.id, {}, app.runs.list());
       const b = reg.baskets.get(r.basket);
       const last = app.runs.list().find((x) => x.configId === r.id) ?? null;
-      const ss = r.skillset;
       return {
         id: r.id,
         title: r.title,
         file: r.source.file,
         basket: b ? { id: b.id, title: b.title, type: b.type, items: b.items.filter((i) => i.kind === 'solution').length } : { id: r.basket, title: r.basket, type: null, items: 0 },
-        skillset: ss === 'build' ? 'стартовые скиллы сборки' : ss ? `${reg.skillsets.get(ss.id)?.title ?? ss.id} · ${ss.version}` : 'без набора',
+        agent: r.agent,
+        continueFrom: r.continueFrom,
+        testOperator: r.continueFrom ? `продолжение: последний прогон ${r.continueFrom}` : 'новый тестовый оператор',
         ok: p.ok,
         ...issueCounts(p.issues),
         lastRun: last ? { id: last.id, createdAt: last.createdAt, status: last.status } : null,
@@ -315,10 +268,18 @@ export function runConfigs(app: App) {
     });
 }
 
+const FINISHED = new Set(['completed', 'stopped']);
+
 export function preview(app: App, id: string, overrides: RunOverrides) {
-  const p = resolveRun(app.registry, app.env, id, overrides);
+  const runs = app.runs.list();
+  const p = resolveRun(app.registry, app.env, id, overrides, runs);
   const r = p.resolved;
-  const queued = app.runs.list().filter((x) => x.status === 'queued' || x.status === 'running');
+  const cfg = app.registry.runs.get(id);
+  const queued = runs.filter((x) => x.status === 'queued' || x.status === 'running');
+  // На чьём тестовом операторе можно продолжить: завершённые прогоны того же агента, где линии начинались.
+  const continueOptions = runs
+    .filter((x) => FINISHED.has(x.status) && x.settings.agent.id === cfg?.agent && x.lines.some((l) => l.senderId))
+    .map((x) => ({ id: x.id, title: x.title, type: x.type, configId: x.configId, finishedAt: x.finishedAt, lines: x.lines.length, testOperator: operatorLabel(x) }));
   return {
     ok: p.ok,
     issues: p.issues,
@@ -329,21 +290,20 @@ export function preview(app: App, id: string, overrides: RunOverrides) {
     queueAhead: queued.map((x) => ({ id: x.id, title: x.title, status: x.status })),
     sessions: { used: app.sessions.used, capacity: app.sessions.capacity },
     overrides,
+    continueFrom: cfg?.continueFrom ?? null,
+    continueOptions,
     resolved: r
       ? {
           title: r.config.title,
           file: r.config.source.file,
           basket: { id: r.basket.id, title: r.basket.title, type: r.basket.type, file: r.basket.source.file, items: r.items.filter((i) => i.kind === 'solution').length, cases: new Set(r.items.map((i) => i.caseDef?.id).filter(Boolean)).size },
-          agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, commands: r.agent.commands, installer: r.agent.skills.kind },
-          agentModel: r.agentModel,
+          agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, commands: r.agent.commands, build: r.agent.build, model: r.agent.model },
+          testOperator:
+            r.operator.mode === 'continue'
+              ? { mode: 'continue', run: r.operator.source.id, title: r.operator.source.title, type: r.operator.source.type, lines: r.operator.lines }
+              : { mode: 'new' },
           operator: r.models.operator ? { id: r.models.operator.id, title: r.models.operator.title, provider: r.models.operator.provider } : null,
           judge: r.models.judge ? { id: r.models.judge.id, title: r.models.judge.title, provider: r.models.judge.provider } : null,
-          skillset:
-            r.skillset === 'build'
-              ? 'build'
-              : r.skillset
-                ? { id: r.skillset.set.id, title: r.skillset.set.title, version: r.skillset.version.id, requested: r.skillset.requested, files: r.skillset.version.files.length, nextVersion: null }
-                : null,
           items: r.items.map((i) => ({ index: i.index, kind: i.kind, pos: i.pos, solution: i.solution?.id ?? null, title: i.solution?.title ?? null, case: i.caseDef?.id ?? null })),
           limits: r.limits,
           repetitions: r.repetitions,
@@ -366,7 +326,6 @@ export function runListItem(r: RunRecord) {
   const curItem = cur ? line.items.find((i) => i.index === cur.index) : null;
   const total = line ? line.items.filter((i) => i.kind === 'case').length : 0;
   const done = line ? line.items.filter((i) => i.kind === 'case' && i.outcome).length : 0;
-  const ss = r.settings.skillset;
   return {
     id: r.id,
     title: r.title,
@@ -379,9 +338,10 @@ export function runListItem(r: RunRecord) {
     startAt: r.startAt,
     startedAt: r.startedAt,
     finishedAt: r.finishedAt,
-    skillset: ss === 'build' ? { label: 'стартовые скиллы сборки', version: null } : ss ? { label: ss.title, version: ss.version } : null,
-    newVersions: r.lines.map((l) => l.skills.newVersion).filter(Boolean),
-    models: { agent: r.settings.agentModel.title, operator: r.settings.operator?.id ?? null, judge: r.settings.judge?.id ?? null },
+    testOperator: operatorLabel(r),
+    senders: r.lines.map((l) => l.senderId).filter(Boolean),
+    agent: { id: r.settings.agent.id, title: r.settings.agent.title, build: r.settings.agent.build, model: r.settings.agent.model ?? null },
+    models: { operator: r.settings.operator?.id ?? null, judge: r.settings.judge?.id ?? null },
     bar: (line?.items ?? []).filter((i) => i.kind === 'case').map((i) => (i.status === 'running' ? 'live' : i.outcome === 'passed' ? 'ok' : i.outcome === 'failed' ? 'no' : i.outcome === 'technical' ? 'tech' : i.outcome === 'not_evaluated' ? 'na' : '')),
     progress: { done, total, phase: cur?.phase ?? null, pos: curItem?.pos ?? null, turns: null as number | null },
     success: successOf(r),
@@ -393,5 +353,5 @@ export function runListItem(r: RunRecord) {
 }
 
 export function runDetail(r: RunRecord) {
-  return { ...r, summary: r.status === 'running' || !r.summary ? computeRunMetrics(r) : r.summary };
+  return { ...r, testOperatorLabel: operatorLabel(r), summary: r.status === 'running' || !r.summary ? computeRunMetrics(r) : r.summary };
 }

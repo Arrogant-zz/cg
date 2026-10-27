@@ -1,0 +1,11 @@
+# Проверка после обучения: та же корзина на тестовом операторе последнего завершённого прогона demo-train.
+# Схема аналитика: demo-check → demo-train → demo-check-trained, в сравнении — ΔM1 и ΔM2.
+id: demo-check-trained
+title: Проверка · вторая линия · после обучения
+basket: second-line-check
+agent: fake-agent
+continueFrom: demo-train
+models:
+  operator: fake-operator
+  judge: fake-judge
+metrics: all

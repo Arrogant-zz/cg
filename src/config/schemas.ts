@@ -231,29 +231,11 @@ export const agentSchema = {
       },
       additionalProperties: false,
     },
-    model: {
-      type: 'object',
-      properties: { switch: { enum: ['none', 'request'] }, path: str, fixed: str },
-      additionalProperties: false,
-    },
+    // Метка модели агента: задана сборкой или развёртыванием, ClawGym её не переключает.
+    model: str,
     sessions: {
       type: 'object',
       properties: { max: { type: 'integer', minimum: 1, maximum: 50 } },
-      additionalProperties: false,
-    },
-    skills: {
-      type: 'object',
-      required: ['installer'],
-      properties: {
-        installer: { enum: ['none', 'directory', 'http'] },
-        note: str,
-        root: str,
-        skillsDir: str,
-        pendingDir: str,
-        reportsDir: str,
-        baseUrl: str,
-        headers: strMap,
-      },
       additionalProperties: false,
     },
     healthUrl: str,
@@ -269,8 +251,8 @@ export const modelSchema = {
   properties: {
     id,
     title: str,
-    roles: { type: 'array', minItems: 1, items: { enum: ['agent', 'operator', 'judge'] } },
-    provider: { enum: ['gigachat-v1', 'gigachat-v2', 'deployment', 'agent-request'] },
+    roles: { type: 'array', minItems: 1, items: { enum: ['operator', 'judge'] } },
+    provider: { enum: ['gigachat-v1', 'gigachat-v2'] },
     baseUrl: str,
     path: { type: 'string', pattern: '^/' },
     apiKey: str,
@@ -298,40 +280,6 @@ export const modelSchema = {
   additionalProperties: false,
 } as const;
 
-export const skillsetSchema = {
-  type: 'object',
-  required: ['id', 'title', 'versions'],
-  properties: {
-    id,
-    title: str,
-    description: str,
-    compatibility: {
-      type: 'object',
-      properties: { agent: str, learningKit: str },
-      additionalProperties: false,
-    },
-    versions: {
-      type: 'array',
-      minItems: 1,
-      items: {
-        type: 'object',
-        required: ['id', 'path'],
-        properties: {
-          id: { type: 'string', pattern: '^[A-Za-z0-9._-]+$' },
-          path: str,
-          createdAt: str,
-          source: {
-            type: 'object',
-            properties: { kind: { enum: ['import', 'training', 'manual'] }, note: str, from: str, run: { type: 'integer' } },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  additionalProperties: false,
-} as const;
 
 const metric = {
   type: 'object',
@@ -389,21 +337,11 @@ export const runSchema = {
     agent: id,
     models: {
       type: 'object',
-      properties: { agent: str, operator: str, judge: str },
+      properties: { operator: str, judge: str },
       additionalProperties: false,
     },
-    skillset: {
-      anyOf: [
-        { enum: ['build', 'none'] },
-        { type: 'null' },
-        {
-          type: 'object',
-          required: ['id', 'version'],
-          properties: { id, version: str },
-          additionalProperties: false,
-        },
-      ],
-    },
+    // Продолжить на тестовом операторе последнего завершённого прогона этой настройки (решение владельца от 27.10.2026).
+    continueFrom: id,
     metrics: { anyOf: [{ enum: ['all'] }, strArr] },
     limits,
     repetitions: { type: 'integer', minimum: 1, maximum: 10 },

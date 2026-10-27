@@ -33,8 +33,7 @@ ${issuesBox(a.issues, 'Ошибки в подключении')}${warningsList(a
 <span class="lbl" style="padding-bottom: 6px">Инструменты и команды</span>
 <div class="kv"><span class="k">MCP-контракт</span><span class="mono">${a.mcp.contract} · ${a.mcp.protocolVersion} · x-task-id из ${a.mcp.taskIdFrom.join(', ')}</span></div>
 <div class="kv"><span class="k">Служебные команды</span><span class="row" style="gap: 6px"><span class="ref">${a.commands.reset}</span><span class="ref">${a.commands.capture}</span><span class="ref">${a.commands.curator}</span></span></div>
-<div class="kv"><span class="k">Модель агента</span><span>${a.model.switch === 'request' ? html`параметр запроса <span class="mono">${a.model.path}</span>` : html`${icon('lock', 's14')} задана развёртыванием${a.model.fixed ? ` · ${a.model.fixed}` : ''}`}</span></div>
-<div class="kv"><span class="k">Установка набора скиллов</span><span>${a.skills.kind === 'none' ? html`<span class="t2">${a.skills.note}</span>` : a.skills.kind === 'http' ? html`HTTP-API workspace <span class="mono">${a.skills.baseUrl}</span> · предложенный контракт` : html`каталог <span class="mono">${a.skills.root}</span>`}</span></div>
+<div class="kv"><span class="k">Модель и скиллы</span><span>${icon('lock', 's14')} ${a.model ?? 'модель не указана'} · задаёт сборка агента; скиллы живут у тестового оператора, ClawGym их не ставит и не выгружает</span></div>
 <div class="kv"><span class="k">Версия агента</span><span>${a.build ?? 'не указана'}${a.learningKit ? ` · ${a.learningKit}` : ''}</span></div>
 <div class="kv"><span class="k">Сессии</span><span>до ${a.sessions.max} одновременно · один диалог на сессию</span></div>
 </div>
@@ -52,11 +51,11 @@ export async function render() {
 <hr class="rule">
 <section class="sec" id="models" aria-labelledby="mo-h">
 <div class="sec-h"><h2 class="h2" id="mo-h">Модели</h2><span class="cap mono">models/</span></div>
-<div class="tw"><table class="tbl"><thead><tr><th>Модель</th><th>Роли</th><th>Провайдер и параметры</th><th>Как переключается</th><th>Готовность</th></tr></thead>
+<div class="tw"><table class="tbl"><thead><tr><th>Модель</th><th>Роли</th><th>Провайдер и параметры</th><th>Готовность</th></tr></thead>
 <tbody>${d.models.map(
-    (m) => html`<tr><td><span class="mono m5">${m.id}</span><div class="cap">${m.title}</div></td><td>${m.roles.map((r) => html`<span class="pill">${r === 'agent' ? 'агент' : r === 'operator' ? 'оператор' : 'оценка'}</span> `)}</td><td class="t2">${m.provider}${m.model ? html` · <span class="mono">${m.model}</span>` : ''}${Object.entries(m.params ?? {}).length ? ` · ${Object.entries(m.params).map(([k, v]) => `${k} ${v}`).join(' · ')}` : ''}${m.endpoint ? html`<div class="cap mono">POST ${m.endpoint}</div>` : ''}${m.auth ? html`<div class="cap">${icon('lock', 's14')} ${m.auth}</div>` : ''}${m.description ? html`<div class="cap">${m.description}</div>` : ''}</td><td>${m.provider === 'deployment' ? html`<span class="row" style="gap: 6px">${icon('lock', 's14')}<span>${m.switching}</span></span>` : m.switching}</td><td>${m.readiness ? html`<span class="pill na">${m.readiness}</span>` : mk(true)}</td></tr>`,
+    (m) => html`<tr><td><span class="mono m5">${m.id}</span><div class="cap">${m.title}</div></td><td>${m.roles.map((r) => html`<span class="pill">${r === 'operator' ? 'оператор' : 'оценка'}</span> `)}</td><td class="t2">${m.provider}${m.model ? html` · <span class="mono">${m.model}</span>` : ''}${Object.entries(m.params ?? {}).length ? ` · ${Object.entries(m.params).map(([k, v]) => `${k} ${v}`).join(' · ')}` : ''}${m.endpoint ? html`<div class="cap mono">POST ${m.endpoint}</div>` : ''}${m.auth ? html`<div class="cap">${icon('lock', 's14')} ${m.auth}</div>` : ''}${m.description ? html`<div class="cap">${m.description}</div>` : ''}</td><td>${m.readiness ? html`<span class="pill na">${m.readiness}</span>` : mk(true)}</td></tr>`,
   )}</tbody></table></div>
-${hint('Одна модель может играть разные роли, но вызовы и контексты ролей всегда раздельные. Если переключение недоступно, выбор не показывается как рабочий.')}
+${hint('Здесь модели LLM-оператора и судьи. Модель агента задаёт его сборка — она указана у подключения. Одна модель может играть обе роли, но вызовы и контексты ролей всегда раздельные.')}
 </section>
 <hr class="rule">
 <section class="sec" id="metrics" aria-labelledby="me-h">

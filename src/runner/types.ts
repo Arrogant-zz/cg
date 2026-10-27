@@ -1,5 +1,4 @@
-// Сохраняемая запись прогона: настройки, план, линии (повторения), элементы корзины, проходы curator, итоги.
-import type { TreeChange } from '../util/diff.js';
+// Сохраняемая запись прогона: настройки, план, линии (повторения) с тестовыми операторами, элементы корзины, проходы curator, итоги.
 import type { ExecStats, Outcome } from '../execution/evaluate.js';
 import type { CheckItem } from '../execution/events.js';
 import type { Issue, Limits } from '../config/types.js';
@@ -56,29 +55,28 @@ export interface CuratorPassRecord {
   reset: { status: string; durationMs: number | null; error?: string } | null;
   text: string;
   reply: string | null;
+  /** Строка результата curator: сколько кейсов разобрано, скиллов создано и обновлено. Сами файлы остаются в агенте. */
   parsed: unknown;
   error?: string;
-  changes: TreeChange[] | null;
-  exportNote: string;
   report: string | null;
   /** HTTP-обмены прохода: /reset и /skill-curator. */
   http?: HttpExchange[];
 }
 
-export interface SkillsRecord {
-  mode: 'version' | 'build' | 'none';
-  source: { skillset: string; version: string; checksum: string; files: number } | null;
-  initial: { checksum: string; files: number } | null;
-  final: { checksum: string; files: number } | null;
-  changes: TreeChange[] | null;
-  newVersion: { id: string; status: 'ready' | 'partial' } | null;
-  versionNote: string;
-  immutability: { status: 'unchanged' | 'changed' | 'unchecked'; files: number; changes: TreeChange[]; note: string } | null;
+/** Прогон, через который прошёл тестовый оператор: так видно, с какими скиллами он начинает следующий. */
+export interface OperatorStep {
+  run: number;
+  title: string;
+  type: 'training' | 'checking';
+  line: number;
 }
 
 export interface LineRecord {
   index: number;
+  /** x-a2a-sender-id тестового оператора: у него в агенте живут скиллы. */
   senderId: string;
+  /** Прошлые прогоны этого оператора; пусто — новый оператор со стартовыми скиллами сборки. */
+  history: OperatorStep[];
   status: RunStatus;
   startedAt: string | null;
   finishedAt: string | null;
@@ -88,8 +86,6 @@ export interface LineRecord {
   curatorPasses: CuratorPassRecord[];
   counter: number;
   current: { index: number; execName: string | null; phase: string } | null;
-  skills: SkillsRecord;
-  materials: { kind: string; label: string; file: string | null; ok: boolean; note: string }[];
 }
 
 export interface RunRecord {
@@ -109,11 +105,12 @@ export interface RunRecord {
   overrides: Record<string, unknown>;
   settings: {
     basket: { id: string; title: string; file: string; hash: string; type: 'training' | 'checking'; curator: unknown; checking: unknown; items: number };
-    agent: { id: string; title: string; file: string; hash: string; build: string | null; learningKit: string | null; installer: string };
-    agentModel: { title: string; value: string | null; note: string; switchable: boolean; id: string | null };
+    /** model — метка модели из подключения: модель и стартовые скиллы задаёт сборка агента. */
+    agent: { id: string; title: string; file: string; hash: string; build: string | null; model: string | null; learningKit: string | null };
+    /** Новый тестовый оператор или продолжение на операторе прошлого прогона (решение владельца от 27.10.2026). */
+    testOperator: { mode: 'new' } | { mode: 'continue'; run: number; title: string; type: 'training' | 'checking'; configId: string };
     operator: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     judge: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
-    skillset: { id: string; title: string; version: string; requested: string; checksum: string; files: number } | 'build' | null;
     metrics: { id: string; title: string; builtin: string; version: string; params?: Record<string, unknown> }[];
     limits: Limits;
     repetitions: number;

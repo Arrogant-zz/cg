@@ -1,5 +1,5 @@
-// Полная конфигурация прогона до запуска (RUN-01, CFG-02, AG-03, MOD-02, MET-02):
-// разрешённые ссылки, совместимость агента, моделей и метрик, план команд. Ошибка — запуск недоступен.
+// Полная конфигурация прогона до запуска (RUN-01, CFG-02, AG-03, MET-02):
+// разрешённые ссылки, совместимость агента, моделей и метрик, тестовый оператор, план команд. Ошибка — запуск недоступен.
 import type {
   AgentDef,
   BasketDef,
@@ -10,16 +10,15 @@ import type {
   ModelDef,
   Registry,
   RunConfigDef,
-  SkillsetDef,
-  SkillsetVersion,
   SolutionDef,
 } from '../config/types.js';
 import { hasEnvRef, resolveEnvRefs } from '../config/loader.js';
 import type { Env } from '../env.js';
 import { checkAllowedHost } from '../agent/client.js';
 import { modelReadiness } from '../llm/provider.js';
-import { findVersion } from '../skillsets/store.js';
+import { plural } from '../util/core.js';
 import { buildPlan, describePlan, type PlanStep } from './plan.js';
+import type { OperatorStep, RunRecord } from './types.js';
 
 export interface ResolvedItem {
   index: number;
@@ -45,9 +44,9 @@ export interface ResolvedRun {
   basket: BasketDef;
   items: ResolvedItem[];
   agent: AgentDef;
-  models: { agent: ModelDef | null; operator: ModelDef | null; judge: ModelDef | null };
-  agentModel: { value: string | null; title: string; note: string; switchable: boolean };
-  skillset: { set: SkillsetDef; version: SkillsetVersion; requested: string } | 'build' | null;
+  models: { operator: ModelDef | null; judge: ModelDef | null };
+  /** Тестовый оператор: новый — стартовые скиллы сборки агента; продолжение — скиллы, полученные в прошлом прогоне. */
+  operator: { mode: 'new' } | { mode: 'continue'; source: RunRecord; lines: { senderId: string; history: OperatorStep[] }[] };
   metrics: MetricDef[];
   limits: Limits;
   repetitions: number;
@@ -65,10 +64,13 @@ export interface RunPreview {
 }
 
 export interface RunOverrides {
-  skillsetVersion?: string;
+  /** Номер прогона, на чьём тестовом операторе продолжить, или new — новый оператор; по умолчанию — continueFrom из файла. */
+  continueFrom?: number | 'new';
 }
 
-export function resolveRun(reg: Registry, env: Env, runId: string, overrides: RunOverrides = {}): RunPreview {
+const FINISHED = new Set(['completed', 'stopped']);
+
+export function resolveRun(reg: Registry, env: Env, runId: string, overrides: RunOverrides = {}, runs: RunRecord[] = []): RunPreview {
   const issues: Issue[] = [];
   const cfg = reg.runs.get(runId);
   const empty: RunPreview = { ok: false, issues, resolved: null, plan: [], planText: [], metrics: [], involvedFiles: [] };
@@ -117,9 +119,9 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
     });
   }
 
-  // Модели по ролям (MOD-01) и реальное переключение модели агента (MOD-02).
-  const pick = (role: 'agent' | 'operator' | 'judge') => (cfg.models[role] ? reg.models.get(cfg.models[role]!) ?? null : null);
-  const models = { agent: pick('agent'), operator: pick('operator'), judge: pick('judge') };
+  // Модели оператора и оценки (MOD-01). Модель агента задана его сборкой: ClawGym её не переключает.
+  const pick = (role: 'operator' | 'judge') => (cfg.models[role] ? reg.models.get(cfg.models[role]!) ?? null : null);
+  const models = { operator: pick('operator'), judge: pick('judge') };
   for (const m of Object.values(models)) if (m) files.add(m.source.file);
   if (!cfg.models.operator) err(cfg.source.file, 'Не выбрана модель LLM-оператора: автоматическое решение кейсов невозможно', 'models.operator');
   for (const role of ['operator', 'judge'] as const) {
@@ -129,23 +131,6 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
     if (r) err(m.source.file, `Модель ${role === 'operator' ? 'оператора' : 'оценки'} «${m.id}»: ${r}`, 'model', 'Задайте переменные окружения или выберите другую модель');
   }
   if (!cfg.models.judge) warn(cfg.source.file, 'Не выбрана модель оценки: смысл ответа останется «не оценён», итоговый успех не будет посчитан', 'models.judge');
-
-  let agentModel = { value: null as string | null, title: '—', note: '', switchable: false };
-  if (agent) {
-    if (agent.model.switch === 'none') {
-      const fixed = agent.model.fixed;
-      agentModel = { value: null, title: fixed ?? 'задана развёртыванием', note: 'Стенд не переключает модель агента запросом, выбор недоступен', switchable: false };
-      if (models.agent) {
-        if (models.agent.provider !== 'deployment' || (fixed && models.agent.id !== fixed && models.agent.model !== fixed)) {
-          err(cfg.source.file, `Подключение «${agent.id}» не переключает модель агента: выбор «${models.agent.id}» не повлияет на вызов`, 'models.agent', 'Уберите models.agent или укажите модель развёртывания');
-        } else agentModel.title = models.agent.title;
-      }
-    } else {
-      if (!models.agent) err(cfg.source.file, 'Подключение переключает модель параметром запроса: выберите models.agent', 'models.agent');
-      else if (models.agent.provider !== 'agent-request') err(models.agent.source.file, 'Для переключения запросом нужна модель с provider: agent-request', 'provider');
-      else agentModel = { value: models.agent.model, title: models.agent.title, note: `значение «${models.agent.model}» в ${agent.model.path}`, switchable: true };
-    }
-  }
 
   // Подключение агента: адрес, хост, команды, контракт (AG-01–03).
   if (agent) {
@@ -168,22 +153,31 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
     if (cfg.repetitions > agent.sessions.max) warn(cfg.source.file, `Повторений ${cfg.repetitions}, а агент выдерживает ${agent.sessions.max} сессии: часть пойдёт по очереди`, 'repetitions');
   }
 
-  // Набор скиллов (SK-03): выбранная версия либо стартовые скиллы сборки.
-  let skillset: ResolvedRun['skillset'] = null;
-  const ss = cfg.skillset;
-  if (ss === 'build') {
-    skillset = 'build';
-    warn(cfg.source.file, 'Стартовые скиллы сборки агента: промежуточный режим, выбор знаний не выполняется', 'skillset');
-  } else if (ss) {
-    const want = overrides.skillsetVersion ?? ss.version;
-    const found = findVersion(reg, ss.id, want);
-    if (!found) err(cfg.source.file, `Версия ${want} набора «${ss.id}» не найдена`, 'skillset');
-    else {
-      files.add(found.set.source.file);
-      skillset = { set: found.set, version: found.version, requested: want };
-      if (found.version.status !== 'ready') err(cfg.source.file, `Версия ${found.version.id} сохранена как частичная и не годится для прогона`, 'skillset.version');
-      if (agent && agent.skills.kind === 'none') err(agent.source.file, `Агент не умеет устанавливать набор скиллов: ${agent.skills.note}`, 'skills.installer', 'Выберите skillset: build или подключение с установкой набора');
-      if (found.set.compatibility.agent && agent && found.set.compatibility.agent !== agent.id) warn(found.set.source.file, `Набор помечен совместимым с агентом «${found.set.compatibility.agent}»`, 'compatibility.agent');
+  // Тестовый оператор (решение владельца от 27.10.2026). Скиллы живут в агенте у оператора (x-a2a-sender-id) и меняются только
+  // сборкой или обучением. Новый оператор начинает со стартовых скиллов сборки; продолжение получает то, чему оператор научился раньше.
+  let operator: ResolvedRun['operator'] = { mode: 'new' };
+  const want = overrides.continueFrom ?? (cfg.continueFrom ? 'config' : 'new');
+  if (want !== 'new') {
+    const source =
+      want === 'config'
+        ? (runs.filter((x) => x.configId === cfg.continueFrom && FINISHED.has(x.status)).sort((a, b) => b.id - a.id)[0] ?? null)
+        : (runs.find((x) => x.id === want) ?? null);
+    if (!source) {
+      if (want === 'config') err(cfg.source.file, `Нет завершённого прогона «${cfg.continueFrom}»: продолжать не на ком`, 'continueFrom', 'Сначала запустите его или выберите при запуске нового тестового оператора');
+      else err(cfg.source.file, `Прогон #${want} для продолжения не найден`, 'continueFrom');
+    } else {
+      const lines = source.lines.slice(0, cfg.repetitions);
+      const busy = runs.find((x) => (x.status === 'queued' || x.status === 'running') && x.lines.some((l) => lines.some((s) => s.senderId && s.senderId === l.senderId)));
+      if (!FINISHED.has(source.status)) err(cfg.source.file, `Прогон #${source.id} не завершён: продолжить можно только завершённый или остановленный`, 'continueFrom');
+      else if (agent && source.settings.agent.id !== agent.id) err(cfg.source.file, `Оператор прогона #${source.id} работал с агентом «${source.settings.agent.id}»: его скиллы остались там`, 'continueFrom');
+      else if (source.lines.length < cfg.repetitions) err(cfg.source.file, `В прогоне #${source.id} ${source.lines.length} ${plural(source.lines.length, 'линия', 'линии', 'линий')}, а повторений ${cfg.repetitions}: каждой линии нужен свой оператор`, 'repetitions');
+      else if (lines.some((l) => !l.senderId)) err(cfg.source.file, `Линия прогона #${source.id} не начиналась — у неё нет тестового оператора`, 'continueFrom');
+      else if (busy) err(cfg.source.file, `Оператор прогона #${source.id} занят прогоном #${busy.id}`, 'continueFrom', 'Дождитесь его завершения');
+      else {
+        if (source.status === 'stopped') warn(cfg.source.file, `Прогон #${source.id} остановлен: скиллы оператора — на момент остановки`, 'continueFrom');
+        const step = (index: number): OperatorStep => ({ run: source.id, title: source.title, type: source.type, line: index });
+        operator = { mode: 'continue', source, lines: lines.map((l) => ({ senderId: l.senderId, history: [...(l.history ?? []), step(l.index)] })) };
+      }
     }
   }
 
@@ -191,7 +185,7 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
   const all = [...reg.metrics.values()];
   const metrics = cfg.metrics.includes('*') ? all : cfg.metrics.map((id) => reg.metrics.get(id)).filter((m): m is MetricDef => !!m);
   for (const m of metrics) files.add(m.source.file);
-  const availability = metrics.map((m) => availabilityOf(m, { basket, agent, models, skillset }));
+  const availability = metrics.map((m) => availabilityOf(m, { basket, agent, models }));
 
   // Кейсы и решения корзины.
   for (const it of items) {
@@ -214,8 +208,7 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
           items,
           agent,
           models,
-          agentModel,
-          skillset,
+          operator,
           metrics,
           limits: cfg.limits,
           repetitions: cfg.repetitions,
@@ -227,11 +220,10 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
 
 function availabilityOf(
   m: MetricDef,
-  ctx: { basket: BasketDef | null; agent: AgentDef | null; models: ResolvedRun['models']; skillset: ResolvedRun['skillset'] },
+  ctx: { basket: BasketDef | null; agent: AgentDef | null; models: ResolvedRun['models'] },
 ): MetricAvailability {
   const base = { id: m.id, title: m.title, builtin: m.builtin };
   const checking = ctx.basket?.type === 'checking';
-  const canExport = !!ctx.agent && ctx.agent.skills.kind !== 'none';
   switch (m.builtin) {
     case 'action-checks':
       return { ...base, available: true, source: 'журнал инструментов', reason: '' };
@@ -255,10 +247,6 @@ function availabilityOf(
         ? { ...base, available: true, source: 'usage в ответах', reason: '' }
         : { ...base, available: false, source: 'usage в ответах', reason: 'у агента нет usage в ответе; токены оператора и судьи — если их отдаёт провайдер' };
     }
-    case 'skill-changes':
-      if (!canExport) return { ...base, available: false, source: 'файлы набора', reason: 'подключение не выгружает файлы скиллов' };
-      if (checking) return { ...base, available: true, source: 'файлы набора до и после', reason: 'в проверке — контроль неизменности' };
-      return { ...base, available: true, source: 'после каждого curator', reason: '' };
     case 'operator-errors':
       return { ...base, available: true, source: 'вызовы LLM-оператора', reason: '' };
     case 'final-action':

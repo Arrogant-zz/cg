@@ -14,7 +14,8 @@ export interface Stand {
   base: string;
   agentUrl: string;
   dataDir: string;
-  agentRequests: { sender: string; text: string }[];
+  /** Запросы к fake-agent; ts — когда пришёл: оператор после обучения тот же, что в обучающем прогоне. */
+  agentRequests: { sender: string; text: string; ts: string }[];
   close(): Promise<void>;
   api<T = any>(method: string, p: string, body?: unknown): Promise<{ status: number; data: T }>;
   waitRun(id: number, timeoutMs?: number): Promise<any>;
@@ -44,12 +45,12 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
     port: 0,
     mcpUrl: `${base}/mcp`,
     workspaces: path.join(dataDir, 'fake-workspaces'),
-    buildSkills: path.join(HOME, 'skillsets/second-line/V1'),
+    buildSkills: path.join(HOME, 'dev/fake-agent/build'),
     failOn: extraEnv.FAKE_AGENT_FAIL_ON ?? null,
   });
   raw.FAKE_AGENT_URL = agent.url;
   await app.checkHealth();
-  const agentRequests: { sender: string; text: string }[] = [];
+  const agentRequests: { sender: string; text: string; ts: string }[] = [];
   agent.server.prependListener('request', (req) => {
     if (req.url === '/a2a') {
       const chunks: Buffer[] = [];
@@ -57,7 +58,7 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
       req.on('end', () => {
         try {
           const b = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          agentRequests.push({ sender: String(req.headers['x-a2a-sender-id']), text: b.params.message.parts.map((p: any) => p.text).join('\n') });
+          agentRequests.push({ sender: String(req.headers['x-a2a-sender-id']), text: b.params.message.parts.map((p: any) => p.text).join('\n'), ts: new Date().toISOString() });
         } catch {
           /* не JSON */
         }

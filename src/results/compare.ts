@@ -12,11 +12,19 @@ export interface CompareRow {
   focus?: boolean;
 }
 
-function skillsetLabel(r: RunRecord): string {
-  const s = r.settings.skillset;
-  if (!s) return 'не выбран';
-  if (s === 'build') return 'стартовые скиллы сборки';
-  return `${s.title} ${s.version} · ${s.files} ${plural(s.files, 'файл', 'файла', 'файлов')}`;
+/** С какими скиллами тестовый оператор начал прогон: стартовые скиллы сборки или результат его прошлых прогонов. */
+export function operatorLabel(r: RunRecord): string {
+  // Записи до 27.10.2026: прогон шёл на установленной версии набора.
+  const legacy = (r.settings as any).skillset;
+  if (!r.settings.testOperator && legacy) return legacy === 'build' ? 'стартовые скиллы сборки' : `набор ${legacy.title} ${legacy.version}`;
+  const h = r.lines[0]?.history ?? [];
+  if (!h.length) return 'новый · стартовые скиллы сборки';
+  return `после ${h.map((x) => `#${x.run} ${x.type === 'training' ? 'обучение' : 'проверка'}`).join(' → ')}`;
+}
+
+function agentLabel(r: RunRecord): string {
+  const a = r.settings.agent;
+  return [a.title, a.build, a.model].filter(Boolean).join(' · ');
 }
 
 function casesHash(r: RunRecord): string {
@@ -30,18 +38,13 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
   const rows: CompareRow[] = [
     { key: 'basket', title: 'Корзина', a: `${a.settings.basket.id} @${a.settings.basket.hash}`, b: `${b.settings.basket.id} @${b.settings.basket.hash}`, same: a.settings.basket.id === b.settings.basket.id && a.settings.basket.hash === b.settings.basket.hash },
     { key: 'cases', title: 'Кейсы и решения', a: `${a.settings.basket.items} · по снимку`, b: `${b.settings.basket.items} · ${casesHash(a) === casesHash(b) ? 'снимки совпадают' : 'снимки различаются'}`, same: casesHash(a) === casesHash(b) },
-    { key: 'agent', title: 'Агент', a: `${a.settings.agent.title}${a.settings.agent.build ? ` · ${a.settings.agent.build}` : ''}`, b: `${b.settings.agent.title}${b.settings.agent.build ? ` · ${b.settings.agent.build}` : ''}`, same: a.settings.agent.id === b.settings.agent.id && a.settings.agent.hash === b.settings.agent.hash && a.settings.agent.build === b.settings.agent.build },
+    { key: 'agent', title: 'Агент · сборка и модель', a: agentLabel(a), b: agentLabel(b), same: a.settings.agent.id === b.settings.agent.id && a.settings.agent.hash === b.settings.agent.hash && agentLabel(a) === agentLabel(b) },
     {
       key: 'models',
-      title: 'Модели агента, оператора, оценки',
-      a: [a.settings.agentModel.title, a.settings.operator?.id ?? '—', a.settings.judge?.id ?? '—'].join(' · '),
-      b: [b.settings.agentModel.title, b.settings.operator?.id ?? '—', b.settings.judge?.id ?? '—'].join(' · '),
-      same:
-        a.settings.agentModel.title === b.settings.agentModel.title &&
-        a.settings.operator?.id === b.settings.operator?.id &&
-        a.settings.operator?.hash === b.settings.operator?.hash &&
-        a.settings.judge?.id === b.settings.judge?.id &&
-        a.settings.judge?.hash === b.settings.judge?.hash,
+      title: 'Модели оператора и оценки',
+      a: [a.settings.operator?.id ?? '—', a.settings.judge?.id ?? '—'].join(' · '),
+      b: [b.settings.operator?.id ?? '—', b.settings.judge?.id ?? '—'].join(' · '),
+      same: a.settings.operator?.id === b.settings.operator?.id && a.settings.operator?.hash === b.settings.operator?.hash && a.settings.judge?.id === b.settings.judge?.id && a.settings.judge?.hash === b.settings.judge?.hash,
     },
     {
       key: 'prompts',
@@ -53,7 +56,7 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
     { key: 'metrics', title: 'Определения метрик', a: metricsLabel(a), b: metricsLabel(b), same: metricsKey(a) === metricsKey(b) },
     { key: 'contract', title: 'Контракт инструментов', a: `${a.settings.contract.version} @${a.settings.contract.hash}`, b: `${b.settings.contract.version} @${b.settings.contract.hash}`, same: a.settings.contract.hash === b.settings.contract.hash },
     { key: 'limits', title: 'Лимиты', a: limits(a), b: limits(b), same: limits(a) === limits(b) },
-    { key: 'skillset', title: 'Набор скиллов', a: skillsetLabel(a), b: skillsetLabel(b), same: skillsetLabel(a) === skillsetLabel(b), focus: true },
+    { key: 'operator', title: 'Тестовый оператор', a: operatorLabel(a), b: operatorLabel(b), same: operatorLabel(a) === operatorLabel(b), focus: true },
   ];
   const differ = rows.filter((r) => !r.same);
   const conclusion = !differ.length
@@ -113,7 +116,6 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
     },
     common: { n: common.length, passA, passB },
     metrics,
-    immutability: [a, b].map((r) => ({ run: r.id, items: r.lines.map((l) => l.skills.immutability) })),
     limitations,
   };
 }
@@ -141,5 +143,5 @@ const label = (i: ItemRecord) => (i.outcome === 'technical' ? 'техничес�
 const failures = (i: ItemRecord) => [...(i.checks ?? []).filter((c) => c.passed === false).map((c) => c.text), ...i.answerFailed];
 
 function brief(r: RunRecord) {
-  return { id: r.id, title: r.title, type: r.type, status: r.status, finishedAt: r.finishedAt, skillset: r.settings.skillset };
+  return { id: r.id, title: r.title, type: r.type, status: r.status, finishedAt: r.finishedAt, testOperator: operatorLabel(r) };
 }

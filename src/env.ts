@@ -4,7 +4,7 @@ import path from 'node:path';
 export interface Env {
   port: number;
   host: string;
-  /** Корень настроек: contracts/, cases/, solutions/, baskets/, runs/, agents/, models/, skillsets/, metrics/, data/. */
+  /** Корень настроек: contracts/, cases/, solutions/, baskets/, runs/, agents/, models/, metrics/, data/. */
   home: string;
   /** Результаты прогонов, ручные сессии, полученные версии скиллов. */
   dataDir: string;

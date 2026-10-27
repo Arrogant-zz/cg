@@ -145,26 +145,10 @@ export class Workspace {
     }
   }
 
-  async prepare(): Promise<void> {
-    await fsp.mkdir(this.dir, { recursive: true });
-    await fsp.rm(path.join(this.dir, 'skills/learned'), { recursive: true, force: true });
-    await fsp.rm(path.join(this.dir, 'learning/cases/pending'), { recursive: true, force: true });
-    await fsp.mkdir(path.join(this.dir, 'skills/learned'), { recursive: true });
-  }
-
   safe(rel: string): string {
     const t = path.resolve(this.dir, rel);
     if (!t.startsWith(path.resolve(this.dir) + path.sep)) throw new Error(`Путь вне workspace: ${rel}`);
     return t;
-  }
-
-  async writeFiles(files: { path: string; content: string }[]): Promise<void> {
-    for (const f of files) {
-      if (!f.path.startsWith('skills/learned/')) throw new Error(`Набор может содержать только skills/learned/**: ${f.path}`);
-      const t = this.safe(f.path);
-      await fsp.mkdir(path.dirname(t), { recursive: true });
-      await fsp.writeFile(t, f.content);
-    }
   }
 
   async skills(): Promise<{ path: string; content: string }[]> {
@@ -179,14 +163,6 @@ export class Workspace {
     const out = [];
     for (const rel of await walk(base)) out.push({ path: `learning/cases/pending/${rel}`, content: await fsp.readFile(path.join(base, rel), 'utf8') });
     return out;
-  }
-
-  async read(rel: string): Promise<string | null> {
-    try {
-      return await fsp.readFile(this.safe(rel), 'utf8');
-    } catch {
-      return null;
-    }
   }
 
   async write(rel: string, text: string): Promise<void> {

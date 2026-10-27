@@ -188,11 +188,7 @@ export interface BasketDef {
 
 // ---------- Агент ----------
 
-export type InstallerDef =
-  | { kind: 'none'; note: string }
-  | { kind: 'directory'; root: string; skillsDir: string; pendingDir: string; reportsDir: string }
-  | { kind: 'http'; baseUrl: string; headers: Record<string, string> };
-
+// Модель и стартовые скиллы задаются сборкой агента; ClawGym их не меняет и не выгружает (решение владельца от 27.10.2026).
 export interface AgentDef {
   id: string;
   title: string;
@@ -219,9 +215,9 @@ export interface AgentDef {
   };
   commands: { reset: string; capture: string; curator: string };
   mcp: { contract: string; protocolVersion: string; taskIdFrom: string[] };
-  model: { switch: 'none' | 'request'; path: string | null; fixed: string | null };
+  /** Модель агента — метка из файла подключения: задана сборкой или развёртыванием, в снимке прогона для сравнения. */
+  model: string | null;
   sessions: { max: number };
-  skills: InstallerDef;
   healthUrl: string | null;
   build: string | null;
   learningKit: string | null;
@@ -230,7 +226,7 @@ export interface AgentDef {
 
 // ---------- Модель ----------
 
-export type ModelRole = 'agent' | 'operator' | 'judge';
+export type ModelRole = 'operator' | 'judge';
 
 /** Клиентский сертификат (mTLS): пути к файлам и пароль ключа, обычно ссылками ${env:NAME}. */
 export interface ModelTls {
@@ -247,7 +243,7 @@ export interface ModelDef {
   id: string;
   title: string;
   roles: ModelRole[];
-  provider: LlmProviderName | 'deployment' | 'agent-request';
+  provider: LlmProviderName;
   baseUrl: string | null;
   /** Путь метода относительно baseUrl; по умолчанию — путь провайдера. */
   path: string | null;
@@ -268,36 +264,6 @@ export interface ModelDef {
   source: Source;
 }
 
-// ---------- Набор скиллов ----------
-
-export interface SkillFile {
-  path: string;
-  sha256: string;
-  size: number;
-  content: string;
-}
-
-export interface SkillsetVersion {
-  id: string;
-  skillset: string;
-  createdAt: string | null;
-  origin: { kind: 'import' | 'training' | 'manual'; note: string; from: string | null; run: number | null; line: number | null };
-  status: 'ready' | 'partial';
-  files: SkillFile[];
-  checksum: string;
-  generated: boolean;
-  dir: string;
-}
-
-export interface SkillsetDef {
-  id: string;
-  title: string;
-  description: string;
-  compatibility: { agent: string | null; learningKit: string | null };
-  versions: SkillsetVersion[];
-  source: Source;
-}
-
 // ---------- Метрика ----------
 
 export const BUILTIN_METRICS = [
@@ -310,7 +276,6 @@ export const BUILTIN_METRICS = [
   'unexpected-tools',
   'turns-duration',
   'tokens',
-  'skill-changes',
   'operator-errors',
   'final-action',
   'tools-f1',
@@ -339,9 +304,9 @@ export interface RunConfigDef {
   title: string;
   basket: string;
   agent: string;
-  models: { agent: string | null; operator: string | null; judge: string | null };
-  /** null — без подготовки набора; 'build' — стартовые скиллы сборки агента (промежуточный режим). */
-  skillset: { id: string; version: string } | 'build' | null;
+  models: { operator: string | null; judge: string | null };
+  /** Продолжить на тестовом операторе последнего завершённого прогона этой настройки; null — новый оператор со стартовыми скиллами сборки. */
+  continueFrom: string | null;
   metrics: string[];
   limits: Limits;
   repetitions: number;
@@ -358,7 +323,6 @@ export interface Registry {
   baskets: Map<string, BasketDef>;
   agents: Map<string, AgentDef>;
   models: Map<string, ModelDef>;
-  skillsets: Map<string, SkillsetDef>;
   metrics: Map<string, MetricDef>;
   runs: Map<string, RunConfigDef>;
   issues: Issue[];

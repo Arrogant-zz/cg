@@ -1,5 +1,5 @@
-// HTTP fake-agent: A2A SendMessage в формате AEFClaw (templates/aefclaw-a2a-message.json, ответ result.task)
-// и предложенный API workspace для установки наборов скиллов (docs/CONTRACTS.md).
+// HTTP fake-agent: A2A SendMessage в формате AEFClaw (templates/aefclaw-a2a-message.json, ответ result.task).
+// Как у AEFClaw, скиллы живут внутри агента у тестового оператора (x-a2a-sender-id): снаружи их не устанавливают и не выгружают.
 import http from 'node:http';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -76,34 +76,12 @@ export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: htt
                 message: { messageId: `fa-${Date.now()}`, role: 'ROLE_AGENT', parts: [{ mediaType: 'text/plain', text: reply }] },
               },
               metadata: {
-                model: b?.params?.metadata?.model ?? 'fake-agent',
+                model: 'fake-agent',
                 usage: { input_tokens: Math.ceil(text.length / 4) + 600, output_tokens: Math.ceil(reply.length / 4) },
               },
             },
           },
         });
-      }
-      const m = /^\/admin\/workspaces\/([^/]+)\/(prepare|skills|pending|file)$/.exec(url.pathname);
-      if (m) {
-        const sender = decodeURIComponent(m[1]);
-        const a = get(sender);
-        const op = m[2];
-        if (op === 'prepare' && req.method === 'POST') {
-          await a.ws.prepare();
-          return json(res, 200, { ok: true });
-        }
-        await a.ws.ensure();
-        if (op === 'skills' && req.method === 'PUT') {
-          const b = await body(req);
-          await a.ws.writeFiles(b.files ?? []);
-          return json(res, 200, { ok: true, files: (b.files ?? []).length });
-        }
-        if (op === 'skills' && req.method === 'GET') return json(res, 200, { files: await a.ws.skills() });
-        if (op === 'pending' && req.method === 'GET') return json(res, 200, { cases: (await a.ws.pending()).map((c) => ({ path: c.path })) });
-        if (op === 'file' && req.method === 'GET') {
-          const text = await a.ws.read(url.searchParams.get('path') ?? '');
-          return text === null ? json(res, 404, { error: 'нет файла' }) : json(res, 200, { path: url.searchParams.get('path'), content: text });
-        }
       }
       json(res, 404, { error: 'not found' });
     } catch (e: any) {

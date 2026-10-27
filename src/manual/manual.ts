@@ -5,9 +5,7 @@ import { AgentChannel } from '../execution/channel.js';
 import { startMessage } from '../execution/dialog.js';
 import { evaluate, execStats, type Evaluation, type ExecStats } from '../execution/evaluate.js';
 import type { MessageEvent, StatusEvent } from '../execution/events.js';
-import { createInstaller, type Installer, type WsFile } from '../skillsets/installer.js';
 import { StubState } from '../stubs/engine.js';
-import { findVersion } from '../skillsets/store.js';
 import { LlmJudge } from '../judge/judge.js';
 import { scoringOf } from '../metrics/scoring.js';
 import { createProvider, modelReadiness } from '../llm/provider.js';
@@ -17,18 +15,15 @@ import type { CommandName } from '../agent/commands.js';
 import type { PrepItem } from '../runner/types.js';
 import { sessionKey } from '../results/store.js';
 import { HttpError } from '../util/http.js';
-import { diffTrees } from '../util/diff.js';
-import { manifestChecksum } from '../util/fsx.js';
-import { errorMessage, nowIso, plural, randomHex, requestRef } from '../util/core.js';
+import { errorMessage, nowIso, randomHex, requestRef } from '../util/core.js';
 import { logger } from '../util/log.js';
 
 const log = logger('manual');
 
+/** Тестовый оператор: новый — стартовые скиллы сборки агента; существующий — скиллы, накопленные им раньше (например, в прогоне обучения). */
 export interface ManualCreate {
   case: string;
   agent: string;
-  model?: string | null;
-  skillset?: { id: string; version: string } | 'build' | null;
   sender?: { mode: 'new' | 'existing'; id?: string };
 }
 
@@ -40,9 +35,7 @@ export interface ManualRecord {
   closedAt: string | null;
   note: string;
   case: { id: string; title: string; topic: string; file: string; hash: string; solutions: number };
-  agent: { id: string; title: string };
-  agentModel: { id: string | null; title: string; value: string | null; note: string };
-  skillset: { id: string; title: string; version: string; checksum: string } | 'build' | null;
+  agent: { id: string; title: string; build: string | null; model: string | null };
   senderId: string;
   senderMode: 'new' | 'existing';
   prep: PrepItem[];
@@ -54,9 +47,7 @@ export interface ManualRecord {
 interface Live {
   exec: Execution;
   channel: AgentChannel;
-  installer: Installer;
   owner: string;
-  lastSkills: WsFile[] | null;
 }
 
 export class ManualManager {
@@ -114,30 +105,22 @@ export class ManualManager {
     const hostErr = checkAllowedHost(url.value, app.env.allowedHosts);
     if (hostErr) throw new HttpError(422, hostErr);
 
-    let modelValue: string | null = null;
-    let agentModel = { id: null as string | null, title: agent.model.fixed ?? 'задана развёртыванием', value: null as string | null, note: 'модель задана развёртыванием агента' };
-    if (agent.model.switch === 'request') {
-      const m = req.model ? reg.models.get(req.model) : null;
-      if (!m || m.provider !== 'agent-request') throw new HttpError(422, 'Подключение переключает модель запросом: выберите модель агента с provider: agent-request');
-      modelValue = m.model;
-      agentModel = { id: m.id, title: m.title, value: m.model, note: `значение в ${agent.model.path}` };
-    } else if (req.model && req.model !== agent.model.fixed) {
-      const m = reg.models.get(req.model);
-      if (m && m.provider !== 'deployment') throw new HttpError(422, 'Стенд не переключает модель агента запросом: выбор недоступен');
-    }
-
-    let version: ReturnType<typeof findVersion> = null;
-    if (req.skillset && req.skillset !== 'build') {
-      version = findVersion(reg, req.skillset.id, req.skillset.version);
-      if (!version) throw new HttpError(404, `Версия ${req.skillset.version} набора «${req.skillset.id}» не найдена`);
-      if (agent.skills.kind === 'none') throw new HttpError(422, `Агент не умеет устанавливать набор скиллов: ${agent.skills.note}`);
+    // Существующий оператор задаётся явно: пустой id — ошибка, а не тихая подмена новым оператором.
+    const senderMode = req.sender?.mode === 'existing' ? 'existing' : 'new';
+    const existingId = req.sender?.id?.trim() ?? '';
+    if (senderMode === 'existing') {
+      if (!existingId) throw new HttpError(400, 'Укажите x-a2a-sender-id существующего тестового оператора');
+      // Один диалог на оператора: он не должен быть занят прогоном или другой ручной сессией.
+      const busyRun = app.runs.list().find((r) => (r.status === 'queued' || r.status === 'running') && r.lines.some((l) => l.senderId === existingId));
+      if (busyRun) throw new HttpError(409, `Тестовый оператор занят прогоном #${busyRun.id}: дождитесь его завершения`);
+      const busySession = this.list().find((m) => m.status === 'active' && m.senderId === existingId);
+      if (busySession) throw new HttpError(409, `Тестовый оператор занят ручной сессией ${busySession.key}: завершите её`);
     }
 
     const id = await app.store.nextNumber('session');
     const owner = `manual-${id}`;
     if (!app.sessions.tryAcquire(owner)) throw new HttpError(409, `Все сессии агента заняты: ${app.sessions.used} из ${app.sessions.capacity}`);
-    const senderMode = req.sender?.mode === 'existing' && req.sender.id ? 'existing' : 'new';
-    const senderId = senderMode === 'existing' ? req.sender!.id!.trim() : `${app.env.senderPrefix}manual-${id}-${randomHex(3)}`;
+    const senderId = senderMode === 'existing' ? existingId : `${app.env.senderPrefix}manual-${id}-${randomHex(3)}`;
     const caseNumber = `CG-M-${String(id).padStart(2, '0')}`;
     const exec = new Execution({
       id: sessionKey(id),
@@ -154,8 +137,7 @@ export class ManualManager {
       run: null,
     });
     app.bindings.bindAll(exec);
-    const channel = new AgentChannel(agent, app.env, app.locks, modelValue);
-    const installer = createInstaller(agent.skills, app.env.raw);
+    const channel = new AgentChannel(agent, app.env, app.locks);
     const rec: ManualRecord = {
       id,
       key: sessionKey(id),
@@ -164,9 +146,7 @@ export class ManualManager {
       closedAt: null,
       note: '',
       case: { id: c.id, title: c.title, topic: c.topic, file: c.source.file, hash: c.source.hash, solutions: [...reg.solutions.values()].filter((s) => s.case === c.id).length },
-      agent: { id: agent.id, title: agent.title },
-      agentModel,
-      skillset: version ? { id: version.set.id, title: version.set.title, version: version.version.id, checksum: version.version.checksum } : req.skillset === 'build' ? 'build' : null,
+      agent: { id: agent.id, title: agent.title, build: agent.build, model: agent.model },
       senderId,
       senderMode,
       prep: [],
@@ -175,32 +155,19 @@ export class ManualManager {
       execution: null,
     };
     this.sessions.set(id, rec);
-    const live: Live = { exec, channel, installer, owner, lastSkills: null };
+    const live: Live = { exec, channel, owner };
     this.live.set(id, live);
     exec.onChange(() => this.schedule(id));
     this.schedule(id, true);
 
-    // Подготовка набора, обязательный /reset и стартовое сообщение — в фоне.
-    void this.background(id, async () => {
-      if (version) {
-        const push = (ok: boolean | null, text: string, note = '') => rec.prep.push({ ok, text, note, ts: nowIso() });
-        try {
-          if (senderMode === 'new') await installer.prepare(senderId);
-          await installer.install(senderId, version.version.files.map((f) => ({ path: f.path, content: f.content })));
-          const got = await installer.exportSkills(senderId);
-          live.lastSkills = got;
-          if (manifestChecksum(got) === version.version.checksum) push(true, `Рабочая копия ${version.version.id} установлена: ${got.length} ${plural(got.length, 'файл', 'файла', 'файлов')}, контрольные суммы совпали`);
-          else push(false, 'Набор в workspace не совпал с выбранным', diffTrees(version.version.files, got, false).slice(0, 3).map((x) => `${x.kind} ${x.path}`).join(', '));
-          const pend = await installer.pending(senderId);
-          push(pend.length ? false : true, pend.length ? `В сессии есть pending-кейсы: ${pend.length}` : 'Чужих pending-кейсов и свежих уроков нет');
-        } catch (e) {
-          push(false, 'Не удалось подготовить набор скиллов', errorMessage(e));
-          exec.add({ type: 'note', text: `Подготовка набора не прошла: ${errorMessage(e)}` } as any);
-        }
-      } else if (rec.skillset === 'build') rec.prep.push({ ok: null, text: 'Стартовые скиллы сборки агента: набор не устанавливался', note: '', ts: nowIso() });
-      else rec.prep.push({ ok: null, text: 'Набор скиллов не выбран', note: '', ts: nowIso() });
-      await this.startCase(id);
+    // Скиллы — у тестового оператора в агенте: ClawGym их не устанавливает. Обязательный /reset и стартовое сообщение — в фоне.
+    rec.prep.push({
+      ok: true,
+      text: senderMode === 'new' ? 'Новый тестовый оператор: стартовые скиллы сборки агента' : 'Существующий тестовый оператор: скиллы, накопленные им раньше',
+      note: `x-a2a-sender-id = ${senderId}`,
+      ts: nowIso(),
     });
+    void this.background(id, () => this.startCase(id));
     return rec;
   }
 
@@ -281,17 +248,7 @@ export class ManualManager {
         await this.startCaseFromReset(id, l);
         return;
       }
-      const ev = await l.channel.command(l.exec, name, 'human');
-      if (name === 'curator' && l.installer.canExport) {
-        try {
-          const files = await l.installer.exportSkills(l.exec.senderId);
-          const changes = l.lastSkills ? diffTrees(l.lastSkills, files, false) : [];
-          l.lastSkills = files;
-          l.exec.add({ type: 'skills', text: changes.length ? `После ручного curator изменено файлов: ${changes.length}` : 'Ручной curator не изменил прикладные скиллы', data: { changes, commandSeq: ev.seq, note: 'Версия по ручному curator не регистрируется: правило не согласовано' } } as any);
-        } catch (e) {
-          l.exec.add({ type: 'skills', text: `Состояние скиллов не выгружено: ${errorMessage(e)}` } as any);
-        }
-      }
+      await l.channel.command(l.exec, name, 'human');
     });
   }
 

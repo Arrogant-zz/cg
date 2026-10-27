@@ -1,6 +1,6 @@
 # Локальная заглушка агента из dev/fake-agent для демо и тестов.
-# Запрос и ответ — в формате AEFClaw (agents/aef-claw.yaml); отличия: модель выбирается параметром запроса,
-# набор скиллов ставится через предложенный HTTP API workspace, в ответе есть счётчик токенов.
+# Запрос и ответ — в формате AEFClaw (agents/aef-claw.yaml); отличие — в ответе есть счётчик токенов.
+# Как у AEFClaw, скиллы живут внутри агента у тестового оператора: новый начинает со стартовых скиллов сборки (dev/fake-agent/build).
 id: fake-agent
 title: fake-agent · локально
 request:
@@ -26,14 +26,10 @@ mcp:
   contract: contracts/tools.json
   protocolVersion: 2025-06-18
   taskIdFrom: [header]
-model:
-  switch: request
-  path: $.params.metadata.model
+# Метка модели для снимка прогона: fake-agent — сценарий на разговорнике, без LLM.
+model: fake-agent (сценарий, без LLM)
 sessions:
   max: 3
-skills:
-  installer: http
-  baseUrl: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/admin
 healthUrl: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/health
 build: fake-agent 0.2
 learningKit: learning-scripts (имитация)

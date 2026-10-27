@@ -1,4 +1,4 @@
-# Проверка на стенде с реальным AEFClaw и GigaChat: стартовые скиллы сборки (установка наборов в AEFClaw не поддерживается).
+# Проверка на стенде с реальным AEFClaw и GigaChat: новый тестовый оператор со стартовыми скиллами сборки агента.
 # Нужны AEF_CLAW_URL и GIGACHAT_BASE_URL; сертификат GigaChat — если не внутри Istio (README).
 id: stand-check
 title: Проверка · вторая линия · AEFClaw
@@ -7,5 +7,4 @@ agent: aef-claw
 models:
   operator: op-gigachat
   judge: judge-gigachat
-skillset: build
 metrics: all

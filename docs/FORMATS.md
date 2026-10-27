@@ -148,15 +148,27 @@ title: Обучение · вторая линия · fake-agent
 basket: second-line-train             # тип прогона берётся из корзины
 agent: fake-agent
 models:
-  agent: fake-agent-a                 # только если подключение переключает модель запросом
   operator: fake-operator             # обязательно
   judge: fake-judge                   # без неё ответ «не оценён»
-skillset: { id: second-line, version: V1 }  # version: latest — последняя готовая; build — стартовые скиллы сборки; none — без набора
+# continueFrom: demo-train            # продолжить на тестовом операторе последнего завершённого прогона этой настройки
 metrics: all                          # или список идентификаторов из metrics/
 limits: { maxTurns: 20, maxDurationSec: 900, maxOperatorCalls: 30 }
-repetitions: 1                        # независимые линии со своими сессиями и копиями
+repetitions: 1                        # независимые линии, у каждой свой тестовый оператор
 startAt: 2026-10-27T01:00:00+03:00    # необязательное время старта
 ```
+
+**Тестовый оператор** (решение владельца от 27 октября 2026 года). Модель агента, его стартовые и выученные скиллы живут внутри агента у тестового оператора — `x-a2a-sender-id`. ClawGym их не устанавливает и не выгружает.
+
+- Без `continueFrom` прогон идёт на новом операторе со стартовыми скиллами сборки.
+- С `continueFrom` — на операторе последнего завершённого или остановленного прогона указанной настройки, с выученными там скиллами.
+
+Условия продолжения:
+
+- тот же агент;
+- число повторений не больше числа линий у того прогона — линия N продолжает линию N;
+- на операторе не идёт другой прогон или ручная сессия.
+
+При запуске выбор можно переопределить: `overrides.continueFrom` в API — номер прогона или `new`, ключ `--continue` в CLI.
 
 ## Агент — `agents/<id>.yaml`
 
@@ -186,11 +198,8 @@ commands:                             # по умолчанию — тексты
   capture: /case-capture request_ref={{taskId}} category={{topic}}   # {{taskId}} — x-task-id стартового сообщения; {{requestRef}} — HMAC по INTEGRATION.md
   curator: /skill-curator
 mcp: { contract: contracts/tools.json, protocolVersion: 2025-06-18, taskIdFrom: [header] }   # header | meta | argument
-model: { switch: none, fixed: main }  # none — задана развёртыванием; request — значение по model.path
+model: задана развёртыванием AEFClaw   # метка для снимка и сравнения: модель задаёт сборка, ClawGym её не переключает
 sessions: { max: 3 }
-skills:
-  installer: none                     # none | directory (root, skillsDir, pendingDir) | http (baseUrl, headers)
-  note: API установки набора у AEFClaw нет
 healthUrl: ${env:AEF_CLAW_HEALTH_URL:-http://127.0.0.1:18789/readyz}   # без него доступность «не проверяется»
 build: метка сборки
 learningKit: версия комплекта обучения
@@ -204,8 +213,8 @@ learningKit: версия комплекта обучения
 
 ```yaml
 id: op-gigachat
-roles: [operator]                     # agent | operator | judge
-provider: gigachat-v1                 # gigachat-v1 | gigachat-v2 | deployment | agent-request
+roles: [operator]                     # operator | judge
+provider: gigachat-v1                 # gigachat-v1 | gigachat-v2
 baseUrl: ${env:GIGACHAT_BASE_URL}
 model: ${env:GIGACHAT_OPERATOR_MODEL:-GigaChat-2-Max}
 params:
@@ -217,7 +226,7 @@ params:
   devHints: false                     # только для dev/fake-gigachat
 ```
 
-Для роли `agent` используются провайдеры `deployment` (модель задана развёртыванием) и `agent-request` (значение `model` уходит в запрос агенту). Ответы оператора и судьи проверяются по JSON-схеме; при ошибке формата модель переспрашивается один раз.
+Модели агента в `models/` нет: её задаёт сборка агента, а в подключении — только метка `model`. Ответы оператора и судьи проверяются по JSON-схеме; при ошибке формата модель переспрашивается один раз.
 
 ### GigaChat — `gigachat-v1` и `gigachat-v2`
 
@@ -259,23 +268,6 @@ params:
   - `blacklist` и другие срабатывания фильтра — отказ модели.
 - **Трассировка.** Каждый вызов получает свой `X-Request-ID`; он попадает в текст ошибки, чтобы найти запрос в журналах GigaChat. Дополнительные заголовки, например `X-Client-ID`, задаются в `headers`.
 - **Ошибки сертификата** объясняют, что исправить: нет `tls.ca`, сервер не принял клиентский сертификат, ключ не подходит или неверен пароль. Такие ошибки не повторяются.
-
-## Набор скиллов — `skillsets/<id>.yaml`
-
-```yaml
-id: second-line
-title: Вторая линия · СберСпасибо, карты, уведомления
-compatibility: { agent: fake-agent, learningKit: learning-scripts 2026.10 }
-versions:
-  - id: V1
-    path: second-line/V1              # каталог skillsets/second-line/V1 с файлами skills/learned/**
-    createdAt: 2026-10-27
-    source: { kind: import, note: исходная версия }
-```
-
-Файлы версии лежат с путями workspace: `skillsets/second-line/V1/skills/learned/<скилл>/SKILL.md`. Контрольная сумма версии — sha256 строк «путь:sha256» по всем файлам.
-
-Версии, полученные обучением, ClawGym сохраняет в `$CLAWGYM_DATA/skillsets/<набор>/V<n>/`: `version.json` (источник, прогон, линия, статус) и `files/`. Версии не перезаписываются.
 
 ## Метрики — `metrics/*.yaml`
 

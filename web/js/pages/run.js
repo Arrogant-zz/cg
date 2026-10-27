@@ -18,12 +18,10 @@ import {
   outcomePill,
   kpi,
   mk,
-  ver,
   ref,
   hint,
   later,
   feed,
-  changesList,
   exchangeCard,
   toast,
   STATUS_TITLES,
@@ -37,20 +35,11 @@ export const title = (ctx) => `Прогон #${ctx.params[0]}`;
 
 function strip(run) {
   const s = run.settings;
-  const ss = s.skillset;
-  const nv = run.lines.map((l) => l.skills.newVersion).filter(Boolean);
-  const skills =
-    ss === 'build'
-      ? html`<span class="row" style="gap: 6px"><span class="ver copy">сборка</span>стартовые скиллы</span>`
-      : ss
-        ? html`<span class="row" style="gap: 6px">${ver(ss.version, run.type === 'training' ? 'src' : '')}${nv.length ? html`${icon('arrow', 's14 t3')}${nv.map((v) => ver(v.id))}` : ''}${ss.title}${run.status === 'running' ? ' · копия' : ''}</span>`
-        : 'не выбран';
   return html`<div class="strip">
-<span><span class="cap">Агент</span><span>${s.agent.title}</span></span>
-<span><span class="cap">Модель агента</span><span>${s.agentModel.title}${s.agentModel.switchable ? '' : ' · развёртывание'}</span></span>
-<span><span class="cap">Оператор</span><span>${s.operator?.id ?? '—'}</span></span>
+<span><span class="cap">Агент</span><span>${s.agent.title}${s.agent.model ? ` · ${s.agent.model}` : ''}</span></span>
+<span><span class="cap">LLM-оператор</span><span>${s.operator?.id ?? '—'}</span></span>
 <span><span class="cap">Оценка</span><span>${s.judge?.id ?? 'не выбрана'}</span></span>
-<span><span class="cap">Скиллы</span>${skills}</span>
+<span><span class="cap">Тестовый оператор</span><span>${run.testOperatorLabel}</span></span>
 <span><span class="cap">Снимок настроек</span><a href="#snap">${fmtDate(run.snapshot.createdAt)}</a></span>
 </div>`;
 }
@@ -96,20 +85,29 @@ function correctionsBars(line) {
   })}</div>`;
 }
 
+/** Что сделал curator — по строке результата; файлы скиллов остаются в агенте у тестового оператора. */
+function curatorResult(p) {
+  const c = p.parsed?.kind === 'complete' ? p.parsed : null;
+  if (c) {
+    return html`<span class="sm">разобрано ${c.processed} · создано ${c.created} · обновлено ${c.updated}${c.left ? ` · осталось ${c.left}` : ''}${c.conflicts ? ` · конфликтов ${c.conflicts}` : ''}</span>${c.report ? html`<span class="cap mono" style="word-break: break-all">${c.report}</span>` : ''}`;
+  }
+  if (p.parsed?.kind === 'empty') return html`<span class="cap">очередь была пуста</span>`;
+  return p.reply && p.status !== 'running' ? html`<span class="cap">строка результата не распознана — ответ в HTTP-обменах</span>` : '';
+}
+
 function curatorPass(p) {
   const title = p.reason === 'final' ? 'финальный' : `curator ${p.pass}`;
   const st = p.status === 'running' ? html`<span class="st"><span class="dot live"></span>выполняется</span>` : p.status === 'ok' ? '' : p.status === 'skipped' ? html`<span class="cap">очередь пуста</span>` : html`<span class="pill tech">${icon('bolt')}${p.error ?? p.status}</span>`;
   return html`<div class="col" style="gap: 4px">
 <span class="row m5" style="gap: 8px; padding-bottom: 6px"><span class="pb cu" style="height: 24px; padding: 0 8px">${icon('curator')}${title}</span>после позиции ${p.afterPos}${p.durationMs ? ` · ${fmtDur(p.durationMs)}` : ''}${st}</span>
-${p.changes ? changesList(p.changes) : html`<span class="cap">${p.exportNote || 'изменения не выгружены'}</span>`}
-${p.status === 'failed' && p.changes?.length ? html`<span class="cap" style="padding-top: 6px">Частичный проход: правки могли примениться до ошибки команды — состояние сохранено.</span>` : ''}
+${curatorResult(p)}
 ${p.http?.length ? html`<details class="raw" id="cur-http-${p.pass}-${p.startedAt}"><summary>HTTP-обмены прохода · ${p.http.length}</summary><div class="col" style="gap: 8px; padding: 8px 0">${p.http.map(exchangeCard)}</div></details>` : ''}
 </div>`;
 }
 
 function liveAside(run, line) {
   if (run.type !== 'training') {
-    return html`<aside class="sd"><section class="soft p24 sec" style="gap: 14px"><h2 class="h3">Проверка без обучения</h2><ul class="col sm t2" style="gap: 6px">${run.planText.map((t) => html`<li>${t}</li>`)}</ul><hr class="rule"><div class="col" style="gap: 6px"><span class="lbl">Рабочая копия</span><span class="sm">${line.skills.source ? `${line.skills.source.version} · ${line.skills.source.files} ${plural(line.skills.source.files, 'файл', 'файла', 'файлов')}` : line.skills.mode === 'build' ? 'стартовые скиллы сборки' : 'не выбрана'}</span><span class="cap">Неизменность набора проверится в конце прогона.</span></div></section></aside>`;
+    return html`<aside class="sd"><section class="soft p24 sec" style="gap: 14px"><h2 class="h3">Проверка без обучения</h2><ul class="col sm t2" style="gap: 6px">${run.planText.map((t) => html`<li>${t}</li>`)}</ul><hr class="rule"><div class="col" style="gap: 6px"><span class="lbl">Тестовый оператор</span><span class="sm">${run.testOperatorLabel}</span><span class="cap">В проверке /case-capture и /skill-curator не отправляются — скиллы оператора не меняются.</span></div></section></aside>`;
   }
   const nextCur = run.plan.filter((s) => s.kind === 'curator').find((s) => !line.curatorPasses.some((p) => p.pass === s.pass));
   return html`<aside class="sd" aria-labelledby="learn-h"><section class="soft p24 sec" style="gap: 20px">
@@ -117,9 +115,9 @@ function liveAside(run, line) {
 <div class="col" style="gap: 10px"><span class="lbl">Поправки оператора по позициям</span>${correctionsBars(line)}</div>
 ${line.curatorPasses.length ? html`<hr class="rule">${line.curatorPasses.map(curatorPass)}` : ''}
 <hr class="rule">
-<div class="col" style="gap: 6px"><span class="lbl">Рабочая копия</span>
-<span class="sm">${line.skills.source ? `${line.skills.source.version}${line.curatorPasses.length ? ` и ${line.curatorPasses.length} ${plural(line.curatorPasses.length, 'проход', 'прохода', 'проходов')} curator` : ''}` : line.skills.mode === 'build' ? 'стартовые скиллы сборки' : 'набор не выбран'}</span>
-<span class="cap">${nextCur ? `Следующий curator — после позиции ${nextCur.afterPos}. ` : ''}Новая версия сохранится в конце прогона.</span>
+<div class="col" style="gap: 6px"><span class="lbl">Тестовый оператор</span>
+<span class="sm">${run.testOperatorLabel}</span>
+<span class="cap">${nextCur ? `Следующий curator — после позиции ${nextCur.afterPos}. ` : ''}Выученное остаётся у оператора в агенте: после прогона его можно проверить.</span>
 </div>
 </section></aside>`;
 }
@@ -184,36 +182,21 @@ function curve(run) {
   return raw(`<svg class="chart" viewBox="0 0 ${W} 248" role="img" aria-label="${training ? 'Поправки оператора по позициям корзины' : 'Успех по позициям корзины'}">${parts.join('')}</svg>`);
 }
 
-function versionAside(run) {
-  if (run.type !== 'training') {
-    return html`<aside class="sd"><section class="soft p24 sec" style="gap: 14px"><h2 class="h3">Неизменность набора</h2>
-${run.lines.map((l) => {
-      const im = l.skills.immutability;
-      if (!im) return html`<div class="okr">${mk('na')}<span>Не проверялась</span><span class="cap"></span></div>`;
-      return html`<div class="okr">${mk(im.status === 'unchanged' ? true : im.status === 'changed' ? false : 'na')}<span>${im.status === 'unchanged' ? `${l.skills.source?.version ?? 'Набор'} не изменился за проверку` : im.status === 'changed' ? 'Проверка изменила набор — не смешивается с обучением' : im.note}</span><span class="cap num">${im.files ? `${im.files} ${plural(im.files, 'файл', 'файла', 'файлов')}` : ''}</span></div>${im.changes?.length ? changesList(im.changes) : ''}`;
-    })}
-<span class="cap">Сверяются только файлы прикладного набора; журналы и другие материалы workspace изменениями скиллов не считаются.</span>
-</section></aside>`;
-  }
-  const l = run.lines[0];
-  const s = l.skills;
-  const ch = s.changes ?? [];
-  const add = ch.filter((c) => c.kind === 'added').length;
-  const mod = ch.filter((c) => c.kind === 'modified').length;
-  const del = ch.filter((c) => c.kind === 'removed').length;
-  const src = s.source?.version;
-  return html`<aside class="sd"><section class="soft p24 sec" aria-labelledby="ver-h" style="gap: 18px">
-<h2 class="h3" id="ver-h">Новая версия скиллов</h2>
-${src
-    ? html`<div class="lin" style="flex-direction: column; align-items: stretch; gap: 6px">
-<span class="lin-n">${ver(src, 'src')}<span class="col" style="gap: 0"><span class="sm m5">исходная</span><span class="cap">не изменена</span></span></span>
-${icon('arrowDown', 't3')}
-${s.newVersion ? html`<span class="lin-n">${ver(s.newVersion.id)}<span class="col" style="gap: 0"><span class="sm m5">результат #${run.id}${s.newVersion.status === 'partial' ? ' · частичная' : ''}</span><span class="cap">${fmtDate(run.finishedAt)}</span></span></span>` : html`<span class="lin-n"><span class="ver copy">копия</span><span class="col" style="gap: 0"><span class="sm m5">версия не создана</span><span class="cap">итоговое состояние — в материалах</span></span></span>`}
-</div>`
-    : ''}
-${s.final ? html`<div class="row sm" style="gap: 16px"><span><span class="s add mono b">+${add}</span> ${plural(add, 'создан', 'создано', 'создано')}</span><span><span class="mono b">~${mod}</span> изменено</span><span><span class="s del mono b">−${del}</span> удалено</span></div>` : ''}
-<span class="cap">${s.versionNote}</span>
-${s.newVersion ? html`<div class="row"><a class="btn" href="/skillsets/${s.source.skillset}?v=${s.newVersion.id}" style="flex: 1">Открыть ${s.newVersion.id}</a><a class="btn" href="/skillsets/${s.source.skillset}?v=${s.newVersion.id}&diff=${src}" style="flex: 1">Различия с ${src}</a></div>` : ''}
+/** Проверка для обученного оператора: настройка с тем же агентом, лучше та, что продолжает файл этого прогона. */
+function nextCheckConfig(run, configs) {
+  const same = configs.filter((c) => c.basket.type === 'checking' && c.agent === run.settings.agent.id);
+  return same.find((c) => c.continueFrom === run.configId) ?? same[0] ?? null;
+}
+
+/** Скиллы остались у тестового оператора в агенте (решение владельца от 27.10.2026): следующий прогон может продолжить на нём. */
+function operatorAside(run, line) {
+  const finished = run.status === 'completed' || run.status === 'stopped';
+  return html`<aside class="sd"><section class="soft p24 sec" aria-labelledby="op-h" style="gap: 14px">
+<h2 class="h3" id="op-h">Тестовый оператор</h2>
+<span class="sm">${run.testOperatorLabel}</span>
+${run.lines.map((l) => html`<div class="okr">${mk(l.error ? 'tech' : l.senderId ? true : 'na')}<span class="mono" style="font-size: 12px; word-break: break-all">${l.senderId || 'линия не начиналась'}</span><span class="cap">${run.lines.length > 1 ? `линия ${l.index}` : 'x-a2a-sender-id'}</span></div>${l.error ? html`<span class="cap">${l.error}</span>` : ''}`)}
+<span class="cap">${run.type === 'training' ? 'Выученное за прогон осталось у оператора в агенте: ClawGym скиллы не выгружает. Что сделал curator — в проходах ниже.' : 'Проверка не отправляла /case-capture и /skill-curator: скиллы оператора не менялись.'}</span>
+${finished && line.senderId ? html`<a class="btn" href="/runs/new?continue=${run.id}">${icon('play')}Продолжить на этом операторе</a>` : ''}
 </section></aside>`;
 }
 
@@ -273,24 +256,15 @@ ${training ? html`<td>${i.stats ? html`<span class="num">${i.stats.corrections}<
     })}</tbody></table></div>`;
 }
 
-function materials(run) {
-  const mats = run.lines.flatMap((l) => l.materials.map((m) => ({ ...m, line: l.index })));
-  const caps = mats.filter((m) => m.kind === 'capture');
-  const curs = mats.filter((m) => m.kind === 'curator');
-  const skillsOk = run.lines.some((l) => l.skills.final);
+function snapshot(run) {
   const snapFiles = run.snapshot.files.length;
+  const p = run.settings.prompts;
   return html`<section class="sec" id="snap" aria-labelledby="mat-h">
-<div class="sec-h"><h2 class="h2" id="mat-h">Материалы и снимок настроек</h2><a class="btn" href="/api/runs/${run.id}/materials.zip" download>${icon('download')}Скачать материалы</a></div>
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 0 40px">
+<div class="sec-h"><h2 class="h2" id="mat-h">Снимок настроек</h2><a class="btn" href="/api/runs/${run.id}/materials.zip" download>${icon('download')}Скачать снимок и журналы</a></div>
 <div class="col" style="gap: 0">
-${run.type === 'training' ? html`<div class="okr">${mk(curs.length && curs.every((m) => m.ok) ? true : curs.length ? 'na' : 'na')}<span>Отчёты curator${curs.some((m) => !m.ok) ? ` — ${curs.filter((m) => !m.ok).map((m) => m.note).join('; ')}` : ''}</span><span class="cap num">${curs.filter((m) => m.ok).length} из ${curs.length}</span></div>
-<div class="okr">${mk(caps.length && caps.every((m) => m.ok) ? true : 'na')}<span>Кейсы capture${caps.some((m) => !m.ok) ? ` — ${caps.filter((m) => !m.ok).map((m) => `${m.label}: ${m.note}`).join('; ')}` : ''}</span><span class="cap num">${caps.filter((m) => m.ok).length} из ${caps.length}</span></div>` : ''}
-<div class="okr">${mk(skillsOk ? true : 'na')}<span>${skillsOk ? 'Исходное и итоговое состояние скиллов из workspace тестового оператора' : 'Файлы скиллов не выгружены: подключение не даёт доступа к workspace'}</span><span class="cap num">${run.lines.map((l) => (l.skills.final ? `${l.skills.initial?.files ?? '—'} и ${l.skills.final.files}` : '—')).join(', ')}</span></div>
-</div>
-<div class="col" style="gap: 0">
-<div class="okr">${mk(true)}<span>Снимок: корзина, ${run.settings.basket.items} ${plural(run.settings.basket.items, 'решение', 'решения', 'решений')} с кейсами, агент, модели, ${run.settings.skillset && run.settings.skillset !== 'build' ? `набор ${run.settings.skillset.version} с контрольными суммами, ` : ''}подсказки оператора и судьи (${run.settings.prompts.operator}, ${run.settings.prompts.judge}), определения метрик, контракт ${run.settings.contract.version}</span><span class="cap num">${snapFiles} ${plural(snapFiles, 'файл', 'файла', 'файлов')}</span></div>
+<div class="okr">${mk(true)}<span>Корзина, ${run.settings.basket.items} ${plural(run.settings.basket.items, 'решение', 'решения', 'решений')} с кейсами, агент, модели оператора и оценки, подсказки (${[p.operator, p.judge, p.answerJudge].filter(Boolean).join(', ')}), определения метрик, контракт ${run.settings.contract.version}</span><span class="cap num">${snapFiles} ${plural(snapFiles, 'файл', 'файла', 'файлов')}</span></div>
 <div class="okr">${mk(true)}<span>Авторизация в снимок не входит. Правка исходных файлов не меняет этот результат</span><span class="cap">${fmtDate(run.snapshot.createdAt)}</span></div>
-</div>
+<div class="okr">${mk('na')}<span>Файлы скиллов в снимок не входят: они живут в агенте у тестового оператора</span><span class="cap"></span></div>
 </div>
 ${run.snapshot.files.length ? html`<details class="raw"><summary>Файлы снимка</summary><pre>${run.snapshot.files.map((f) => `${f.file}${f.hash ? ` @${f.hash}` : ''}`).join('\n')}</pre></details>` : ''}
 </section>`;
@@ -300,11 +274,8 @@ function headerActions(run, configs) {
   if (run.status === 'running' || run.status === 'queued') {
     return html`<div class="ph-a" style="flex-direction: column; align-items: flex-end; gap: 6px"><button class="btn stop" type="button" data-action="stop">${icon('stop')}${run.status === 'queued' ? 'Убрать из очереди' : 'Остановить прогон'}</button><span class="cap" style="max-width: 300px; text-align: right">Новые кейсы не начнутся. Текущий шаг и отправленные команды сохранятся в результате.</span></div>`;
   }
-  const nv = run.lines.map((l) => l.skills.newVersion).find((v) => v && v.status === 'ready');
-  const ss = run.settings.skillset;
-  const checkCfg = nv && ss && ss !== 'build' ? configs.find((c) => c.basket.type === 'checking' && c.skillset.startsWith(ss.title)) : null;
-  const versions = run.lines.map((l) => l.skills.newVersion?.id).filter(Boolean);
-  return html`<div class="ph-a"><a class="btn" href="/compare?b=${run.id}">${icon('compare')}Сравнить</a>${nv ? html`<a class="btn pri" href="/runs/new?${checkCfg ? `config=${encodeURIComponent(checkCfg.id)}&` : ''}skillsetVersion=${nv.id}">${icon('play')}Проверить ${nv.id}</a>` : ''}<button class="btn ghost del" type="button" data-action="remove" data-title="${run.title}" data-versions="${versions.join(',')}">${icon('trash')}Удалить</button></div>`;
+  const check = run.type === 'training' && run.status === 'completed' ? nextCheckConfig(run, configs) : null;
+  return html`<div class="ph-a"><a class="btn" href="/compare?b=${run.id}">${icon('compare')}Сравнить</a>${check ? html`<a class="btn pri" href="/runs/new?config=${encodeURIComponent(check.id)}&continue=${run.id}">${icon('play')}Проверить на этом операторе</a>` : ''}<button class="btn ghost del" type="button" data-action="remove" data-title="${run.title}">${icon('trash')}Удалить</button></div>`;
 }
 
 export async function render(ctx) {
@@ -366,18 +337,17 @@ ${classMatrix(metrics.find((m) => m.builtin === 'final-action'))}
 ${curve(run)}
 ${hint(html`Технический сбой — пропуск на кривой, а не ноль. Почему урок повторился после curator, покажет разбор журнала агента — ${later()}`)}
 </section>
-${versionAside(run)}
+${operatorAside(run, line)}
 </div>
 <section class="sec" aria-labelledby="res-h">
 <div class="sec-h"><h2 class="h2" id="res-h">Результаты по решениям</h2><span class="cap">Оценка — до служебных команд: capture и curator её не меняют</span></div>
 ${resultsTable(run, line)}
 </section>
 ${run.type === 'training'
-    ? html`<section class="sec" aria-labelledby="chg-h"><div class="sec-h"><h2 class="h2" id="chg-h">Изменения скиллов по проходам curator</h2><span class="cap">Только прикладные скиллы набора · комплект обучения — часть версии агента</span></div>
+    ? html`<section class="sec" aria-labelledby="chg-h"><div class="sec-h"><h2 class="h2" id="chg-h">Проходы curator</h2><span class="cap">По строке результата /skill-curator · файлы скиллов остаются у тестового оператора в агенте</span></div>
 ${line.curatorPasses.length ? html`<div class="pass3">${line.curatorPasses.map(curatorPass)}</div>` : html`<div class="empty">Проходов curator не было.</div>`}</section>`
     : ''}
-<section class="sec" style="gap: 8px"><h2 class="h3">Подготовка набора</h2>${line.prep.items.map((p) => html`<div class="okr">${mk(p.ok === null ? 'na' : p.ok)}<span>${p.text}${p.note ? html`<span class="cap"> · ${p.note}</span>` : ''}</span><span class="cap"></span></div>`)}${line.error ? html`<div class="okr">${mk('tech')}<span>${line.error}</span><span></span></div>` : ''}</section>
-${materials(run)}`;
+${snapshot(run)}`;
 }
 
 export const refreshOn = (msg, ctx) => msg.topic === `run:${ctx.params[0]}`;
@@ -388,8 +358,7 @@ export const actions = {
     return ctx.rerender();
   },
   async remove(el, ctx) {
-    const versions = el.dataset.versions ? el.dataset.versions.split(',') : [];
-    if (await removeRun({ id: Number(ctx.params[0]), title: el.dataset.title, versions })) ctx.navigate('/');
+    if (await removeRun({ id: Number(ctx.params[0]), title: el.dataset.title })) ctx.navigate('/');
   },
   async stop(el, ctx) {
     await post(`/api/runs/${ctx.params[0]}/stop`);

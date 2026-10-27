@@ -1,0 +1,11 @@
+# Проверка на стенде после обучения: тестовый оператор последнего завершённого прогона stand-train.
+# Схема аналитика: stand-check → stand-train → stand-check-trained, в сравнении — ΔM1 и ΔM2.
+id: stand-check-trained
+title: Проверка · вторая линия · AEFClaw после обучения
+basket: second-line-check
+agent: aef-claw
+continueFrom: stand-train
+models:
+  operator: op-gigachat
+  judge: judge-gigachat
+metrics: all

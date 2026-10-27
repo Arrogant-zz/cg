@@ -71,7 +71,7 @@ export class App {
   }
 
   async reload(): Promise<Registry> {
-    const reg = await loadRegistry(this.env.home, this.env.dataDir);
+    const reg = await loadRegistry(this.env.home);
     this.registry = reg;
     const errors = reg.issues.filter((i) => i.severity === 'error').length;
     log.info(`Настройки: ${reg.fileCount} файлов, кейсов ${reg.cases.size}, решений ${reg.solutions.size}, корзин ${reg.baskets.size}, ошибок ${errors}`);

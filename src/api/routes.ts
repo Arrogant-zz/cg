@@ -2,16 +2,26 @@
 import type { App } from '../app.js';
 import { HttpError, Router, sendFile } from '../util/http.js';
 import { buildZip } from '../util/zip.js';
-import { diffTrees } from '../util/diff.js';
 import { compareRuns } from '../results/compare.js';
 import { runKey } from '../results/store.js';
 import * as v from './views.js';
+import type { RunOverrides } from '../runner/resolve.js';
 
 const num = (s: string) => {
   const n = Number(s);
   if (!Number.isInteger(n)) throw new HttpError(400, 'Ожидался номер');
   return n;
 };
+
+/** Тестовый оператор при запуске: new — новый, номер — продолжить на операторе этого прогона; без поля — как в файле прогона. */
+function overridesOf(o: { continueFrom?: unknown }): RunOverrides {
+  const c = o.continueFrom;
+  if (c === undefined || c === null || c === '') return {};
+  if (c === 'new') return { continueFrom: 'new' };
+  const n = Number(c);
+  if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'continueFrom — номер прогона или new');
+  return { continueFrom: n };
+}
 
 export function buildRoutes(app: App): Router {
   const r = new Router();
@@ -30,32 +40,8 @@ export function buildRoutes(app: App): Router {
   r.get('/api/baskets/:id', ({ params }) => v.basketDetail(app, params.id));
   r.get('/api/directory', () => v.directory(app));
 
-  r.get('/api/skillsets', () => v.skillsets(app));
-  r.get('/api/skillsets/:id', ({ params }) => v.skillsetDetail(app, params.id));
-  r.get('/api/skillsets/:id/diff', ({ params, query }) => {
-    const s = app.registry.skillsets.get(params.id);
-    if (!s) throw new HttpError(404, 'Набор не найден');
-    const a = s.versions.find((x) => x.id === query.get('from'));
-    const b = s.versions.find((x) => x.id === query.get('to'));
-    if (!a || !b) throw new HttpError(404, 'Версия не найдена');
-    return { from: a.id, to: b.id, changes: diffTrees(a.files, b.files) };
-  });
-  r.get('/api/skillsets/:id/versions/:ver/file', ({ params, query }) => {
-    const s = app.registry.skillsets.get(params.id);
-    const ver = s?.versions.find((x) => x.id === params.ver);
-    const f = ver?.files.find((x) => x.path === query.get('path'));
-    if (!f) throw new HttpError(404, 'Файл не найден');
-    return { path: f.path, sha256: f.sha256, content: f.content };
-  });
-  r.get('/api/skillsets/:id/versions/:ver/download', ({ params, res }) => {
-    const s = app.registry.skillsets.get(params.id);
-    const ver = s?.versions.find((x) => x.id === params.ver);
-    if (!s || !ver) throw new HttpError(404, 'Версия не найдена');
-    sendFile(res, `${s.id}-${ver.id}.zip`, buildZip(ver.files.map((f) => ({ path: f.path, data: f.content }))), 'application/zip');
-  });
-
   r.get('/api/run-configs', () => v.runConfigs(app));
-  r.get('/api/run-configs/:id/preview', ({ params, query }) => v.preview(app, params.id, query.get('skillsetVersion') ? { skillsetVersion: query.get('skillsetVersion')! } : {}));
+  r.get('/api/run-configs/:id/preview', ({ params, query }) => v.preview(app, params.id, overridesOf({ continueFrom: query.get('continueFrom') ?? undefined })));
 
   r.get('/api/runs', () => ({
     runs: app.runs.list().map(v.runListItem),
@@ -67,7 +53,7 @@ export function buildRoutes(app: App): Router {
   r.post('/api/runs', async ({ body }) => {
     const b = await body();
     if (!b.config) throw new HttpError(400, 'Нужно поле config — идентификатор файла в runs/');
-    const run = await app.runs.create(String(b.config), b.overrides ?? {});
+    const run = await app.runs.create(String(b.config), overridesOf(b.overrides ?? {}));
     return v.runListItem(run);
   });
   r.get('/api/runs/:id', ({ params }) => v.runDetail(app.runs.get(num(params.id))));

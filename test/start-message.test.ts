@@ -16,7 +16,7 @@ let home: string;
 // Копия настроек: get_cases_assigned выключен (нужен только старту), статические атрибуты — последовательность с эффектом.
 before(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-start-'));
-  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates', 'baskets', 'runs']) {
+  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) {
     fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
   }
   const contractFile = path.join(home, 'contracts/tools.json');
@@ -40,7 +40,7 @@ before(() => {
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
 test('стартовое сообщение в формате оркестратора: x-task-id, ответы заглушек, первый ответ последовательности без эффекта', async () => {
-  const reg = await loadRegistry(home, path.join(home, 'var'));
+  const reg = await loadRegistry(home);
   assert.deepEqual(
     reg.issues.filter((i) => i.severity === 'error'),
     [],
@@ -93,7 +93,7 @@ test('tools/list как у оркестратора; выключенный ин
     assert.deepEqual(Object.keys(close), ['name', 'title', 'description', 'inputSchema', 'annotations'], 'поля MCP как у оркестратора, без пометок ClawGym');
     assert.equal(close.annotations.destructiveHint, true);
 
-    const created = await s.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent', model: 'fake-agent-a', skillset: 'build' });
+    const created = await s.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent' });
     assert.equal(created.status, 200, JSON.stringify(created.data));
     const id = created.data.id;
     const get = async () => (await s.api('GET', `/api/manual/${id}`)).data;

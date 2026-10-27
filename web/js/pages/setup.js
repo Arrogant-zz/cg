@@ -1,5 +1,5 @@
-// Экран «Запуск прогона»: файл прогона, проверка ссылок, план команд, метрики (CFG-02, RUN-01, BASK-02–03, MOD-02, MET-02).
-import { html, icon, get, post, typeBadge, planView, planLegend, issuesBox, warningsList, ver, fmtDate, hint, mk, plural, toast } from '../lib.js';
+// Экран «Запуск прогона»: файл прогона, проверка ссылок, тестовый оператор, план команд, метрики (CFG-02, RUN-01, BASK-02–03, MET-02).
+import { html, icon, get, post, typeBadge, planView, planLegend, issuesBox, warningsList, fmtDate, hint, mk, plural, toast } from '../lib.js';
 
 export const title = 'Запуск прогона';
 
@@ -8,35 +8,49 @@ function choice(c, selected) {
 <span class="row" style="justify-content: space-between">${c.basket.type ? typeBadge(c.basket.type) : html`<span class="pill fail">нет корзины</span>`}${c.errors ? html`<span class="pill fail">${icon('warn')}${c.errors} ${plural(c.errors, 'ошибка', 'ошибки', 'ошибок')}</span>` : c.lastRun ? html`<span class="cap">#${c.lastRun.id} · ${fmtDate(c.lastRun.createdAt, false)}</span>` : html`<span class="cap">не запускался</span>`}</span>
 <span class="h3">${c.title}</span>
 <span class="cap mono">${c.file}</span>
-<span class="sm t2">${c.basket.items} ${plural(c.basket.items, 'решение', 'решения', 'решений')} · ${c.skillset}</span>
+<span class="sm t2">${c.basket.items} ${plural(c.basket.items, 'решение', 'решения', 'решений')} · ${c.testOperator}</span>
 </button>`;
 }
 
-function skillsRow(p) {
-  const r = p.resolved;
-  const s = r.skillset;
-  if (!s) return html`<span class="col" style="gap: 6px"><span class="m5">Набор не выбран</span><span class="cap">Агент работает с тем, что уже есть в сессии</span></span>`;
-  if (s === 'build') return html`<span class="col" style="gap: 6px"><span class="row" style="gap: 8px"><span class="ver copy">сборка</span><span class="m5">Стартовые скиллы сборки агента</span></span><span class="cap">Промежуточный режим: выбранная версия знаний не устанавливается. Установка наборов на стенде не подтверждена.</span></span>`;
-  const training = r.basket.type === 'training';
+/** Значение выбора тестового оператора: из адреса (?continue=), иначе из файла прогона. */
+function operatorChoice(p, ctx) {
+  const q = ctx.query.get('continue');
+  if (q) return q;
+  if (p.resolved?.testOperator.mode === 'continue') return String(p.resolved.testOperator.run);
+  return p.continueFrom ? '' : 'new';
+}
+
+// Решение владельца от 27.10.2026: скиллы живут в агенте у тестового оператора (x-a2a-sender-id); ClawGym их не ставит и не выгружает.
+function operatorRow(p, ctx) {
+  const value = operatorChoice(p, ctx);
+  const t = p.resolved?.testOperator;
+  const training = p.resolved?.basket.type === 'training';
+  const kind = (x) => (x.type === 'training' ? 'обучение' : 'проверка');
+  const note =
+    t?.mode === 'continue'
+      ? `Тот же x-a2a-sender-id, что в прогоне #${t.run}: агент продолжит со скиллами, которые оператор получил там. ${training ? 'Обучение продолжит менять его скиллы.' : 'Проверка не отправляет /case-capture и /skill-curator — скиллы оператора не меняются.'}`
+      : 'Новый x-a2a-sender-id: агент начнёт со стартовых скиллов своей сборки. Чтобы проверить результат обучения, продолжите на операторе обучающего прогона.';
   return html`<span class="col" style="gap: 8px">
-<span class="row" style="gap: 8px">${ver(s.version, training ? 'src' : '')}<span class="m5">${s.title}</span>${icon('arrow', 's14 t3')}<span class="ver copy">копия</span>${training ? html`${icon('arrow', 's14 t3')}<span class="ver">новая</span>` : ''}${s.requested === 'latest' ? html`<span class="pill">последняя версия</span>` : ''}${p.overrides?.skillsetVersion ? html`<span class="pill live">версия выбрана при запуске</span>` : ''}</span>
-<span class="cap">${training ? `Прогон работает на рабочей копии. ${s.version} не изменится; результат обучения сохранится новой версией со ссылками на ${s.version} и этот прогон.` : 'Состав набора сравнится до и после проверки: проверка не должна менять скиллы.'} ${s.files} ${plural(s.files, 'файл', 'файла', 'файлов')}.</span>
+<select class="input" data-change="operator" aria-label="Тестовый оператор">
+<option value="new" ${value === 'new' ? 'selected' : ''}>Новый — стартовые скиллы сборки агента</option>
+${p.continueFrom && !value ? html`<option value="" selected disabled>Продолжить на последнем прогоне ${p.continueFrom} — завершённого нет</option>` : ''}
+${p.continueOptions.map((o) => html`<option value="${o.id}" ${value === String(o.id) ? 'selected' : ''}>Продолжить на операторе #${o.id} ${o.title} · ${kind(o)} · ${fmtDate(o.finishedAt, false)}</option>`)}
+</select>
+<span class="cap">${note}${p.continueFrom ? ` По умолчанию файл продолжает последний завершённый прогон «${p.continueFrom}».` : ''}</span>
 </span>`;
 }
 
-function whatRuns(p) {
+function whatRuns(p, ctx) {
   const r = p.resolved;
   if (!r) return '';
-  const agentModel = r.agentModel;
   return html`<section class="sec" aria-labelledby="what-h" style="gap: 4px">
 <div class="sec-h" style="padding-bottom: 12px"><h2 class="h2" id="what-h">Что будет запущено</h2><span class="cap">Тип прогона берётся из корзины</span></div>
 <div class="cfg"><span class="t3">Корзина</span><span class="col" style="gap: 6px"><span class="row"><a class="m5" href="/baskets/${r.basket.id}">${r.basket.title}</a>${typeBadge(r.basket.type)}</span><span class="cap mono">${r.basket.file} · ${r.basket.items} ${plural(r.basket.items, 'решение', 'решения', 'решений')} из ${r.basket.cases} ${plural(r.basket.cases, 'кейса', 'кейсов', 'кейсов')}</span></span></div>
-<div class="cfg"><span class="t3">Агент</span><span class="col" style="gap: 6px"><span class="m5">${r.agent.title}</span><span class="cap">REST · <span class="mono">${r.agent.file}</span> · ${[r.agent.commands.reset, r.basket.type === 'training' ? r.agent.commands.capture.split(' ')[0] : null, r.basket.type === 'training' ? r.agent.commands.curator : null].filter(Boolean).join(', ')} · установка набора: ${r.agent.installer === 'none' ? 'не поддержана' : r.agent.installer}</span></span></div>
-<div class="cfg"><span class="t3">Модель агента</span><span class="col" style="gap: 6px"><span class="row" style="gap: 8px">${agentModel.switchable ? '' : icon('lock')}<span class="m5">${agentModel.title}</span><span class="pill">${agentModel.switchable ? 'параметр запроса' : 'задана развёртыванием'}</span></span><span class="cap">${agentModel.note}</span></span></div>
+<div class="cfg"><span class="t3">Агент</span><span class="col" style="gap: 6px"><span class="m5">${r.agent.title}</span><span class="cap">REST · <span class="mono">${r.agent.file}</span> · ${[r.agent.commands.reset, r.basket.type === 'training' ? r.agent.commands.capture.split(' ')[0] : null, r.basket.type === 'training' ? r.agent.commands.curator : null].filter(Boolean).join(', ')} · сборка ${r.agent.build ?? 'не указана'} · модель ${r.agent.model ?? 'не указана'}</span><span class="cap">Модель и стартовые скиллы задаёт сборка агента: ClawGym их не переключает</span></span></div>
 <div class="cfg"><span class="t3">Модель оператора</span><span class="col" style="gap: 6px"><span class="m5">${r.operator?.title ?? '—'}</span><span class="cap">LLM-оператор ведёт диалог по инструкции решения${r.operator ? ` · ${r.operator.provider}` : ''}</span></span></div>
 <div class="cfg"><span class="t3">Модель оценки</span><span class="col" style="gap: 6px"><span class="m5">${r.judge?.title ?? 'не выбрана'}</span><span class="cap">${r.judge ? 'Отдельный вызов после завершения кейса; оценку агент не видит' : 'Без модели оценки смысл ответа останется «не оценён»'}</span></span></div>
-<div class="cfg"><span class="t3">Скиллы</span>${skillsRow(p)}</div>
-<div class="cfg"><span class="t3">Лимиты</span><span class="col" style="gap: 6px"><span>${r.limits.maxTurns} ходов · ${Math.round(r.limits.maxDurationSec / 60)} мин на кейс · ${r.limits.maxOperatorCalls} запросов оператора</span><span class="cap">Повторений: ${r.repetitions}${r.repetitions > 1 ? ' — у каждого своя сессия и рабочая копия набора' : ''}${r.startAt ? ` · старт ${fmtDate(r.startAt)}` : ''}</span></span></div>
+<div class="cfg"><span class="t3">Тестовый оператор</span>${operatorRow(p, ctx)}</div>
+<div class="cfg"><span class="t3">Лимиты</span><span class="col" style="gap: 6px"><span>${r.limits.maxTurns} ходов · ${Math.round(r.limits.maxDurationSec / 60)} мин на кейс · ${r.limits.maxOperatorCalls} запросов оператора</span><span class="cap">Повторений: ${r.repetitions}${r.repetitions > 1 ? ' — у каждого свой тестовый оператор' : ''}${r.startAt ? ` · старт ${fmtDate(r.startAt)}` : ''}</span></span></div>
 </section>`;
 }
 
@@ -47,14 +61,14 @@ export async function render(ctx) {
   }
   const sel = ctx.query.get('config') && configs.some((c) => c.id === ctx.query.get('config')) ? ctx.query.get('config') : ctx.state.sel ?? configs[0].id;
   ctx.state.sel = sel;
-  const sv = ctx.query.get('skillsetVersion');
-  const p = await get(`/api/run-configs/${encodeURIComponent(sel)}/preview${sv ? `?skillsetVersion=${encodeURIComponent(sv)}` : ''}`);
+  const cont = ctx.query.get('continue');
+  const p = await get(`/api/run-configs/${encodeURIComponent(sel)}/preview${cont ? `?continueFrom=${encodeURIComponent(cont)}` : ''}`);
   const training = p.resolved?.basket.type === 'training';
   const ahead = p.queueAhead.length;
   return html`<div class="col" style="gap: 14px">
 <nav class="crumbs" aria-label="Путь"><a href="/">Прогоны</a>${icon('chevRight', 's14')}<span>Запуск прогона</span></nav>
 <header class="ph">
-<div class="ph-t"><h1 class="h1">Запуск прогона</h1><p class="lede">Прогон описан файлом в runs/: корзина, агент, модели, версия скиллов и метрики. Перед запуском ClawGym проверяет ссылки и показывает, что именно будет выполнено.</p></div>
+<div class="ph-t"><h1 class="h1">Запуск прогона</h1><p class="lede">Прогон описан файлом в runs/: корзина, агент, модели оператора и оценки, тестовый оператор и метрики. Перед запуском ClawGym проверяет ссылки и показывает, что именно будет выполнено.</p></div>
 <div class="ph-a"><button class="btn" type="button" data-action="reload">${icon('refresh')}Проверить файлы снова</button></div>
 </header>
 </div>
@@ -74,7 +88,7 @@ ${p.ok
 <button class="btn pri" type="button" data-action="start">${icon('play')}Запустить прогон</button>
 </div>`
     : html`${issuesBox(p.issues)}<div class="row" style="gap: 12px"><button class="btn" type="button" data-action="reload">${icon('refresh')}Проверить снова</button><button class="btn off" type="button" disabled>Запустить прогон</button><span class="cap">Агенту не отправлено ни одного запроса</span></div>`}
-${whatRuns(p)}
+${whatRuns(p, ctx)}
 <section class="sec" aria-labelledby="plan-h">
 <div class="sec-h"><h2 class="h2" id="plan-h">План команд</h2>${planLegend(training)}</div>
 ${p.plan.length ? html`<div class="col" style="gap: 16px">${planView(p.plan)}<ul class="col sm t2" style="gap: 6px">${p.planText.map((t) => html`<li>${t}</li>`)}</ul></div>` : hint('План команд появится, когда корзина пройдёт проверку.', 'warn')}
@@ -97,7 +111,16 @@ export const actions = {
     ctx.state.sel = el.dataset.id;
     const q = new URLSearchParams(location.search);
     q.set('config', el.dataset.id);
-    q.delete('skillsetVersion');
+    q.delete('continue');
+    history.replaceState(null, '', `/runs/new?${q}`);
+    ctx.query = q;
+    return ctx.rerender();
+  },
+  operator(el, ctx) {
+    const q = new URLSearchParams(location.search);
+    q.set('config', ctx.state.sel);
+    if (el.value) q.set('continue', el.value);
+    else q.delete('continue');
     history.replaceState(null, '', `/runs/new?${q}`);
     ctx.query = q;
     return ctx.rerender();
@@ -109,8 +132,8 @@ export const actions = {
     return ctx.rerender();
   },
   async start(el, ctx) {
-    const sv = ctx.query.get('skillsetVersion');
-    const run = await post('/api/runs', { config: ctx.state.sel, overrides: sv ? { skillsetVersion: sv } : {} });
+    const cont = ctx.query.get('continue');
+    const run = await post('/api/runs', { config: ctx.state.sel, overrides: cont ? { continueFrom: cont } : {} });
     toast(`Прогон #${run.id} поставлен в очередь`);
     ctx.navigate(`/runs/${run.id}`);
   },

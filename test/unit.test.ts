@@ -96,15 +96,15 @@ test('белый список хостов агента', () => {
 
 test('битая ссылка в корзине: ошибка с файлом и полем, прогон не запускается', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-cfg-'));
-  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates']) {
+  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates']) {
     fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
   }
   fs.mkdirSync(path.join(home, 'baskets'));
   fs.mkdirSync(path.join(home, 'runs'));
   fs.writeFileSync(path.join(home, 'baskets/broken.yaml'), 'id: broken\ntitle: Битая\ntype: training\nitems:\n  - solution: spasibo-bonus-missing/explain-now\n  - solution: transfer-delay/explain-on-ask\n');
-  fs.writeFileSync(path.join(home, 'runs/broken.yaml'), 'id: broken\nbasket: broken\nagent: fake-agent\nmodels: { agent: fake-agent-a, operator: fake-operator, judge: fake-judge }\nskillset: { id: second-line, version: V1 }\n');
+  fs.writeFileSync(path.join(home, 'runs/broken.yaml'), 'id: broken\nbasket: broken\nagent: fake-agent\nmodels: { operator: fake-operator, judge: fake-judge }\n');
   try {
-    const reg = await loadRegistry(home, path.join(home, 'var'));
+    const reg = await loadRegistry(home);
     const issue = reg.issues.find((i) => i.file === 'baskets/broken.yaml' && i.severity === 'error');
     assert.ok(issue);
     assert.equal(issue!.field, 'items[1].solution');
@@ -137,10 +137,42 @@ test('журнал HTTP: авторизация скрыта, большое т�
 });
 
 test('fake-agent: запрет «экспертизу не выставлять» из поправки убирает ветку экспертизы, история операций остаётся', () => {
-  const skill = fs.readFileSync(path.join(HOME, 'skillsets/second-line/V1/skills/learned/card-hold/SKILL.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(HOME, 'dev/fake-agent/build/skills/learned/card-hold/SKILL.md'), 'utf8');
   const lines = skill.split('\n').filter((l) => /^\d+\.\s/.test(l)).map((l) => l.replace(/^\d+\.\s+/, ''));
   const steps = (text: string) => agentPlan(rulesOf(text)).map((x) => (x.kind === 'call' ? x.tool : 'answer'));
   assert.deepEqual(steps(lines.join('\n')), ['get_stages_expertise', 'get_card_history', 'create_expertise', 'postpone_expertises'], 'V1 ведёт блокировку суммы как спорную операцию');
   const lesson = YAML.parse(fs.readFileSync(path.join(HOME, 'cases/card-hold-amount.yaml'), 'utf8')).reference.lessons[0].rule;
   assert.deepEqual(steps([...lines, lesson].join('\n')), ['get_card_history', 'answer', 'get_close_with_answer'], 'после урока — ответ и закрытие');
+});
+
+test('продолжение на тестовом операторе: последний завершённый прогон настройки, тот же агент, свободный оператор, история', async () => {
+  const reg = await loadRegistry(HOME);
+  const env = loadEnv({ CLAWGYM_HOME: HOME }, HOME);
+  const run = (id: number, over: Record<string, unknown> = {}) =>
+    ({
+      id,
+      configId: 'demo-train',
+      title: 'Обучение',
+      type: 'training',
+      status: 'completed',
+      settings: { agent: { id: 'fake-agent' } },
+      lines: [{ index: 1, senderId: `s-${id}`, history: [{ run: 1, title: 'Проверка', type: 'checking', line: 1 }] }],
+      ...over,
+    }) as any;
+  const errors = (p: ReturnType<typeof resolveRun>) => p.issues.filter((i) => i.severity === 'error').map((i) => i.reason);
+  assert.match(errors(resolveRun(reg, env, 'demo-check-trained', {}, []))[0], /Нет завершённого прогона «demo-train»/);
+  // Берётся последний завершённый прогон настройки; история оператора дополняется этим прогоном.
+  const ok = resolveRun(reg, env, 'demo-check-trained', {}, [run(2), run(3), run(4, { status: 'failed' })]);
+  assert.equal(ok.ok, true, JSON.stringify(errors(ok)));
+  const op = ok.resolved!.operator;
+  assert.equal(op.mode, 'continue');
+  if (op.mode === 'continue') {
+    assert.equal(op.source.id, 3);
+    assert.deepEqual(op.lines, [{ senderId: 's-3', history: [{ run: 1, title: 'Проверка', type: 'checking', line: 1 }, { run: 3, title: 'Обучение', type: 'training', line: 1 }] }]);
+  }
+  assert.equal(resolveRun(reg, env, 'demo-check-trained', { continueFrom: 'new' }, [run(3)]).resolved!.operator.mode, 'new', 'при запуске можно выбрать нового');
+  assert.match(errors(resolveRun(reg, env, 'demo-check', { continueFrom: 5 }, [run(5, { settings: { agent: { id: 'aef-claw' } } })]))[0], /работал с агентом «aef-claw»/);
+  assert.match(errors(resolveRun(reg, env, 'demo-check', { continueFrom: 6 }, [run(6, { status: 'running' })]))[0], /не завершён/);
+  const busy = resolveRun(reg, env, 'demo-check', { continueFrom: 7 }, [run(7), run(8, { status: 'queued', lines: [{ index: 1, senderId: 's-7', history: [] }] })]);
+  assert.match(errors(busy)[0], /занят прогоном #8/);
 });

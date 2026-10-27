@@ -88,7 +88,6 @@ function tlsProblem(r: Resolved): string | null {
 
 /** Проверка без сетевых вызовов: что нужно модели, чтобы её можно было вызвать. */
 export function modelReadiness(model: ModelDef, env: NodeJS.ProcessEnv): string | null {
-  if (model.provider === 'deployment' || model.provider === 'agent-request') return null;
   const r = resolved(model, env);
   if (r.missing.length) return `не заданы переменные окружения: ${[...new Set(r.missing)].join(', ')}`;
   if (isGigaChat(model) && (!r.baseUrl || !r.name)) return 'нет baseUrl или model';
@@ -103,7 +102,6 @@ export function modelReadiness(model: ModelDef, env: NodeJS.ProcessEnv): string 
 
 /** Как модель авторизуется после подстановки окружения — для справочника; null, пока окружение не задано. */
 export function modelAuth(model: ModelDef, env: NodeJS.ProcessEnv): string | null {
-  if (model.provider === 'deployment' || model.provider === 'agent-request') return null;
   const r = resolved(model, env);
   if (r.missing.length) return null;
   const parts = [r.tls?.pfx ? 'клиентский сертификат PKCS#12' : r.clientCert ? 'клиентский сертификат' : '', r.apiKey ? 'токен' : ''].filter(Boolean);

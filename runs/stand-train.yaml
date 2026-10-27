@@ -1,0 +1,9 @@
+# Обучение на стенде: новый тестовый оператор AEFClaw, LLM-оператор на GigaChat. Выученное остаётся у оператора в агенте.
+id: stand-train
+title: Обучение · вторая линия · AEFClaw
+basket: second-line-train
+agent: aef-claw
+models:
+  operator: op-gigachat
+  judge: judge-gigachat
+metrics: all

@@ -14,7 +14,6 @@ import {
   metricsFileSchema,
   modelSchema,
   runSchema,
-  skillsetSchema,
   solutionSchema,
   toolDefaultsSchema,
 } from './schemas.js';
@@ -28,15 +27,12 @@ import {
   type CaseDef,
   type ContractDef,
   type Criterion,
-  type InstallerDef,
   type Issue,
   type MetricDef,
   type ModelDef,
   type RefTool,
   type Registry,
   type RunConfigDef,
-  type SkillsetDef,
-  type SkillsetVersion,
   type SolutionDef,
   type Source,
   type StubDef,
@@ -523,23 +519,6 @@ async function loadAgent(c: Collector, home: string, p: Parsed): Promise<AgentDe
       c.error(p.rel, `Шаблон тела ${r.body} не прочитан: ${e.message}`, { field: 'request.body', line: lineOf(p, ['request', 'body']) });
     }
   }
-  const sk = d.skills ?? { installer: 'none' };
-  let skills: InstallerDef;
-  if (sk.installer === 'directory') {
-    if (!sk.root) c.error(p.rel, 'Для installer: directory нужен root', { field: 'skills.root' });
-    skills = {
-      kind: 'directory',
-      root: sk.root ?? '',
-      skillsDir: sk.skillsDir ?? 'skills/learned',
-      pendingDir: sk.pendingDir ?? 'learning/cases/pending',
-      reportsDir: sk.reportsDir ?? 'learning/reports',
-    };
-  } else if (sk.installer === 'http') {
-    if (!sk.baseUrl) c.error(p.rel, 'Для installer: http нужен baseUrl', { field: 'skills.baseUrl' });
-    skills = { kind: 'http', baseUrl: sk.baseUrl ?? '', headers: stringMap(sk.headers) };
-  } else {
-    skills = { kind: 'none', note: sk.note ?? 'Установка набора скиллов в агента не поддержана подключением' };
-  }
   const mode = d.response.mode ?? 'sync';
   const ag: AgentDef = {
     id: d.id,
@@ -575,16 +554,14 @@ async function loadAgent(c: Collector, home: string, p: Parsed): Promise<AgentDe
       protocolVersion: d.mcp?.protocolVersion ?? '2025-06-18',
       taskIdFrom: d.mcp?.taskIdFrom ?? ['header', 'meta', 'argument'],
     },
-    model: { switch: d.model?.switch ?? 'none', path: d.model?.path ?? null, fixed: d.model?.fixed ?? null },
+    model: d.model ?? null,
     sessions: { max: d.sessions?.max ?? 3 },
-    skills,
     healthUrl: d.healthUrl ?? null,
     build: d.build ?? null,
     learningKit: d.learningKit ?? null,
     source: src(p),
   };
   if (mode !== 'sync') c.error(p.rel, `Тип ответа «${mode}» не поддержан: реализован только синхронный ответ`, { field: 'response.mode', line: lineOf(p, ['response', 'mode']) });
-  if (ag.model.switch === 'request' && !ag.model.path) c.error(p.rel, 'Для model.switch: request нужен model.path — куда в теле запроса записать модель', { field: 'model.path' });
   if (!ag.request.textPath && !JSON.stringify(body).includes('{{text}}')) {
     c.error(p.rel, 'Не задано, куда поместить текст реплики: нужен request.textPath или {{text}} в шаблоне тела', { field: 'request.textPath' });
   }
@@ -615,14 +592,6 @@ function loadModel(c: Collector, p: Parsed): ModelDef | null {
     description: d.description ?? '',
     source: src(p),
   };
-  const llmRoles = m.roles.filter((r) => r !== 'agent');
-  if (llmRoles.length && (m.provider === 'deployment' || m.provider === 'agent-request')) {
-    c.error(p.rel, `Провайдер «${m.provider}» описывает модель агента и не подходит для ролей ${llmRoles.join(', ')}`, { field: 'provider' });
-  }
-  if (m.roles.includes('agent') && m.provider !== 'deployment' && m.provider !== 'agent-request') {
-    c.error(p.rel, 'Модель агента задаётся развёртыванием (deployment) или параметром запроса агенту (agent-request)', { field: 'provider' });
-  }
-  if (m.provider === 'agent-request' && !m.model) c.error(p.rel, 'Для agent-request нужно model — значение, которое уйдёт агенту', { field: 'model' });
   const gigachat = m.provider === 'gigachat-v1' || m.provider === 'gigachat-v2';
   if (gigachat) {
     if (!m.baseUrl || !m.model) c.error(p.rel, `Для ${m.provider} нужны baseUrl и model`, { field: 'baseUrl' });
@@ -640,82 +609,6 @@ function loadModel(c: Collector, p: Parsed): ModelDef | null {
   }
   if (m.apiKey && !hasEnvRef(m.apiKey)) c.warn(p.rel, 'Ключ задайте ссылкой ${env:NAME}: файл настроек попадает в снимок прогона', { field: 'apiKey' });
   return m;
-}
-
-async function loadSkillset(c: Collector, home: string, p: Parsed): Promise<SkillsetDef | null> {
-  if (!schemaCheck(c, p, skillsetSchema)) return null;
-  const d = p.data;
-  const versions: SkillsetVersion[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < d.versions.length; i++) {
-    const v = d.versions[i];
-    if (seen.has(v.id)) c.error(p.rel, `Версия ${v.id} описана дважды`, { field: `versions[${i}].id` });
-    seen.add(v.id);
-    const dir = path.join(home, 'skillsets', v.path);
-    const files = await readTree(dir);
-    if (!files.length) {
-      c.error(p.rel, `В каталоге skillsets/${v.path} нет файлов скиллов`, { field: `versions[${i}].path`, line: lineOf(p, ['versions', i, 'path']), action: 'Положите файлы версии в каталог или исправьте путь' });
-    }
-    c.files += files.length;
-    versions.push({
-      id: v.id,
-      skillset: d.id,
-      createdAt: v.createdAt ?? null,
-      origin: { kind: v.source?.kind ?? 'import', note: v.source?.note ?? '', from: v.source?.from ?? null, run: v.source?.run ?? null, line: null },
-      status: 'ready',
-      files,
-      checksum: manifestChecksum(files),
-      generated: false,
-      dir,
-    });
-  }
-  return {
-    id: d.id,
-    title: d.title,
-    description: d.description ?? '',
-    compatibility: { agent: d.compatibility?.agent ?? null, learningKit: d.compatibility?.learningKit ?? null },
-    versions,
-    source: src(p),
-  };
-}
-
-/** Версии, полученные обучением, лежат в каталоге данных и не перезаписывают файлы настроек. */
-async function loadGeneratedVersions(c: Collector, dataDir: string, skillsets: Map<string, SkillsetDef>): Promise<void> {
-  const root = path.join(dataDir, 'skillsets');
-  for (const sid of await listDirs(root)) {
-    const set = skillsets.get(sid);
-    for (const vid of await listDirs(path.join(root, sid))) {
-      const meta = await readJsonIf<any>(path.join(root, sid, vid, 'version.json'));
-      if (!meta) continue;
-      if (!set) {
-        c.warn(`var/skillsets/${sid}`, `Версия ${vid} относится к набору «${sid}», которого нет в skillsets/`);
-        continue;
-      }
-      if (set.versions.some((v) => v.id === vid)) {
-        c.error(`var/skillsets/${sid}/${vid}`, `Версия ${vid} уже описана в ${set.source.file}`);
-        continue;
-      }
-      const dir = path.join(root, sid, vid, 'files');
-      const files = await readTree(dir);
-      set.versions.push({
-        id: vid,
-        skillset: sid,
-        createdAt: meta.createdAt ?? null,
-        origin: { kind: meta.origin?.kind ?? 'training', note: meta.origin?.note ?? '', from: meta.origin?.from ?? null, run: meta.origin?.run ?? null, line: meta.origin?.line ?? null },
-        status: meta.status === 'partial' ? 'partial' : 'ready',
-        files,
-        checksum: manifestChecksum(files),
-        generated: true,
-        dir,
-      });
-    }
-  }
-  for (const s of skillsets.values()) s.versions.sort((a, b) => versionOrder(a.id) - versionOrder(b.id) || a.id.localeCompare(b.id));
-}
-
-export function versionOrder(id: string): number {
-  const m = /(\d+)$/.exec(id);
-  return m ? Number(m[1]) : 0;
 }
 
 function loadMetrics(c: Collector, p: Parsed): MetricDef[] {
@@ -756,17 +649,14 @@ function loadMetrics(c: Collector, p: Parsed): MetricDef[] {
 function loadRun(c: Collector, p: Parsed): RunConfigDef | null {
   if (!schemaCheck(c, p, runSchema)) return null;
   const d = p.data;
-  let skillset: RunConfigDef['skillset'] = null;
-  if (d.skillset === 'build') skillset = 'build';
-  else if (isPlainObject(d.skillset)) skillset = { id: d.skillset.id, version: String(d.skillset.version) };
   if (d.startAt && Number.isNaN(Date.parse(d.startAt))) c.error(p.rel, 'startAt — не дата и время ISO 8601', { field: 'startAt' });
   return {
     id: d.id,
     title: d.title ?? d.id,
     basket: d.basket,
     agent: d.agent,
-    models: { agent: d.models.agent ?? null, operator: d.models.operator ?? null, judge: d.models.judge ?? null },
-    skillset,
+    models: { operator: d.models.operator ?? null, judge: d.models.judge ?? null },
+    continueFrom: d.continueFrom ?? null,
     metrics: d.metrics === 'all' || d.metrics === undefined ? ['*'] : d.metrics,
     limits: { ...DEFAULT_LIMITS, ...(d.limits ?? {}) },
     repetitions: d.repetitions ?? 1,
@@ -777,7 +667,7 @@ function loadRun(c: Collector, p: Parsed): RunConfigDef | null {
 
 // ------------------------------------------------------------------ сборка
 
-export async function loadRegistry(home: string, dataDir: string): Promise<Registry> {
+export async function loadRegistry(home: string): Promise<Registry> {
   const c = new Collector();
   const contract = await loadContract(c, home);
   const reg: Registry = {
@@ -789,7 +679,6 @@ export async function loadRegistry(home: string, dataDir: string): Promise<Regis
     baskets: new Map(),
     agents: new Map(),
     models: new Map(),
-    skillsets: new Map(),
     metrics: new Map(),
     runs: new Map(),
     issues: c.issues,
@@ -826,11 +715,6 @@ export async function loadRegistry(home: string, dataDir: string): Promise<Regis
     const p = await parseFile(c, home, rel);
     if (p) put(reg.models, loadModel(c, p), 'Модель');
   }
-  for (const rel of await listConfigFiles(home, 'skillsets')) {
-    const p = await parseFile(c, home, rel);
-    if (p) put(reg.skillsets, await loadSkillset(c, home, p), 'Набор скиллов');
-  }
-  await loadGeneratedVersions(c, dataDir, reg.skillsets);
   for (const rel of await listConfigFiles(home, 'metrics')) {
     const p = await parseFile(c, home, rel);
     if (p) for (const m of loadMetrics(c, p)) put(reg.metrics, m, 'Метрика');
@@ -845,7 +729,7 @@ export async function loadRegistry(home: string, dataDir: string): Promise<Regis
   return reg;
 }
 
-/** Ссылки между файлами: решение → кейс, корзина → решения, прогон → корзина, агент, модели, набор, метрики. */
+/** Ссылки между файлами: решение → кейс, корзина → решения, прогон → корзина, агент, модели, метрики, продолжаемая настройка. */
 function crossCheck(c: Collector, reg: Registry): void {
   for (const s of reg.solutions.values()) {
     if (!reg.cases.has(s.case)) {
@@ -866,20 +750,18 @@ function crossCheck(c: Collector, reg: Registry): void {
   for (const r of reg.runs.values()) {
     if (!reg.baskets.has(r.basket)) c.error(r.source.file, `Корзина «${r.basket}» не найдена в baskets/`, { field: 'basket' });
     if (!reg.agents.has(r.agent)) c.error(r.source.file, `Агент «${r.agent}» не найден в agents/`, { field: 'agent' });
-    for (const role of ['agent', 'operator', 'judge'] as const) {
+    for (const role of ['operator', 'judge'] as const) {
       const mid = r.models[role];
       if (!mid) continue;
       const m = reg.models.get(mid);
       if (!m) c.error(r.source.file, `Модель «${mid}» не найдена в models/`, { field: `models.${role}` });
       else if (!m.roles.includes(role)) c.error(r.source.file, `Модель «${mid}» не предназначена для роли «${role}»`, { field: `models.${role}`, action: `Добавьте роль в ${m.source.file} или выберите другую модель` });
     }
-    if (r.skillset && r.skillset !== 'build') {
-      const want = r.skillset.version;
-      const s = reg.skillsets.get(r.skillset.id);
-      if (!s) c.error(r.source.file, `Набор скиллов «${r.skillset.id}» не найден в skillsets/`, { field: 'skillset.id' });
-      else if (want !== 'latest' && !s.versions.some((v) => v.id === want)) {
-        c.error(r.source.file, `Версии ${want} нет в наборе «${s.id}»`, { field: 'skillset.version' });
-      }
+    if (r.continueFrom) {
+      const from = reg.runs.get(r.continueFrom);
+      if (!from) c.error(r.source.file, `Настройка «${r.continueFrom}» для продолжения не найдена в runs/`, { field: 'continueFrom' });
+      else if (from.id === r.id) c.error(r.source.file, 'Прогон не может продолжать сам себя', { field: 'continueFrom' });
+      else if (from.agent !== r.agent) c.error(r.source.file, `Оператор «${from.id}» работает с агентом «${from.agent}»: его скиллы остаются в этом агенте`, { field: 'continueFrom', action: 'Укажите настройку с тем же агентом' });
     }
     for (const mid of r.metrics) {
       if (mid !== '*' && !reg.metrics.has(mid)) c.error(r.source.file, `Метрика «${mid}» не найдена в metrics/`, { field: 'metrics' });

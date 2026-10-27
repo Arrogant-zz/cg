@@ -25,7 +25,6 @@ function statusOf(s) {
 
 function head(s) {
   const ex = s.execution;
-  const ss = s.skillset === 'build' ? 'стартовые скиллы сборки' : s.skillset ? `${s.skillset.title} · копия ${s.skillset.version}` : 'не подготавливались';
   return html`<div class="col" style="gap: 14px">
 <nav class="crumbs" aria-label="Путь"><a href="/manual">Ручной режим</a>${icon('chevRight', 's14')}<span>${s.case.id}</span></nav>
 <header class="ph">
@@ -39,9 +38,8 @@ ${s.note ? html`<p class="cap">${s.note}</p>` : ''}
 </header>
 <div class="setup">
 <button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Кейс</span><span class="m5">${s.case.id}</span></span>${icon('lock', 't3')}</button>
-<button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Агент</span><span class="m5">${s.agent.title}</span></span>${icon('lock', 't3')}</button>
-<button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Модель агента</span><span class="m5">${s.agentModel.title}</span></span>${icon('lock', 't3')}</button>
-<button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Скиллы · ${s.senderMode === 'existing' ? 'существующий оператор' : 'новый оператор'}</span><span class="m5">${ss}</span></span>${icon('lock', 't3')}</button>
+<button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Агент</span><span class="m5">${s.agent.title}${s.agent.model ? ` · ${s.agent.model}` : ''}</span></span>${icon('lock', 't3')}</button>
+<button class="pick lock" type="button" disabled><span class="col" style="gap: 2px"><span class="cap">Тестовый оператор</span><span class="m5">${s.senderMode === 'existing' ? 'существующий · его накопленные скиллы' : 'новый · стартовые скиллы сборки'}</span></span>${icon('lock', 't3')}</button>
 </div>
 ${s.prep?.length ? html`<div class="col" style="gap: 0">${s.prep.map((p) => html`<div class="okr">${mk(p.ok === null ? 'na' : p.ok)}<span>${p.text}${p.note ? html`<span class="cap"> · ${p.note}</span>` : ''}</span><span class="cap mono">${s.senderId}</span></div>`)}</div>` : ''}
 </div>`;

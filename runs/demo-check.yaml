@@ -1,0 +1,9 @@
+# Проверка до обучения: новый тестовый оператор со стартовыми скиллами сборки fake-agent.
+id: demo-check
+title: Проверка · вторая линия · новый оператор
+basket: second-line-check
+agent: fake-agent
+models:
+  operator: fake-operator
+  judge: fake-judge
+metrics: all

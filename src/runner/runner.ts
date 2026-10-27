@@ -1,5 +1,5 @@
-// Раннер прогонов (RUN-01–03, BASK-01–05, SK-03–06): очередь, линии повторений, кейсы, команды обучения,
-// проходы curator, итоговое состояние скиллов, новая версия после обучения и контроль неизменности в проверке.
+// Раннер прогонов (RUN-01–03, BASK-01–05): очередь, линии повторений на тестовых операторах, кейсы, команды обучения и проходы curator.
+// Скиллы живут в агенте у тестового оператора: ClawGym их не устанавливает и не выгружает (решение владельца от 27.10.2026).
 import type { App } from '../app.js';
 import type { CaseDef, SolutionDef } from '../config/types.js';
 import { Execution } from '../execution/execution.js';
@@ -12,16 +12,12 @@ import { LlmJudge } from '../judge/judge.js';
 import { ANSWER_JUDGE_PROMPT_VERSION, ANSWER_JUDGE_SYSTEM, JUDGE_PROMPT_VERSION, JUDGE_SYSTEM, OPERATOR_PROMPT_VERSION, OPERATOR_SYSTEM } from '../operator/prompts.js';
 import { itemScores, scoringOf } from '../metrics/scoring.js';
 import { createProvider } from '../llm/provider.js';
-import { createInstaller, type Installer, type WsFile } from '../skillsets/installer.js';
-import { registerVersion } from '../skillsets/store.js';
 import { resolveRun, type ResolvedItem, type ResolvedRun, type RunOverrides } from './resolve.js';
 import type { CuratorPassRecord, ItemRecord, LineRecord, PrepItem, RunRecord } from './types.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { runKey } from '../results/store.js';
 import { HttpError } from '../util/http.js';
-import { diffTrees } from '../util/diff.js';
-import { manifestChecksum } from '../util/fsx.js';
-import { errorMessage, nowIso, plural, randomHex, requestRef } from '../util/core.js';
+import { errorMessage, nowIso, randomHex, requestRef } from '../util/core.js';
 import { logger } from '../util/log.js';
 
 const log = logger('runner');
@@ -90,11 +86,15 @@ export class RunManager {
   /** Запуск: проверка настроек, снимок, постановка в очередь (RUN-01, RUN-02). */
   async create(configId: string, overrides: RunOverrides = {}): Promise<RunRecord> {
     const app = this.app;
-    const preview = resolveRun(app.registry, app.env, configId, overrides);
+    const preview = resolveRun(app.registry, app.env, configId, overrides, this.list());
     if (!preview.ok || !preview.resolved) {
       throw new HttpError(422, 'Прогон не запустится: ошибка в настройках. Агенту не отправлено ни одного запроса', preview.issues.filter((i) => i.severity === 'error'));
     }
     const r = preview.resolved;
+    // Один диалог на оператора: продолжать нельзя, пока на нём идёт ручная сессия.
+    const op = r.operator;
+    const manual = op.mode === 'continue' ? app.manual.list().find((m) => m.status === 'active' && op.lines.some((l) => l.senderId === m.senderId)) : null;
+    if (manual) throw new HttpError(409, `Тестовый оператор занят ручной сессией ${manual.key}: завершите её`);
     const id = await app.store.nextNumber('run');
     const createdAt = nowIso();
 
@@ -109,9 +109,8 @@ export class RunManager {
       ...(reg.contract ? [reg.contract.source] : []),
       ...(reg.contract?.defaultsSource ? [reg.contract.defaultsSource] : []),
       ...r.items.flatMap((i) => [i.solution?.source, i.caseDef?.source, ...(i.caseDef?.dataFiles ?? [])]),
-      ...[r.models.agent, r.models.operator, r.models.judge].map((m) => m?.source),
+      ...[r.models.operator, r.models.judge].map((m) => m?.source),
       ...r.metrics.map((m) => m.source),
-      ...(r.skillset && r.skillset !== 'build' ? [r.skillset.set.source] : []),
     ].filter(Boolean) as { file: string; hash: string; text: string }[];
     for (const s of sources) if (!texts.has(s.file)) texts.set(s.file, s.file.startsWith('agents/') || s.file.startsWith('models/') ? redactSecrets(s.text) : s.text);
     if (reg.contract) texts.set(reg.contract.startMessage.file, reg.contract.startMessage.text);
@@ -119,12 +118,6 @@ export class RunManager {
     texts.set(`prompts/${OPERATOR_PROMPT_VERSION}.txt`, OPERATOR_SYSTEM);
     texts.set(`prompts/${JUDGE_PROMPT_VERSION}.txt`, JUDGE_SYSTEM);
     texts.set(`prompts/${ANSWER_JUDGE_PROMPT_VERSION}.txt`, ANSWER_JUDGE_SYSTEM);
-    if (r.skillset && r.skillset !== 'build') {
-      texts.set(
-        'skillset.json',
-        JSON.stringify({ skillset: r.skillset.set.id, version: r.skillset.version.id, checksum: r.skillset.version.checksum, files: r.skillset.version.files.map((f) => ({ path: f.path, sha256: f.sha256 })) }, null, 2),
-      );
-    }
     for (const [file, text] of texts) {
       await app.store.saveText(id, `snapshot/${file}`, text);
       snapFiles.push({ file, hash: sources.find((s) => s.file === file)?.hash ?? '' });
@@ -132,7 +125,6 @@ export class RunManager {
 
     const lines: LineRecord[] = [];
     for (let li = 1; li <= r.repetitions; li++) lines.push(this.newLine(li, r));
-    const ss = r.skillset;
     const run: RunRecord = {
       id,
       key: runKey(id),
@@ -150,11 +142,10 @@ export class RunManager {
       overrides: { ...overrides },
       settings: {
         basket: { id: r.basket.id, title: r.basket.title, file: r.basket.source.file, hash: r.basket.source.hash, type: r.basket.type, curator: r.basket.curator, checking: r.basket.checking, items: r.items.filter((i) => i.kind === 'solution').length },
-        agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, hash: r.agent.source.hash, build: r.agent.build, learningKit: r.agent.learningKit, installer: r.agent.skills.kind },
-        agentModel: { ...r.agentModel, id: r.models.agent?.id ?? null },
+        agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, hash: r.agent.source.hash, build: r.agent.build, model: r.agent.model, learningKit: r.agent.learningKit },
+        testOperator: op.mode === 'continue' ? { mode: 'continue', run: op.source.id, title: op.source.title, type: op.source.type, configId: op.source.configId } : { mode: 'new' },
         operator: r.models.operator ? { id: r.models.operator.id, title: r.models.operator.title, provider: r.models.operator.provider, model: r.models.operator.model, file: r.models.operator.source.file, hash: r.models.operator.source.hash } : null,
         judge: r.models.judge ? { id: r.models.judge.id, title: r.models.judge.title, provider: r.models.judge.provider, model: r.models.judge.model, file: r.models.judge.source.file, hash: r.models.judge.source.hash } : null,
-        skillset: ss === 'build' ? 'build' : ss ? { id: ss.set.id, title: ss.set.title, version: ss.version.id, requested: ss.requested, checksum: ss.version.checksum, files: ss.version.files.length } : null,
         metrics: r.metrics.map((m) => ({ id: m.id, title: m.title, builtin: m.builtin, version: m.version, params: m.params })),
         limits: r.limits,
         repetitions: r.repetitions,
@@ -180,9 +171,12 @@ export class RunManager {
 
   private newLine(index: number, r: ResolvedRun): LineRecord {
     const items: ItemRecord[] = r.items.map((i) => this.newItem(i));
+    // Продолжение: оператор и его история известны сразу; новый оператор получает x-a2a-sender-id при старте линии.
+    const cont = r.operator.mode === 'continue' ? r.operator.lines[index - 1] : null;
     return {
       index,
-      senderId: '',
+      senderId: cont?.senderId ?? '',
+      history: cont?.history ?? [],
       status: 'queued',
       startedAt: null,
       finishedAt: null,
@@ -192,17 +186,6 @@ export class RunManager {
       curatorPasses: [],
       counter: 0,
       current: null,
-      skills: {
-        mode: r.skillset === 'build' ? 'build' : r.skillset ? 'version' : 'none',
-        source: r.skillset && r.skillset !== 'build' ? { skillset: r.skillset.set.id, version: r.skillset.version.id, checksum: r.skillset.version.checksum, files: r.skillset.version.files.length } : null,
-        initial: null,
-        final: null,
-        changes: null,
-        newVersion: null,
-        versionNote: '',
-        immutability: null,
-      },
-      materials: [],
     };
   }
 
@@ -250,7 +233,7 @@ export class RunManager {
     return run;
   }
 
-  /** Удаление завершённого прогона с журналами и материалами (уточнение владельца от 26.10.2026). Версии скиллов, полученные прогоном, остаются. */
+  /** Удаление завершённого прогона с журналами и материалами (уточнение владельца от 26.10.2026). Прогоны, продолжившие его оператора, хранят историю у себя. */
   async delete(id: number): Promise<void> {
     const run = this.get(id);
     if (run.status === 'queued') throw new HttpError(409, `Прогон #${id} в очереди: сначала уберите его из очереди`);
@@ -297,7 +280,6 @@ export class RunManager {
     for (const e of live.execs.values()) this.app.bindings.unbindAll(e);
     this.live.delete(run.id);
     this.publish(run);
-    await this.app.reload().catch((e) => log.warn(`Не удалось перечитать настройки после прогона: ${errorMessage(e)}`));
     log.info(`Прогон #${run.id} — ${run.status}`);
   }
 
@@ -320,22 +302,12 @@ export class RunManager {
       }
       line.status = 'running';
       line.startedAt = nowIso();
-      line.senderId = `${app.env.senderPrefix}${r.basket.id}-r${run.id}-${line.index}-${randomHex(3)}`;
-      this.scheduleSave(run);
+      line.senderId ||= `${app.env.senderPrefix}${r.basket.id}-r${run.id}-${line.index}-${randomHex(3)}`;
+      this.operatorPrep(run, line);
 
-      const channel = new AgentChannel(r.agent, app.env, app.locks, r.agentModel.value);
-      const installer = createInstaller(r.agent.skills, app.env.raw);
+      const channel = new AgentChannel(r.agent, app.env, app.locks);
       const operator = new LlmOperator(r.models.operator!, createProvider(r.models.operator!, app.env.raw));
       const judge = r.models.judge ? new LlmJudge(r.models.judge, createProvider(r.models.judge, app.env.raw)) : null;
-
-      const initial = await this.prepare(run, line, r, installer);
-      if (!initial.ok) {
-        line.status = 'failed';
-        line.error = 'Подготовка набора скиллов не прошла — кейсы не запускались';
-        for (const i of line.items) i.status = 'not_started';
-        return;
-      }
-      let prev: WsFile[] | null = initial.files;
       const prior = new Set<string>();
       const training = r.basket.type === 'training';
       const cur = r.basket.curator;
@@ -344,24 +316,23 @@ export class RunManager {
         const rec = line.items.find((x) => x.index === item.index)!;
         if (signal.aborted) break;
         if (item.kind === 'curator') {
-          if (training) prev = await this.curatorPass(run, line, channel, installer, prev, 'explicit', this.lastPos(line), signal);
+          if (training) await this.curatorPass(run, line, channel, 'explicit', this.lastPos(line), signal);
           rec.status = 'completed';
           continue;
         }
-        await this.runItem(run, line, rec, item, { channel, operator, judge, installer, prior, signal, live });
+        await this.runItem(run, line, rec, item, { channel, operator, judge, prior, signal, live });
         if (training && cur.enabled && cur.every > 0 && line.counter >= cur.every && !signal.aborted) {
           rec.steps.curatorPass = line.curatorPasses.length + 1;
-          prev = await this.curatorPass(run, line, channel, installer, prev, 'every', item.pos!, signal);
+          await this.curatorPass(run, line, channel, 'every', item.pos!, signal);
         }
       }
       if (training && cur.enabled && cur.final && line.counter > 0 && !signal.aborted) {
         const last = [...line.items].reverse().find((i) => i.kind === 'case' && i.outcome && i.outcome !== 'technical');
         if (last) last.steps.curatorPass = line.curatorPasses.length + 1;
-        prev = await this.curatorPass(run, line, channel, installer, prev, 'final', this.lastPos(line), signal);
+        await this.curatorPass(run, line, channel, 'final', this.lastPos(line), signal);
       }
       for (const i of line.items) if (i.status === 'pending') i.status = 'not_started';
       line.current = null;
-      await this.finalizeSkills(run, line, r, installer, initial.files, signal.aborted);
       line.status = signal.aborted ? 'stopped' : 'completed';
     } catch (e) {
       log.error(`Линия ${line.index} прогона #${run.id}`, e);
@@ -379,61 +350,22 @@ export class RunManager {
     return [...line.items].reverse().find((i) => i.kind === 'case' && i.outcome)?.pos ?? 0;
   }
 
-  /** Подготовка рабочей копии выбранной версии (SK-03): установка, сверка контрольных сумм, чужие pending-кейсы. */
-  private async prepare(run: RunRecord, line: LineRecord, r: ResolvedRun, installer: Installer): Promise<{ ok: boolean; files: WsFile[] | null }> {
-    const t0 = Date.now();
-    const items: PrepItem[] = [];
-    const push = (ok: boolean | null, text: string, note = '') => {
-      items.push({ ok, text, note, ts: nowIso() });
-      line.prep.items = items;
-      this.scheduleSave(run);
+  /** Тестовый оператор линии: новый — стартовые скиллы сборки агента, продолжение — скиллы после его прошлых прогонов. Файлы скиллов ClawGym не видит. */
+  private operatorPrep(run: RunRecord, line: LineRecord): void {
+    const ts = nowIso();
+    const last = line.history[line.history.length - 1];
+    const earlier = line.history.slice(0, -1).map((h) => `#${h.run}`);
+    line.prep = {
+      status: 'ok',
+      durationMs: 0,
+      items: [
+        last
+          ? { ok: true, text: `Продолжение на тестовом операторе прогона #${last.run} «${last.title}»: скиллы — после этого прогона`, note: earlier.length ? `раньше оператор прошёл ${earlier.join(', ')}` : '', ts }
+          : { ok: true, text: 'Новый тестовый оператор: стартовые скиллы сборки агента', note: '', ts },
+        { ok: true, text: `x-a2a-sender-id = ${line.senderId}`, note: 'на этом операторе можно продолжить следующий прогон', ts },
+      ],
     };
-    line.prep.status = 'pending';
-    line.current = { index: -1, execName: null, phase: 'подготовка' };
-    let files: WsFile[] | null = null;
-    let ok = true;
-    const ss = r.skillset;
-    if (ss && ss !== 'build') {
-      const v = ss.version;
-      try {
-        await installer.prepare(line.senderId);
-        await installer.install(line.senderId, v.files.map((f) => ({ path: f.path, content: f.content })));
-        files = await installer.exportSkills(line.senderId);
-        const sum = manifestChecksum(files);
-        if (sum === v.checksum) push(true, `Рабочая копия ${v.id} установлена: ${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}, контрольные суммы совпали`);
-        else {
-          const ch = diffTrees(v.files, files, false);
-          push(false, 'Набор не совпал с выбранным — кейсы не запускаются', ch.slice(0, 4).map((c) => `${c.kind} ${c.path}`).join(', '));
-          ok = false;
-        }
-        const pend = await installer.pending(line.senderId);
-        if (pend.length) {
-          push(false, `В сессии есть чужие pending-кейсы и свежие уроки: ${pend.length}`, pend.slice(0, 3).join(', '));
-          ok = false;
-        } else push(true, 'Чужих pending-кейсов и свежих уроков в сессии нет');
-      } catch (e) {
-        push(false, 'Не удалось подготовить набор скиллов', errorMessage(e));
-        ok = false;
-      }
-    } else if (ss === 'build') {
-      push(null, 'Стартовые скиллы сборки агента: набор не устанавливался (промежуточный режим)');
-      if (installer.canExport) {
-        try {
-          files = await installer.exportSkills(line.senderId);
-          push(true, `Исходное состояние выгружено: ${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}`);
-        } catch (e) {
-          push(null, 'Исходное состояние скиллов не выгружено', errorMessage(e));
-        }
-      }
-    } else push(null, 'Набор скиллов не выбран');
-    push(true, `Техническая сессия прогона: x-a2a-sender-id = ${line.senderId}`);
-    if (files) {
-      line.skills.initial = { checksum: manifestChecksum(files), files: files.length };
-      await this.app.store.saveFiles(run.id, `skills/L${line.index}/initial`, files);
-    }
-    line.prep.status = ok ? 'ok' : 'failed';
-    line.prep.durationMs = Date.now() - t0;
-    return { ok, files };
+    this.scheduleSave(run);
   }
 
   private async runItem(
@@ -441,7 +373,7 @@ export class RunManager {
     line: LineRecord,
     rec: ItemRecord,
     item: ResolvedItem,
-    deps: { channel: AgentChannel; operator: LlmOperator; judge: LlmJudge | null; installer: Installer; prior: Set<string>; signal: AbortSignal; live: Live },
+    deps: { channel: AgentChannel; operator: LlmOperator; judge: LlmJudge | null; prior: Set<string>; signal: AbortSignal; live: Live },
   ): Promise<void> {
     const app = this.app;
     const r = deps.live.resolved;
@@ -524,11 +456,8 @@ export class RunManager {
         const p: any = cmd.parsed;
         rec.steps.capture = { status: cmd.status, signal: p?.signal ?? null, path: p?.path ?? null, reason: p?.reason ?? cmd.error ?? null };
         line.counter++;
-        if (p?.kind === 'captured') await this.material(run, line, deps.installer, 'capture', `Кейс capture · позиция ${item.pos}`, p.path, `materials/L${line.index}/capture-P${String(item.pos).padStart(2, '0')}.md`);
-        else line.materials.push({ kind: 'capture', label: `Кейс capture · позиция ${item.pos}`, file: null, ok: false, note: cmd.status === 'skipped' ? 'capture пропущен агентом' : `capture не сохранил кейс: ${rec.steps.capture.reason ?? cmd.status}` });
       } else {
         rec.steps.capture = { status: 'not_sent', signal: null, path: null, reason: ev.outcome === 'technical' ? 'кейс прерван технически' : 'прогон остановлен' };
-        line.materials.push({ kind: 'capture', label: `Кейс capture · позиция ${item.pos}`, file: null, ok: false, note: 'capture не отправлялся' });
       }
     }
     rec.status = exec.status;
@@ -538,19 +467,10 @@ export class RunManager {
     this.scheduleSave(run);
   }
 
-  /** Проход curator между решениями (BASK-02, SK-04): /reset → /skill-curator → выгрузка изменений. */
-  private async curatorPass(
-    run: RunRecord,
-    line: LineRecord,
-    channel: AgentChannel,
-    installer: Installer,
-    prev: WsFile[] | null,
-    reason: CuratorPassRecord['reason'],
-    afterPos: number,
-    signal: AbortSignal,
-  ): Promise<WsFile[] | null> {
+  /** Проход curator между решениями (BASK-02): /reset → /skill-curator. Что изменилось — по строке результата; файлы скиллов остаются в агенте. */
+  private async curatorPass(run: RunRecord, line: LineRecord, channel: AgentChannel, reason: CuratorPassRecord['reason'], afterPos: number, signal: AbortSignal): Promise<void> {
     const pass = line.curatorPasses.length + 1;
-    const rec: CuratorPassRecord = { pass, afterPos, reason, status: 'running', startedAt: nowIso(), durationMs: null, reset: null, text: '', reply: null, parsed: null, changes: null, exportNote: '', report: null };
+    const rec: CuratorPassRecord = { pass, afterPos, reason, status: 'running', startedAt: nowIso(), durationMs: null, reset: null, text: '', reply: null, parsed: null, report: null };
     line.curatorPasses.push(rec);
     line.current = { index: -1, execName: null, phase: `curator ${reason === 'final' ? 'финальный' : pass}` };
     this.scheduleSave(run);
@@ -566,104 +486,15 @@ export class RunManager {
         rec.durationMs = Date.now() - t0;
         line.counter = 0;
         this.scheduleSave(run);
-        return prev;
+        return;
       }
     }
     const c = await channel.rawCommand(line.senderId, taskId, 'curator', signal);
     Object.assign(rec, { text: c.text, reply: c.reply, parsed: c.parsed, status: c.status, error: c.error, durationMs: Date.now() - t0, http: [...(rec.http ?? []), ...c.http] });
     line.counter = 0;
-    // Изменения выгружаются и при сбое команды: правки могли примениться до ошибки.
-    let next = prev;
-    if (installer.canExport) {
-      try {
-        const files = await installer.exportSkills(line.senderId);
-        rec.changes = prev ? diffTrees(prev, files) : null;
-        if (!prev) rec.exportNote = 'исходное состояние неизвестно — различия не посчитаны';
-        await this.app.store.saveFiles(run.id, `skills/L${line.index}/after-curator-${pass}`, files);
-        next = files;
-      } catch (e) {
-        rec.exportNote = `состояние после прохода не выгружено: ${errorMessage(e)}`;
-      }
-    } else rec.exportNote = 'подключение не выгружает файлы скиллов';
     const p: any = c.parsed;
-    if (p?.kind === 'complete') {
-      rec.report = p.report;
-      await this.material(run, line, installer, 'curator', `Отчёт curator ${pass}`, p.report, `materials/L${line.index}/curator-${pass}.md`);
-    } else {
-      line.materials.push({ kind: 'curator', label: `Отчёт curator ${pass}`, file: null, ok: p?.kind === 'empty', note: p?.kind === 'empty' ? 'очередь была пуста' : `проход не завершён: ${c.error ?? c.status}` });
-    }
+    rec.report = p?.kind === 'complete' ? (p.report ?? null) : null;
     this.scheduleSave(run);
-    return next;
-  }
-
-  private async material(run: RunRecord, line: LineRecord, installer: Installer, kind: string, label: string, wsPath: string, rel: string): Promise<void> {
-    const text = installer.canExport ? await installer.readFile(line.senderId, wsPath).catch(() => null) : null;
-    if (text !== null) {
-      await this.app.store.saveText(run.id, rel, text);
-      line.materials.push({ kind, label, file: rel, ok: true, note: wsPath });
-    } else {
-      line.materials.push({ kind, label, file: null, ok: false, note: installer.canExport ? `файл ${wsPath} не получен` : `путь ${wsPath}; файлы workspace недоступны подключению` });
-    }
-  }
-
-  /** Итоговое состояние скиллов: новая версия после обучения (SK-05), неизменность в проверке (SK-06). */
-  private async finalizeSkills(run: RunRecord, line: LineRecord, r: ResolvedRun, installer: Installer, initial: WsFile[] | null, aborted: boolean): Promise<void> {
-    const s = line.skills;
-    const training = r.basket.type === 'training';
-    if (!installer.canExport) {
-      s.versionNote = 'Подключение не выгружает файлы скиллов — итоговое состояние неизвестно, новая версия не создана';
-      if (!training) s.immutability = { status: 'unchecked', files: 0, changes: [], note: 'Неизменность не проверялась: нет доступа к файлам' };
-      return;
-    }
-    let final: WsFile[];
-    try {
-      final = await installer.exportSkills(line.senderId);
-    } catch (e) {
-      s.versionNote = `Итоговое состояние не выгружено: ${errorMessage(e)}`;
-      if (!training) s.immutability = { status: 'unchecked', files: 0, changes: [], note: s.versionNote };
-      return;
-    }
-    s.final = { checksum: manifestChecksum(final), files: final.length };
-    await this.app.store.saveFiles(run.id, `skills/L${line.index}/final`, final);
-    const base = r.skillset && r.skillset !== 'build' ? r.skillset.version.files : initial;
-    if (!base) {
-      s.versionNote = 'Исходное состояние неизвестно — изменения не посчитаны';
-      return;
-    }
-    s.changes = diffTrees(base, final);
-    if (!training) {
-      s.immutability = {
-        status: s.changes.length ? 'changed' : 'unchanged',
-        files: final.length,
-        changes: s.changes,
-        note: s.changes.length ? 'Проверка изменила набор — это не обучение, изменения отмечены отдельно' : `${final.length} ${plural(final.length, 'файл сверен', 'файла сверены', 'файлов сверены')} до и после`,
-      };
-      return;
-    }
-    if (!s.changes.length) {
-      s.versionNote = 'Обучение не изменило прикладные скиллы — новая версия не создана';
-      return;
-    }
-    if (r.skillset === 'build' || !r.skillset) {
-      s.versionNote = 'Набор не выбирался — итоговое состояние сохранено как материал, версия не регистрируется';
-      return;
-    }
-    if (aborted) {
-      s.versionNote = 'Обучение прервано: итоговое состояние сохранено как материал, версия не создана';
-      return;
-    }
-    const partial = line.curatorPasses.some((p) => !['ok', 'skipped'].includes(p.status));
-    const id = await registerVersion(
-      this.app.env.dataDir,
-      r.skillset.set,
-      final.map((f) => ({ path: f.path, content: f.content })),
-      { from: r.skillset.version.id, run: run.id, line: line.index, note: `результат прогона #${run.id}${r.repetitions > 1 ? `, линия ${line.index}` : ''}` },
-      partial ? 'partial' : 'ready',
-    );
-    s.newVersion = { id, status: partial ? 'partial' : 'ready' };
-    s.versionNote = partial
-      ? `Версия ${id} сохранена как частичная: один из проходов curator завершился сбоем`
-      : `Версия ${id} ссылается на ${r.skillset.version.id} и прогон #${run.id}. Исходная версия не изменена`;
   }
 
   private publish(run: RunRecord): void {

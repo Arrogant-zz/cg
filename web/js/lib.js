@@ -160,9 +160,8 @@ export function confirmAction({ title, text, ok = 'Удалить', cancel = 'О
 }
 
 /** Удаление прогона после подтверждения; версии скиллов, полученные прогоном, остаются. */
-export async function removeRun({ id, title, versions = [] }) {
-  const kept = !versions.length ? '' : versions.length === 1 ? ` Версия скиллов ${versions[0]}, полученная этим прогоном, останется.` : ` Версии скиллов ${versions.join(', ')}, полученные этим прогоном, останутся.`;
-  const ok = await confirmAction({ title: `Удалить прогон #${id}?`, text: `«${title}». Удалятся журналы кейсов, HTTP-обмены, снимок настроек и материалы — восстановить их будет нельзя.${kept}` });
+export async function removeRun({ id, title }) {
+  const ok = await confirmAction({ title: `Удалить прогон #${id}?`, text: `«${title}». Удалятся журналы кейсов, HTTP-обмены и снимок настроек — восстановить их будет нельзя. Скиллы тестового оператора остаются в агенте: после удаления продолжить на нём можно только в ручном режиме, по x-a2a-sender-id.` });
   if (!ok) return false;
   await del(`/api/runs/${id}`);
   toast(`Прогон #${id} удалён`);

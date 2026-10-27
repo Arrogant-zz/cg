@@ -1,19 +1,31 @@
 #!/usr/bin/env node
 // CLI: проверка настроек и запуск прогона без интерфейса (plan.md, этап 2).
 //   clawgym validate
-//   clawgym preview <run-config> [--skillset-version V2]
-//   clawgym run <run-config> [--skillset-version V2]
+//   clawgym preview <run-config> [--continue <номер прогона> | --continue new]
+//   clawgym run <run-config> [--continue <номер прогона> | --continue new]
 //   clawgym import-tools (--url <MCP оркестратора> | --file <ответ tools/list>) [--header "Имя: значение"]... [--check]
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { loadEnv } from './env.js';
 import { App } from './app.js';
 import { loadRegistry } from './config/loader.js';
-import { resolveRun } from './runner/resolve.js';
+import { resolveRun, type RunOverrides } from './runner/resolve.js';
+import { ResultsStore } from './results/store.js';
+import type { RunRecord } from './runner/types.js';
 import type { Issue } from './config/types.js';
 import { computeRunMetrics } from './metrics/builtins.js';
 import { setLogLevel } from './util/log.js';
 import { fetchToolsList, mergeTools, readToolsFile } from './config/tools-import.js';
+
+/** --continue N — продолжить на тестовом операторе прогона N; --continue new — новый оператор; без ключа — как в файле прогона. */
+function continueArg(): RunOverrides {
+  const v = arg('--continue');
+  if (!v) return {};
+  if (v === 'new') return { continueFrom: 'new' };
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) throw new Error('--continue: номер прогона или new');
+  return { continueFrom: n };
+}
 
 function printIssues(issues: Issue[]) {
   for (const i of issues) {
@@ -71,7 +83,7 @@ async function main() {
   const env = loadEnv();
   if (cmd === 'validate') {
     setLogLevel('warn');
-    const reg = await loadRegistry(env.home, env.dataDir);
+    const reg = await loadRegistry(env.home);
     printIssues(reg.issues);
     const errors = reg.issues.filter((i) => i.severity === 'error').length;
     console.log(`\nФайлов: ${reg.fileCount} · кейсов ${reg.cases.size} · решений ${reg.solutions.size} · корзин ${reg.baskets.size} · прогонов ${reg.runs.size} · ошибок ${errors}`);
@@ -79,9 +91,9 @@ async function main() {
   }
   if (cmd === 'preview' && target) {
     setLogLevel('warn');
-    const reg = await loadRegistry(env.home, env.dataDir);
-    const v = arg('--skillset-version');
-    const p = resolveRun(reg, env, target, v ? { skillsetVersion: v } : {});
+    const reg = await loadRegistry(env.home);
+    const runs = (await new ResultsStore(env.dataDir).loadRuns()) as RunRecord[];
+    const p = resolveRun(reg, env, target, continueArg(), runs);
     printIssues(p.issues);
     console.log('\nПлан команд:');
     for (const s of p.plan) console.log(s.kind === 'case' ? `  /reset → кейс ${s.pos} (${s.solution})${s.capture ? ' → /case-capture' : ''}` : `  /skill-curator ${s.pass}${s.reason === 'final' ? ' (финальный)' : ''}`);
@@ -95,8 +107,7 @@ async function main() {
     const app = new App(env);
     await app.init();
     await app.listen();
-    const v = arg('--skillset-version');
-    const run = await app.runs.create(target, v ? { skillsetVersion: v } : {});
+    const run = await app.runs.create(target, continueArg());
     console.log(`Прогон #${run.id} поставлен в очередь`);
     await new Promise<void>((resolve) => {
       const t = setInterval(() => {
@@ -111,15 +122,14 @@ async function main() {
     console.log(`\nПрогон #${r.id}: ${r.status}${r.error ? ` — ${r.error}` : ''}`);
     for (const l of r.lines) {
       for (const i of l.items.filter((x) => x.kind === 'case')) console.log(`  ${i.pos}. ${i.case?.id} · ${i.solution?.title}: ${i.outcome ?? i.status} — ${i.reason}`);
-      if (l.skills.versionNote) console.log(`  ${l.skills.versionNote}`);
-      if (l.skills.immutability) console.log(`  Неизменность набора: ${l.skills.immutability.note}`);
+      console.log(`  Тестовый оператор: x-a2a-sender-id = ${l.senderId} — на нём можно продолжить: --continue ${r.id}`);
     }
     for (const m of computeRunMetrics(r)) console.log(`  ${m.title}: ${m.display}${m.note ? ` · ${m.note}` : ''}${m.reason ? ` (${m.reason})` : ''}`);
     await app.close();
     process.exit(r.status === 'completed' ? 0 : 1);
   }
   if (cmd === 'import-tools') process.exit(await importTools(env.home));
-  console.log('Использование: clawgym validate | preview <run-config> | run <run-config> [--skillset-version V] | import-tools (--url U | --file F) [--header H] [--check]');
+  console.log('Использование: clawgym validate | preview <run-config> | run <run-config> [--continue N|new] | import-tools (--url U | --file F) [--header H] [--check]');
   process.exit(2);
 }
 

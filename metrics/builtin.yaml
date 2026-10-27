@@ -72,14 +72,6 @@ metrics:
     level: [кейс, корзина]
     needs: usage в ответах
     version: v1
-  - id: skill-changes
-    builtin: skill-changes
-    title: Изменения скиллов
-    description: Созданные, изменённые и удалённые файлы после каждого curator и за прогон; в проверке — неизменность набора
-    unit: файлы
-    level: [прогон]
-    needs: файлы набора до и после
-    version: v1
   - id: operator-errors
     builtin: operator-errors
     title: Сбои LLM-оператора

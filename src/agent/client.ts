@@ -45,8 +45,6 @@ export interface SendOptions {
   senderId: string;
   timeoutMs: number;
   signal?: AbortSignal;
-  /** Значение модели для model.switch: request. */
-  modelValue?: string | null;
   /** Подпись обмена в журнале HTTP: реплика, стартовое сообщение, команда. */
   label?: string;
   /** Обмен создан (start) и завершён (end): журнал HTTP видит и висящий запрос. */
@@ -80,11 +78,10 @@ export function buildRequest(agent: AgentDef, env: NodeJS.ProcessEnv, opts: Omit
   }
   headers[agent.request.taskIdHeader] = opts.taskId;
   headers[agent.request.senderIdHeader] = opts.senderId;
-  const vars = { text: opts.text, taskId: opts.taskId, senderId: opts.senderId, messageId: crypto.randomUUID(), model: opts.modelValue ?? '' };
+  const vars = { text: opts.text, taskId: opts.taskId, senderId: opts.senderId, messageId: crypto.randomUUID() };
   const body: any = renderDeep(deepClone(agent.request.body), vars);
   try {
     if (agent.request.textPath) setPath(body, agent.request.textPath, opts.text);
-    if (agent.model.switch === 'request' && agent.model.path && opts.modelValue) setPath(body, agent.model.path, opts.modelValue);
   } catch (e) {
     throw new AgentError('config', e instanceof PathError ? e.message : String(e));
   }

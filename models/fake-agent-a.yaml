@@ -1,6 +1,0 @@
-id: fake-agent-a
-title: fake-a · параметр запроса
-roles: [agent]
-provider: agent-request
-model: fake-a
-description: Значение модели, которое ClawGym передаёт fake-agent в теле запроса.

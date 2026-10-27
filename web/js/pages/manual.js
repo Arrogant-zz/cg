@@ -4,13 +4,18 @@ import { html, icon, get, post, fmtDate, hint, plural, toast, removeSession } fr
 export const title = 'Ручной режим';
 
 export async function render(ctx) {
-  const [cases, dir, skillsets, sessions] = await Promise.all([get('/api/cases'), get('/api/directory'), get('/api/skillsets'), get('/api/manual')]);
+  const [cases, dir, sessions, { runs }] = await Promise.all([get('/api/cases'), get('/api/directory'), get('/api/manual'), get('/api/runs')]);
   const pre = ctx.state.case ?? ctx.query.get('case') ?? cases.cases[0]?.id;
   const agent = dir.agents.find((a) => a.id === ctx.state.agent) ?? dir.agents[0];
-  // Модель агента выбирается, только если подключение переключает её запросом (MOD-02).
-  const switchable = agent?.model.switch === 'request';
-  const agentModels = dir.models.filter((m) => m.roles.includes('agent') && (switchable ? m.provider === 'agent-request' : m.provider === 'deployment'));
-  const installable = agent && agent.skills.kind !== 'none';
+  // Поле x-a2a-sender-id нужно только существующему оператору: новый получает идентификатор от ClawGym.
+  const existing = ctx.state.senderMode === 'existing';
+  // Операторы завершённых прогонов этого агента: на них можно продолжить вручную.
+  // Один оператор проходит несколько прогонов: в подсказке — его последний прогон (список прогонов — от новых к старым).
+  const seen = new Set();
+  const known = runs
+    .filter((r) => ['completed', 'stopped'].includes(r.status) && r.agent.id === agent?.id)
+    .flatMap((r) => r.senders.map((id) => ({ id, label: `после #${r.id} ${r.title} · ${r.type === 'training' ? 'обучение' : 'проверка'}` })))
+    .filter((k) => !seen.has(k.id) && seen.add(k.id));
   return html`<header class="ph"><div class="ph-t"><h1 class="h1">Ручной режим</h1><p class="lede">Любой кейс можно пройти вручную: агент получает ответы из заглушек кейса, а реплики, решения по действиям и служебные команды задаёте вы. Перед началом ClawGym отправляет обязательный /reset.</p></div></header>
 <div class="split">
 <form class="mn sec" data-submit="start" aria-labelledby="new-h" style="gap: 20px">
@@ -18,14 +23,12 @@ export async function render(ctx) {
 <div class="form-grid">
 <label class="field"><span class="lbl">Кейс</span><select class="input" name="case" data-change="field" data-key="case">${cases.cases.map((c) => html`<option value="${c.id}" ${c.id === pre ? 'selected' : ''}>${c.id} · ${c.title}${c.solutions ? '' : ' · только вручную'}</option>`)}</select></label>
 <label class="field"><span class="lbl">Агент</span><select class="input" name="agent" data-change="field" data-key="agent">${dir.agents.map((a) => html`<option value="${a.id}" ${a.id === agent?.id ? 'selected' : ''}>${a.title}${a.health?.ok === false ? ` · ${a.health.note}` : ''}</option>`)}</select></label>
-<label class="field"><span class="lbl">Модель агента</span>${switchable
-    ? html`<select class="input" name="model">${agentModels.map((m) => html`<option value="${m.id}">${m.title}</option>`)}</select>`
-    : html`<select class="input" name="model" disabled><option value="">${agent?.model.fixed ?? 'задана развёртыванием'} · задана развёртыванием</option></select>`}</label>
-<label class="field"><span class="lbl">Скиллы</span><select class="input" name="skillset"><option value="build">стартовые скиллы сборки</option><option value="">не подготавливать</option>${installable ? skillsets.flatMap((s) => s.versions.filter((v) => v.status === 'ready').map((v) => html`<option value="${s.id}@${v.id}">${s.title} · рабочая копия ${v.id}</option>`)) : ''}</select></label>
-<label class="field"><span class="lbl">Тестовый оператор</span><select class="input" name="senderMode"><option value="new">новый x-a2a-sender-id</option><option value="existing">существующий</option></select></label>
-<label class="field"><span class="lbl">Существующий x-a2a-sender-id</span><input class="input mono" name="senderId" placeholder="lab-…"></label>
+<label class="field"><span class="lbl">Тестовый оператор</span><select class="input" name="senderMode" data-change="field" data-key="senderMode"><option value="new" ${existing ? '' : 'selected'}>новый — стартовые скиллы сборки</option><option value="existing" ${existing ? 'selected' : ''}>существующий — его накопленные скиллы</option></select></label>
+${existing
+    ? html`<label class="field"><span class="lbl">x-a2a-sender-id существующего оператора</span><input class="input mono" name="senderId" required placeholder="${known.length ? 'выберите из списка или введите' : 'lab-…'}" list="known-senders" value="${ctx.state.senderId ?? ''}" data-change="field" data-key="senderId"><datalist id="known-senders">${known.map((k) => html`<option value="${k.id}">${k.label}</option>`)}</datalist></label>`
+    : ''}
 </div>
-${hint(installable ? 'Модель агента выбирается, только если подключение переключает её параметром запроса. Выбранная версия скиллов устанавливается в рабочую копию сессии; исходная версия не меняется.' : 'Это подключение не переключает модель и не устанавливает наборы скиллов: используются модель развёртывания и стартовые скиллы сборки.', 'info')}
+${hint(`Модель и стартовые скиллы задаёт сборка агента${agent?.model ? ` (${agent.model})` : ''}: ClawGym их не переключает и не устанавливает. Чтобы проверить вручную результат обучения, выберите существующего оператора — например, оператора обучающего прогона.`, 'info')}
 <div class="row"><button class="btn pri" type="submit">${icon('play')}Начать кейс</button><span class="cap">Займёт одну сессию агента до завершения</span></div>
 </form>
 <aside class="sd" aria-labelledby="ses-h">
@@ -56,13 +59,10 @@ export const actions = {
   },
   async start(form, ctx) {
     const f = new FormData(form);
-    const ss = String(f.get('skillset') ?? '');
     const body = {
       case: f.get('case'),
       agent: f.get('agent'),
-      model: f.get('model') || null,
-      skillset: ss === 'build' ? 'build' : ss ? { id: ss.split('@')[0], version: ss.split('@')[1] } : null,
-      sender: { mode: f.get('senderMode'), id: f.get('senderId') || undefined },
+      sender: f.get('senderMode') === 'existing' ? { mode: 'existing', id: String(f.get('senderId') ?? '').trim() } : { mode: 'new' },
     };
     const r = await post('/api/manual', body);
     toast(`Сессия ${r.key}: /reset и стартовое сообщение отправляются`);

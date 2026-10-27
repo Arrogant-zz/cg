@@ -11,7 +11,6 @@ const routes = [
   [/^\/manual\/(\d+)$/, 'manual', () => import('./pages/session.js')],
   [/^\/cases(?:\/([^/]+))?$/, 'cases', () => import('./pages/cases.js')],
   [/^\/baskets(?:\/([^/]+))?$/, 'baskets', () => import('./pages/baskets.js')],
-  [/^\/skillsets(?:\/([^/]+))?$/, 'skillsets', () => import('./pages/skillsets.js')],
   [/^\/directory$/, 'directory', () => import('./pages/directory.js')],
 ];
 

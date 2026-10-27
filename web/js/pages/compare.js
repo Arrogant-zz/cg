@@ -1,10 +1,10 @@
 // Экран «Сравнение»: сопоставимость условий, метрики A → B, различия по кейсам (RES-02, SK-06).
-import { html, icon, get, typeBadge, fmtDate, fmtDur, mk, ver, hint, later, plural, fmtShare } from '../lib.js';
+import { html, icon, get, typeBadge, fmtDate, fmtDur, mk, hint, later, fmtShare } from '../lib.js';
 
 export const title = 'Сравнение';
 
 function runOption(r, selected) {
-  const ss = r.skillset?.version ? ` · ${r.skillset.version}` : '';
+  const ss = r.testOperator ? ` · ${r.testOperator}` : '';
   return html`<option value="${r.id}" ${selected ? 'selected' : ''}>#${r.id} ${r.title}${ss} · ${fmtDate(r.finishedAt)}</option>`;
 }
 
@@ -48,16 +48,16 @@ export async function render(ctx) {
     b = done[0].id;
     a = done[1].id;
   }
-  const head = html`<header class="ph"><div class="ph-t"><h1 class="h1">Сравнение прогонов</h1><p class="lede">Одна проверяющая корзина на двух версиях скиллов — или любые два прогона. Сначала — сопоставимы ли условия, затем — что изменилось в каждом кейсе.</p></div></header>`;
+  const head = html`<header class="ph"><div class="ph-t"><h1 class="h1">Сравнение прогонов</h1><p class="lede">Одна проверяющая корзина до и после обучения тестового оператора — или любые два прогона. Сначала — сопоставимы ли условия, затем — что изменилось в каждом кейсе.</p></div></header>`;
   if (done.length < 2) return html`${head}<div class="empty">Для сравнения нужны два завершённых прогона.</div>`;
   const c = await get(`/api/compare?a=${a}&b=${b}`);
   const pickA = html`<label class="field"><span class="lbl">Прогон A</span><select class="input" data-change="pick" data-side="a">${done.map((r) => runOption(r, r.id === a))}</select></label>`;
   const pickB = html`<label class="field"><span class="lbl">Прогон B</span><select class="input" data-change="pick" data-side="b">${done.map((r) => runOption(r, r.id === b))}</select></label>`;
-  const verOf = (x) => (x.skillset && x.skillset !== 'build' ? ver(x.skillset.version) : '');
+  const opOf = (x) => html`<span class="pill">${x.testOperator}</span>`;
   const scored = c.cases.some((x) => x.a?.scores || x.b?.scores);
   return html`${head}
 <div class="pair">${pickA}<button class="btn ghost sq" type="button" data-action="swap" aria-label="Поменять прогоны местами" style="align-self: end">${icon('swap')}</button>${pickB}</div>
-<div class="row" style="gap: 8px">${typeBadge(c.a.type)}${verOf(c.a)}<a href="/runs/${c.a.id}">#${c.a.id}</a>${icon('arrow', 's14 t3')}${typeBadge(c.b.type)}${verOf(c.b)}<a href="/runs/${c.b.id}">#${c.b.id}</a></div>
+<div class="row" style="gap: 8px">${typeBadge(c.a.type)}<a href="/runs/${c.a.id}">#${c.a.id}</a>${opOf(c.a)}${icon('arrow', 's14 t3')}${typeBadge(c.b.type)}<a href="/runs/${c.b.id}">#${c.b.id}</a>${opOf(c.b)}</div>
 <section class="split" aria-labelledby="cmp-h">
 <div class="mn sec" style="gap: 6px">
 <div class="sec-h" style="padding-bottom: 10px"><h2 class="h2" id="cmp-h">Сопоставимость условий</h2><span class="pill ${c.comparable ? 'pass' : 'na'}">${c.comparable ? icon('check') : ''}${c.conclusion}</span></div>
@@ -66,9 +66,7 @@ export async function render(ctx) {
 </div>
 <aside class="sd" style="gap: 20px">
 ${c.limitations.length ? html`<div class="soft p20 col" style="gap: 10px"><span class="row m5" style="gap: 8px">${icon('warn')}Ограничения</span>${c.limitations.map((l) => html`<span class="sm t2">${l}</span>`)}</div>` : ''}
-<div class="col" style="gap: 0">${c.immutability.flatMap((x) =>
-    x.items.map((im) => html`<div class="okr">${mk(im?.status === 'unchanged' ? true : im?.status === 'changed' ? false : 'na')}<span>#${x.run}: ${im ? (im.status === 'unchanged' ? 'набор не изменился' : im.status === 'changed' ? 'набор изменился за прогон' : im.note) : 'обучающий прогон — набор менялся по плану'}</span><span class="cap num">${im?.files ? `${im.files} ${plural(im.files, 'файл', 'файла', 'файлов')}` : ''}</span></div>`),
-  )}</div>
+${hint('Схема аналитика: проверка на новом тестовом операторе, обучение, та же проверка на обученном операторе. Тогда условия различаются только оператором, а ΔM1 и ΔM2 показывают эффект обучения.')}
 </aside>
 </section>
 <section class="kpis" aria-label="Метрики A и B" style="grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr))">

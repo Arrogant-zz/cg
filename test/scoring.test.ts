@@ -69,7 +69,7 @@ test('M1: macro-F1 по присутствующим классам, accuracy и
 });
 
 test('класс финального действия: последний выполненный итоговый вызов, иначе инструкция оператору; лимит — незавершённый', async () => {
-  const reg = await loadRegistry(HOME, path.join(os.tmpdir(), 'clawgym-scoring-var'));
+  const reg = await loadRegistry(HOME);
   const s = scoringOf([...reg.metrics.values()]);
   const card = reg.cases.get('card-operation-dispute')!;
   const call = (seq: number, tool: string, args: Record<string, unknown> = {}, executed = true) => ({ seq, tool, args, executed });
@@ -127,7 +127,7 @@ test('параметры метрик проверяются при загруз
         ],
       }),
     );
-    const reg = await loadRegistry(home, path.join(home, 'var'));
+    const reg = await loadRegistry(home);
     const errors = reg.issues.filter((i) => i.severity === 'error' && i.file === 'metrics/m.yaml');
     assert.ok(errors.some((e) => e.field === 'metrics[0].params.weights' && /Сумма весов должна быть 1/.test(e.reason)), JSON.stringify(errors));
     assert.ok(errors.some((e) => e.field === 'metrics[1].params.duplicates' && /tolerate, strict, whole/.test(e.reason)), JSON.stringify(errors));

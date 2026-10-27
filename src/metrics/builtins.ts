@@ -173,29 +173,6 @@ export function computeRunMetrics(run: RunRecord): MetricValue[] {
         out.push({ ...base, title: 'Токены агента', status: 'ok', value: total, denominator: null, display: fmtK(total), note: extra, reason: '' });
         break;
       }
-      case 'skill-changes': {
-        if (checking) {
-          const im = lines.map((l) => l.skills.immutability).filter(Boolean);
-          if (!im.length || im.every((x) => x!.status === 'unchecked')) {
-            out.push({ ...na(m.id, 'Неизменность набора', m.builtin, im[0]?.note || 'неизменность не проверялась'), title: 'Неизменность набора' });
-            break;
-          }
-          const changed = im.filter((x) => x!.status === 'changed').length;
-          out.push({ ...base, title: 'Неизменность набора', status: 'ok', value: changed, denominator: im.length, display: changed ? `изменён в ${changed}` : 'не изменился', note: `${im[0]!.files} ${plural(im[0]!.files, 'файл сверен', 'файла сверены', 'файлов сверены')} до и после`, reason: '' });
-          break;
-        }
-        const passes = lines.flatMap((l) => l.curatorPasses);
-        const changes = lines.map((l) => l.skills.changes).filter(Boolean).flat() as NonNullable<LineRecord['skills']['changes']>;
-        if (!lines.some((l) => l.skills.final)) {
-          out.push(na(m.id, m.title, m.builtin, avail?.reason || 'итоговое состояние скиллов не выгружено'));
-          break;
-        }
-        const a = changes.filter((c) => c.kind === 'added').length;
-        const mo = changes.filter((c) => c.kind === 'modified').length;
-        const r = changes.filter((c) => c.kind === 'removed').length;
-        out.push({ ...base, status: 'ok', value: a + mo + r, denominator: null, display: `+${a} ~${mo} −${r}`, note: `создано, изменено, удалено · проходов curator ${passes.length}`, reason: '' });
-        break;
-      }
       case 'final-action': {
         // M1: macro-F1 по классам финального действия среди завершённых; незавершённые — отдельный счётчик.
         const finished = items.filter((i) => i.outcome);

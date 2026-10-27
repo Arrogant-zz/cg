@@ -1,13 +1,12 @@
-# Офлайн-демонстрация: обучение рабочей копии V1 на fake-agent с fake-gigachat.
+# Офлайн-демонстрация: обучение на fake-agent с fake-gigachat. Новый тестовый оператор начинает со стартовых скиллов сборки;
+# выученное остаётся у него в агенте — проверка после обучения продолжает на нём (runs/demo-check-trained.yaml).
 id: demo-train
 title: Обучение · вторая линия · fake-agent
 basket: second-line-train
 agent: fake-agent
 models:
-  agent: fake-agent-a
   operator: fake-operator
   judge: fake-judge
-skillset: { id: second-line, version: V1 }
 metrics: all
 limits:
   maxTurns: 20

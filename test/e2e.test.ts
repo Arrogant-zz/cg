@@ -13,11 +13,13 @@ after(async () => {
   await s?.close();
 });
 
-const v1Files = () =>
-  ['spasibo-bonus', 'card-dispute', 'card-hold', 'notifications-channel'].map((n) => fs.readFileSync(path.join(HOME, `skillsets/second-line/V1/skills/learned/${n}/SKILL.md`), 'utf8'));
+// Стартовые скиллы «сборки» fake-agent: новый тестовый оператор начинает с них, обучение меняет только его копию в агенте.
+const buildFiles = () =>
+  ['spasibo-bonus', 'card-dispute', 'card-hold', 'notifications-channel'].map((n) => fs.readFileSync(path.join(HOME, `dev/fake-agent/build/skills/learned/${n}/SKILL.md`), 'utf8'));
+const workspace = (sender: string) => path.join(s.dataDir, 'fake-workspaces', sender.replace(/[^\w.-]/g, '_'));
 
-test('обучение V1: reset перед каждым кейсом, capture после каждого, curator после 2, 4, 6 и финальный после 7; новая версия V2', async () => {
-  const before = v1Files();
+test('обучение на новом операторе: reset перед каждым кейсом, capture после каждого, curator после 2, 4, 6 и финальный после 7; выученное — у оператора', async () => {
+  const before = buildFiles();
   const created = await s.api('POST', '/api/runs', { config: 'demo-train' });
   assert.equal(created.status, 200, JSON.stringify(created.data));
   const run = await s.waitRun(created.data.id);
@@ -55,17 +57,14 @@ test('обучение V1: reset перед каждым кейсом, capture �
   assert.equal(hold.case.id, 'card-hold-amount');
   assert.deepEqual(hold.stats.lessons, ['L-hold-001']);
   assert.equal(hold.scores.final.predicted, 'close_answer');
-  // Новая версия со ссылками на V1 и прогон; V1 не изменён.
-  assert.equal(line.skills.newVersion?.status, 'ready', line.skills.versionNote);
-  const ver = line.skills.newVersion.id;
-  const ss = await s.api('GET', '/api/skillsets/second-line');
-  const v = ss.data.versions.find((x: any) => x.id === ver);
-  assert.equal(v.origin.from, 'V1');
-  assert.equal(v.origin.run, run.id);
-  assert.deepEqual(v1Files(), before, 'V1 не перезаписан');
-  assert.ok(line.skills.changes.length > 0);
-  const holdSkill = fs.readFileSync(path.join(s.dataDir, 'skillsets/second-line', ver, 'files/skills/learned/card-hold/SKILL.md'), 'utf8');
-  assert.match(holdSkill, /экспертизу не выставлять/, 'урок перенесён curator в скилл тематики');
+  // Новый тестовый оператор; что сделал curator — по строке результата. Скиллы ClawGym не выгружает: урок — в workspace оператора в агенте.
+  assert.equal(run.settings.testOperator.mode, 'new');
+  assert.deepEqual(line.history, []);
+  assert.ok(line.curatorPasses.every((p: any) => p.parsed?.kind === 'complete'), 'строка результата curator разобрана');
+  assert.ok(line.curatorPasses.some((p: any) => p.parsed.updated + p.parsed.created > 0));
+  const holdSkill = fs.readFileSync(path.join(workspace(line.senderId), 'skills/learned/card-hold/SKILL.md'), 'utf8');
+  assert.match(holdSkill, /экспертизу не выставлять/, 'урок перенесён curator в скилл оператора');
+  assert.deepEqual(buildFiles(), before, 'стартовые скиллы сборки не изменились');
   // Метрики: успех среди оценённых, токены агента из usage.
   const success = run.summary.find((m: any) => m.id === 'success');
   assert.equal(success.status, 'ok');
@@ -95,27 +94,39 @@ test('обучение V1: reset перед каждым кейсом, capture �
   assert.equal(ex.data.httpCount, http.length);
 });
 
-test('проверка V1 и полученной версии: без capture и curator, неизменность набора, сравнение', async () => {
-  const a = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check-v1' })).data.id);
-  const b = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check-latest' })).data.id);
+test('проверка до и после обучения: новый оператор и продолжение на обученном, без capture и curator, сравнение', async () => {
+  const train = (await s.api('GET', '/api/runs')).data.runs.find((r: any) => r.type === 'training' && r.status === 'completed');
+  const trainSender = (await s.api('GET', `/api/runs/${train.id}`)).data.lines[0].senderId;
+  // Нет такого прогона — продолжать не на ком: ошибка до запуска.
+  const missing = (await s.api('GET', '/api/run-configs/demo-check/preview?continueFrom=9999')).data;
+  assert.equal(missing.ok, false);
+  assert.ok(missing.issues.some((i: any) => /Прогон #9999 для продолжения не найден/.test(i.reason)));
+  const a = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check' })).data.id);
+  const b = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check-trained' })).data.id);
+  // demo-check — новый оператор со стартовыми скиллами сборки; demo-check-trained — оператор обучающего прогона.
+  assert.equal(a.settings.testOperator.mode, 'new');
+  assert.notEqual(a.lines[0].senderId, trainSender);
+  assert.deepEqual(b.settings.testOperator, { mode: 'continue', run: train.id, title: train.title, type: 'training', configId: 'demo-train' });
+  assert.equal(b.lines[0].senderId, trainSender, 'тот же x-a2a-sender-id, что в обучении');
+  assert.deepEqual(b.lines[0].history.map((h: any) => [h.run, h.type]), [[train.id, 'training']]);
   for (const r of [a, b]) {
     assert.equal(r.status, 'completed', r.error ?? '');
     const l = r.lines[0];
-    const sent = s.agentRequests.filter((x) => x.sender === l.senderId).map((x) => x.text);
+    const sent = s.agentRequests.filter((x) => x.sender === l.senderId && Date.parse(x.ts) >= Date.parse(r.startedAt)).map((x) => x.text);
     assert.ok(!sent.some((t) => t.startsWith('/case-capture') || t.startsWith('/skill-curator')), 'в проверке нет команд обучения');
-    assert.equal(l.skills.immutability.status, 'unchanged');
     assert.equal(l.curatorPasses.length, 0);
     for (const i of l.items) assert.ok(!i.stats || i.stats.corrections === 0, 'в проверке нет поправок');
   }
   const aPassed = a.lines[0].items.filter((i: any) => i.outcome === 'passed').length;
   const bPassed = b.lines[0].items.filter((i: any) => i.outcome === 'passed').length;
-  assert.ok(bPassed > aPassed, `полученная версия лучше исходной: ${aPassed} → ${bPassed}`);
+  assert.ok(bPassed > aPassed, `обученный оператор лучше нового: ${aPassed} → ${bPassed}`);
   const cmp = await s.api('GET', `/api/compare?a=${a.id}&b=${b.id}`);
   assert.equal(cmp.status, 200);
   assert.ok(cmp.data.counts.better > 0);
-  assert.equal(cmp.data.rows.filter((r: any) => !r.same).map((r: any) => r.key).join(','), 'skillset');
+  assert.equal(cmp.data.rows.filter((r: any) => !r.same).map((r: any) => r.key).join(','), 'operator');
+  assert.match(cmp.data.rows.find((r: any) => r.key === 'operator').b, new RegExp(`^после #${train.id} обучение$`));
 
-  // Метрики аналитика. M1: V1 ведёт блокировку суммы как спорную операцию — экспертиза вместо ответа; V2 после обучения закрывает ответом.
+  // Метрики аналитика. M1: со стартовыми скиллами блокировка суммы идёт как спорная операция — экспертиза вместо ответа; после обучения — ответ и закрытие.
   const metric = (r: any, id: string) => r.summary.find((m: any) => m.id === id);
   const [m1a, m1b] = [a, b].map((r) => metric(r, 'final-action'));
   assert.equal(m1a.display, '0,73');
@@ -153,9 +164,17 @@ test('проверка V1 и полученной версии: без capture �
 });
 
 test('ручной режим: кейс без решений, ответ вместо инструмента, подтверждение, команда, разметка', async () => {
-  const created = await s.api('POST', '/api/manual', { case: 'notifications-channel-change', agent: 'fake-agent', model: 'fake-agent-a', skillset: 'build' });
+  // Существующий оператор задаётся явно: без id — ошибка, а не тихая подмена новым.
+  const noId = await s.api('POST', '/api/manual', { case: 'notifications-channel-change', agent: 'fake-agent', sender: { mode: 'existing', id: ' ' } });
+  assert.equal(noId.status, 400);
+  const created = await s.api('POST', '/api/manual', { case: 'notifications-channel-change', agent: 'fake-agent' });
   assert.equal(created.status, 200, JSON.stringify(created.data));
   const id = created.data.id;
+  // Один диалог на оператора: занятый активной сессией оператор второй сессии не достаётся.
+  const sender = (await s.api('GET', `/api/manual/${id}`)).data.senderId;
+  const twice = await s.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent', sender: { mode: 'existing', id: sender } });
+  assert.equal(twice.status, 409);
+  assert.match(twice.data.error ?? JSON.stringify(twice.data), /занят ручной сессией/);
   const get = async () => (await s.api('GET', `/api/manual/${id}`)).data;
   // Нет заглушки для get_smsbank_notifications: вызов ждёт ответа человека.
   const waiting = await until(async () => {
@@ -215,10 +234,10 @@ test('вызов MCP с неизвестным x-task-id получает оши
   assert.ok(unbound.some((x) => x.id === entry.data.httpId && x.execId === null), 'вызов без привязки — в общем журнале MCP');
 });
 
-test('удаление: завершённый прогон и закрытая сессия удаляются с файлами, идущий прогон — нет, версия скиллов остаётся', async () => {
+test('удаление: завершённый прогон и закрытая сессия удаляются с файлами, идущий прогон — нет, история оператора у продолжений остаётся', async () => {
   const runDir = (id: number) => path.join(s.dataDir, 'results', `run-${String(id).padStart(4, '0')}`);
   // Прогон в очереди или в работе удалить нельзя.
-  const created = await s.api('POST', '/api/runs', { config: 'demo-check-v1' });
+  const created = await s.api('POST', '/api/runs', { config: 'demo-check' });
   const busy = await s.api('DELETE', `/api/runs/${created.data.id}`);
   assert.equal(busy.status, 409);
   const run = await s.waitRun(created.data.id);
@@ -227,16 +246,15 @@ test('удаление: завершённый прогон и закрытая 
   assert.ok(!fs.existsSync(runDir(run.id)), 'каталог прогона удалён целиком');
   assert.equal((await s.api('GET', `/api/runs/${run.id}`)).status, 404);
   assert.ok(!(await s.api('GET', '/api/runs')).data.runs.some((r: any) => r.id === run.id));
-  // Обучающий прогон удаляется, а полученная им версия остаётся с пометкой «прогон удалён».
-  const train = (await s.api('GET', '/api/runs')).data.runs.find((r: any) => r.type === 'training' && r.newVersions.length);
-  assert.ok(train, 'обучающий прогон из первого теста');
-  const vid = train.newVersions[0].id;
+  // Обучающий прогон удаляется; проверка, продолжившая его оператора, хранит историю у себя.
+  const list = (await s.api('GET', '/api/runs')).data.runs;
+  const train = list.find((r: any) => r.type === 'training');
+  const cont = list.find((r: any) => r.configId === 'demo-check-trained');
+  assert.ok(train && cont, 'обучение и продолжение из прошлых тестов');
   assert.equal((await s.api('DELETE', `/api/runs/${train.id}`)).status, 200);
-  const v = (await s.api('GET', '/api/skillsets')).data.find((x: any) => x.id === 'second-line').versions.find((x: any) => x.id === vid);
-  assert.ok(v, 'версия скиллов осталась');
-  assert.equal(v.origin.run, train.id);
-  assert.equal(v.runDeleted, true);
-  assert.equal((await s.api('GET', `/api/skillsets/second-line`)).status, 200);
+  assert.equal((await s.api('GET', `/api/runs/${cont.id}`)).data.testOperatorLabel, `после #${train.id} обучение`);
+  const orphan = (await s.api('GET', '/api/run-configs/demo-check-trained/preview')).data;
+  assert.ok(orphan.issues.some((i: any) => /Нет завершённого прогона «demo-train»/.test(i.reason)), 'продолжать больше не на ком');
   // Закрытая ручная сессия удаляется вместе с журналом и HTTP-обменами.
   const closed = (await s.api('GET', '/api/manual')).data.find((x: any) => x.status === 'closed');
   assert.ok(closed, 'закрытая сессия из теста ручного режима');
@@ -246,7 +264,7 @@ test('удаление: завершённый прогон и закрытая 
   assert.ok(files.every((f) => !fs.existsSync(f)), 'файлы сессии удалены');
   assert.equal((await s.api('GET', `/api/manual/${closed.id}`)).status, 404);
   // Номер удалённого прогона не занимается повторно.
-  const next = await s.api('POST', '/api/runs', { config: 'demo-check-v1' });
+  const next = await s.api('POST', '/api/runs', { config: 'demo-check' });
   assert.ok(next.data.id > run.id);
   await s.waitRun(next.data.id);
 });
