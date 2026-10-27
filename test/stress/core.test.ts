@@ -108,7 +108,7 @@ stress('CORE-10 регулярное выражение из when не долж�
   const result = spawnSync(process.execPath, ['--input-type=module', '-e',
     `import {condMatches} from ${JSON.stringify(module)}; condMatches('a'.repeat(32) + '!', {regex:'^(a+)+$'}); process.stdout.write('done');`,
   ], { timeout: 2000, maxBuffer: 4096 });
-  assert.equal(result.error?.code, undefined, `regexp заблокировал процесс: ${result.error?.message}`);
+  assert.equal((result.error as NodeJS.ErrnoException | undefined)?.code, undefined, `regexp заблокировал процесс: ${result.error?.message}`);
   assert.equal(result.status, 0, result.stderr?.toString());
   assert.equal(result.stdout.toString(), 'done');
 });

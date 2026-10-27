@@ -10,7 +10,7 @@ import { Execution, type ExecutionInit } from '../../src/execution/execution.js'
 import { CONFIG, REPO } from '../helpers.js';
 
 export { CONFIG, REPO };
-export const stress = (name: string, fn: (t: TestContext) => unknown | Promise<unknown>) => test(name, { timeout: 8000 }, fn);
+export const stress = (name: string, fn: (t: TestContext) => unknown | Promise<unknown>) => test(name, { timeout: 8000 }, async (t) => { await fn(t); });
 
 export function temp(t: TestContext): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-stress-'));
