@@ -119,7 +119,7 @@ export function finalAction(c: CaseDef, status: string, calls: { tool: string; a
         }
       }
     }
-    return { expected: exp.cls, expectedFrom: exp.from, predicted, incomplete: false, correct: judge(predicted), tool: last.tool, seq: last.seq, text, textFrom, note: `выполнен ${last.tool}, событие #${last.seq}` };
+    return { expected: exp.cls, expectedFrom: exp.from, predicted, incomplete: false, correct: judge(predicted), tool: last.tool, seq: last.seq, text, textFrom, note: `выполнен ${last.tool}` };
   }
   if (LIMIT_STATUSES.has(status) || !lastReply.trim()) {
     const note = LIMIT_STATUSES.has(status) ? `${STATUS_TITLES[status]}, итогового действия нет` : 'агент не ответил';

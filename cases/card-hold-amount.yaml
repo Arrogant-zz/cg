@@ -1,0 +1,88 @@
+# Синтетический кейс на инструментах стенда оркестратора. Ответы инструментов — условные: формат DTO сверить со стендом.
+# Демо M1: скилл V1 ведёт блокировку суммы как спорную операцию — выставляет экспертизу; эталонный финал — ответ клиенту и закрытие.
+id: card-hold-amount
+title: Сумма по карте заблокирована, но не списана
+topic: Карты / Блокировка суммы
+tags: [Карты, Блокировка]
+situation: >
+  Клиент 25 октября оплатил картой бронь отеля на 7 800 ₽. Сумма заблокирована, но не списана: операция ждёт
+  подтверждения продавцом. После подтверждения сумма спишется, без него вернётся на карту в течение 30 дней.
+  Это не спорная операция: экспертиза не нужна, достаточно ответить клиенту и закрыть кейс.
+facts:
+  - Операция 25 октября на 7 800 ₽ — бронь в тестовом отеле, сумма заблокирована до подтверждения продавцом.
+  - Без подтверждения продавцом блокировка снимается и сумма возвращается на карту в течение 30 дней.
+state:
+  case: open
+  expertise: none
+tools:
+  get_cases_assigned:
+    - id: case
+      result:
+        json: { caseId: CASE-TEST-3003, taskId: "{{execution.taskId}}", status: IN_WORK, clientMessage: "25 октября оплатил картой бронь отеля, 7 800 ₽ заблокировали, но не списали. Куда пропали деньги?" }
+  get_static_attributes_assigned:
+    - id: static
+      result:
+        json: { classifier: { categoryName: Карты / Блокировка суммы }, channel: CHAT, priority: NORMAL }
+  get_dynamic_attributes:
+    - id: dynamic
+      result:
+        json: { cardId: CARD-TEST-3307, operationDate: "2026-10-25", operationSum: "7 800 ₽", operationFrom: "2026-10-25T00:00:00", operationTo: "2026-10-25T23:59:59" }
+  get_card_history:
+    - id: hold-operation
+      when: { id: CARD-TEST-3307 }
+      result:
+        json: { operations: [{ date: "2026-10-25T19:42:03", sum: "7 800 ₽", merchant: Тестовый отель, status: HOLD, releaseUntil: "2026-11-24" }] }
+  # Заглушки неверного пути: агент с исходным скиллом выставляет экспертизу.
+  get_stages_expertise:
+    - id: stages
+      result:
+        json: { content: [{ code: EXP-DISPUTE, name: Спорные операции по картам }], totalElements: 1 }
+  create_expertise:
+    - id: created
+      result:
+        json: { expertiseId: 7f1c2d3e-0000-4000-8000-000000000003, status: CREATED }
+      effect: { expertise: created }
+  postpone_expertises:
+    - id: postponed
+      delayMs: 600
+      result:
+        json: { status: POSTPONED }
+      effect: { case: postponed }
+  get_close_with_answer:
+    - id: closed
+      delayMs: 600
+      result:
+        json: { caseId: CASE-TEST-3003, status: CLOSED }
+      effect: { case: closed }
+reference:
+  procedure:
+    - Посмотреть историю операций по карте за период операции
+    - "Убедиться, что сумма заблокирована до подтверждения продавцом: это не спорная операция, экспертизу не выставлять"
+    - "Ответить клиенту: сумма спишется после подтверждения продавцом, без него вернётся на карту в течение 30 дней"
+    - Закрыть кейс с ответом после подтверждения оператора
+  answer: "Сумма заблокирована до подтверждения операции продавцом: после подтверждения она спишется, а без него вернётся на карту в течение 30 дней."
+  # Метрики аналитика: эталонный финал — ответ клиенту и закрытие; экспертиза здесь — неверный класс.
+  finalClass: close_answer
+  tools: [get_card_history, get_close_with_answer]
+  criteria:
+    - id: hold
+      text: Объясняет, что сумма заблокирована до подтверждения продавцом
+      hint: заблокирован
+    - id: release
+      text: Говорит, что без подтверждения сумма вернётся на карту в течение 30 дней
+      hint: 30 дней
+      lesson: L-hold-001
+    - id: no-promises
+      text: Не обещает того, чего нет в данных кейса
+  actions:
+    required:
+      - tool: get_card_history
+        before: get_close_with_answer
+      - tool: get_close_with_answer
+    forbidden:
+      - tool: create_expertise
+        lesson: L-hold-001
+    final: get_close_with_answer
+  lessons:
+    - id: L-hold-001
+      rule: "Блокировка суммы до подтверждения продавцом — не спорная операция: экспертизу не выставлять. Ответить клиенту: «Сумма заблокирована до подтверждения операции продавцом: после подтверждения она спишется, а без него вернётся на карту в течение 30 дней». Закрыть кейс с ответом."

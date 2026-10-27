@@ -14,9 +14,9 @@ after(async () => {
 });
 
 const v1Files = () =>
-  ['spasibo-bonus', 'card-dispute', 'notifications-channel'].map((n) => fs.readFileSync(path.join(HOME, `skillsets/second-line/V1/skills/learned/${n}/SKILL.md`), 'utf8'));
+  ['spasibo-bonus', 'card-dispute', 'card-hold', 'notifications-channel'].map((n) => fs.readFileSync(path.join(HOME, `skillsets/second-line/V1/skills/learned/${n}/SKILL.md`), 'utf8'));
 
-test('обучение V1: reset перед каждым кейсом, capture после каждого, curator после 2, 4, 6; новая версия V2', async () => {
+test('обучение V1: reset перед каждым кейсом, capture после каждого, curator после 2, 4, 6 и финальный после 7; новая версия V2', async () => {
   const before = v1Files();
   const created = await s.api('POST', '/api/runs', { config: 'demo-train' });
   assert.equal(created.status, 200, JSON.stringify(created.data));
@@ -25,7 +25,7 @@ test('обучение V1: reset перед каждым кейсом, capture �
   const line = run.lines[0];
   assert.equal(line.prep.status, 'ok');
   const cases = line.items.filter((i: any) => i.kind === 'case');
-  assert.equal(cases.length, 6);
+  assert.equal(cases.length, 7);
   for (const i of cases) {
     assert.equal(i.steps.reset, 'ok', `reset перед позицией ${i.pos}`);
     assert.equal(i.steps.capture.status, 'ok', `capture после позиции ${i.pos}`);
@@ -37,7 +37,9 @@ test('обучение V1: reset перед каждым кейсом, capture �
       [2, 'ok'],
       [4, 'ok'],
       [6, 'ok'],
+      [7, 'ok'],
     ],
+    'финальный проход неполной пачки после седьмого',
   );
   // Поправки в начале, затем агент применяет свежие уроки и скиллы после curator.
   assert.ok(cases[0].stats.corrections > 0, 'на первой позиции есть поправки');
@@ -46,8 +48,13 @@ test('обучение V1: reset перед каждым кейсом, capture �
   const texts = s.agentRequests.filter((r) => r.sender === line.senderId).map((r) => r.text.split('\n')[0]);
   const firstStart = texts.findIndex((t) => t.startsWith('Новое обращение'));
   assert.equal(texts[firstStart - 1], '/reset');
-  assert.equal(texts.filter((t) => t.startsWith('/case-capture')).length, 6);
-  assert.equal(texts.filter((t) => t === '/skill-curator').length, 3);
+  assert.equal(texts.filter((t) => t.startsWith('/case-capture')).length, 7);
+  assert.equal(texts.filter((t) => t === '/skill-curator').length, 4);
+  // Блокировка суммы: скилл V1 ведёт к экспертизе, оператор отклоняет и объясняет; агент закрывает кейс ответом.
+  const hold = cases[6];
+  assert.equal(hold.case.id, 'card-hold-amount');
+  assert.deepEqual(hold.stats.lessons, ['L-hold-001']);
+  assert.equal(hold.scores.final.predicted, 'close_answer');
   // Новая версия со ссылками на V1 и прогон; V1 не изменён.
   assert.equal(line.skills.newVersion?.status, 'ready', line.skills.versionNote);
   const ver = line.skills.newVersion.id;
@@ -57,6 +64,8 @@ test('обучение V1: reset перед каждым кейсом, capture �
   assert.equal(v.origin.run, run.id);
   assert.deepEqual(v1Files(), before, 'V1 не перезаписан');
   assert.ok(line.skills.changes.length > 0);
+  const holdSkill = fs.readFileSync(path.join(s.dataDir, 'skillsets/second-line', ver, 'files/skills/learned/card-hold/SKILL.md'), 'utf8');
+  assert.match(holdSkill, /экспертизу не выставлять/, 'урок перенесён curator в скилл тематики');
   // Метрики: успех среди оценённых, токены агента из usage.
   const success = run.summary.find((m: any) => m.id === 'success');
   assert.equal(success.status, 'ok');
@@ -106,24 +115,29 @@ test('проверка V1 и полученной версии: без capture �
   assert.ok(cmp.data.counts.better > 0);
   assert.equal(cmp.data.rows.filter((r: any) => !r.same).map((r: any) => r.key).join(','), 'skillset');
 
-  // Метрики аналитика. M1: классы финального действия верны в обеих версиях — в демо-корзине нечего различать.
+  // Метрики аналитика. M1: V1 ведёт блокировку суммы как спорную операцию — экспертиза вместо ответа; V2 после обучения закрывает ответом.
   const metric = (r: any, id: string) => r.summary.find((m: any) => m.id === id);
-  for (const r of [a, b]) {
-    const m1 = metric(r, 'final-action');
-    assert.equal(m1.value, 1);
-    assert.deepEqual(m1.details.matrix.slice(0, 2), [
-      [2, 0, 0, 0],
-      [0, 1, 0, 0],
-    ]);
-    assert.ok(r.lines[0].items.every((i: any) => i.scores.answer.runs === 3), 'три прогона судьи на кейс');
-  }
+  const [m1a, m1b] = [a, b].map((r) => metric(r, 'final-action'));
+  assert.equal(m1a.display, '0,73');
+  assert.match(m1a.note, /^accuracy 0,75/);
+  assert.deepEqual(m1a.details.matrix.slice(0, 2), [
+    [2, 1, 0, 0],
+    [0, 1, 0, 0],
+  ]);
+  assert.equal(m1b.value, 1);
+  assert.deepEqual(m1b.details.matrix.slice(0, 2), [
+    [3, 0, 0, 0],
+    [0, 1, 0, 0],
+  ]);
+  assert.deepEqual([a, b].map((r) => r.lines[0].items[3].scores.final.predicted), ['expertise', 'close_answer']);
+  for (const r of [a, b]) assert.ok(r.lines[0].items.every((i: any) => i.scores.answer.runs === 3), 'три прогона судьи на кейс');
   // M2 = 0,5 · F1 + 0,5 · A_judge. V1: нет истории операций и ответ не по эталону; описание экспертизы — ⅔ прогонов.
   const [sp, card] = a.lines[0].items.map((i: any) => i.scores);
   assert.deepEqual([sp.tools.f1, sp.answer.score, sp.caseScore], [0.8, 0, 0.4]);
   assert.deepEqual([card.tools.fn, card.answer.matched], [1, 2]);
-  assert.equal(metric(a, 'case-score').display, '0,53');
-  assert.equal(metric(b, 'case-score').display, '0,94');
-  assert.match(metric(b, 'case-score').note, /^0,5 · F1 1,00 \+ 0,5 · A 0,89/);
+  assert.equal(metric(a, 'case-score').display, '0,44');
+  assert.equal(metric(b, 'case-score').display, '0,96');
+  assert.match(metric(b, 'case-score').note, /^0,5 · F1 1,00 \+ 0,5 · A 0,92/);
   // Журнал кейса: класс, F1 по инструментам и вердикты судьи с обоснованием.
   const ex = await s.api('GET', `/api/runs/${b.id}/executions/${b.lines[0].items[0].execName}`);
   const sc = ex.data.events.find((e: any) => e.type === 'scores');
@@ -131,10 +145,10 @@ test('проверка V1 и полученной версии: без capture �
   assert.equal(sc.final.textFrom, 'request.extendedAnswer');
   assert.deepEqual(sc.tools.rows.map((x: any) => x.tool).sort(), ['get_close_with_answer', 'get_spasibo_general_info', 'get_spasibo_history_info']);
   assert.ok(sc.answer.runs.every((x: any) => x.match === true && x.reason));
-  // Сравнение: ΔM1 = 0, ΔM2 > 0; параметры метрик входят в определение.
+  // Сравнение: ΔM1 и ΔM2 положительны; параметры метрик входят в определение.
   const pair = (id: string) => cmp.data.metrics.find((p: any) => p.a.id === id);
-  assert.equal(pair('final-action').b.value - pair('final-action').a.value, 0);
-  assert.ok(pair('case-score').b.value - pair('case-score').a.value > 0.4);
+  assert.ok(pair('final-action').b.value - pair('final-action').a.value > 0.25);
+  assert.ok(pair('case-score').b.value - pair('case-score').a.value > 0.5);
   assert.ok(cmp.data.rows.find((r: any) => r.key === 'prompts').a.includes('answer-judge-v1'));
 });
 

@@ -1,7 +1,7 @@
 id: second-line-train
-title: Обучение · СберСпасибо и оспаривание операций
+title: Обучение · СберСпасибо и операции по картам
 type: training
-description: Два кейса, три сценария помощи. Curator каждые 2 завершённых решения и финальный проход неполной пачки.
+description: Три кейса, три сценария помощи. Curator каждые 2 завершённых решения и финальный проход неполной пачки — после седьмого.
 curator:
   every: 2
   final: true
@@ -13,3 +13,5 @@ items:
   - solution: card-operation-dispute/explain-on-ask
   - solution: spasibo-bonus-missing/minimal
   - solution: card-operation-dispute/minimal
+  # Блокировка суммы: исходный скилл выставляет экспертизу, оператор отклоняет и объясняет правило.
+  - solution: card-hold-amount/explain-now

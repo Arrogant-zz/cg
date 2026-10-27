@@ -17,6 +17,8 @@ import { checkAllowedHost } from '../src/agent/client.js';
 import { HOME } from './helpers.js';
 import { BODY_LIMIT, clip, maskedHeaders, startExchange } from '../src/util/httplog.js';
 import { maskHeaders } from '../src/util/core.js';
+import YAML from 'yaml';
+import { buildPlan as agentPlan, rulesOf } from '../dev/fake-agent/agent.js';
 
 const stub = (s: Partial<StubDef>, index: number): StubDef => ({ id: `s${index}`, tool: 't', origin: 'case', index, ...s });
 
@@ -132,4 +134,13 @@ test('журнал HTTP: авторизация скрыта, большое т�
     assert.ok(Buffer.byteLength(big.body) <= BODY_LIMIT && !big.body.endsWith('\uFFFD'));
   }
   assert.equal(clip('{}').truncated, false);
+});
+
+test('fake-agent: запрет «экспертизу не выставлять» из поправки убирает ветку экспертизы, история операций остаётся', () => {
+  const skill = fs.readFileSync(path.join(HOME, 'skillsets/second-line/V1/skills/learned/card-hold/SKILL.md'), 'utf8');
+  const lines = skill.split('\n').filter((l) => /^\d+\.\s/.test(l)).map((l) => l.replace(/^\d+\.\s+/, ''));
+  const steps = (text: string) => agentPlan(rulesOf(text)).map((x) => (x.kind === 'call' ? x.tool : 'answer'));
+  assert.deepEqual(steps(lines.join('\n')), ['get_stages_expertise', 'get_card_history', 'create_expertise', 'postpone_expertises'], 'V1 ведёт блокировку суммы как спорную операцию');
+  const lesson = YAML.parse(fs.readFileSync(path.join(HOME, 'cases/card-hold-amount.yaml'), 'utf8')).reference.lessons[0].rule;
+  assert.deepEqual(steps([...lines, lesson].join('\n')), ['get_card_history', 'answer', 'get_close_with_answer'], 'после урока — ответ и закрытие');
 });

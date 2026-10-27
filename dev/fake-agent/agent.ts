@@ -9,7 +9,7 @@ import path from 'node:path';
 // ------------------------------------------------------------ разговорник
 
 type Args = Record<string, unknown>;
-type Rule = { kind: 'call'; tool: string; args: Args; before?: string } | { kind: 'answer'; text: string };
+type Rule = { kind: 'call'; tool: string; args: Args; before?: string } | { kind: 'answer'; text: string } | { kind: 'skip'; tools: string[] };
 
 interface Phrase {
   re: RegExp;
@@ -29,6 +29,8 @@ export const PHRASEBOOK: Phrase[] = [
   // Карты: оспаривание операции
   { re: /информаци\S* о картах/iu, rule: { kind: 'call', tool: 'get_client_cards', args: {} } },
   { re: /истори\S* операций по карте/iu, rule: { kind: 'call', tool: 'get_card_history', args: { fromDate: '{{operationFrom}}', toDate: '{{operationTo}}', id: '{{cardId}}' }, before: 'create_expertise' } },
+  // Запрет из поправки: ветка экспертизы выпадает из плана целиком. Стоит раньше «выставить экспертизу».
+  { re: /экспертиз\S* не выставля|не выставля\S* экспертиз/iu, rule: { kind: 'skip', tools: ['get_stages_expertise', 'create_expertise', 'postpone_expertises'] } },
   { re: /этап\S* экспертиз/iu, rule: { kind: 'call', tool: 'get_stages_expertise', args: { pageNumber: 0 } } },
   { re: /выстав\S* экспертиз/iu, rule: { kind: 'call', tool: 'create_expertise', args: { request: { expertiseDescription: 'Клиент не узнаёт операцию по карте и оспаривает её', stageCode: '{{code}}', stageName: '{{name}}' } } } },
   { re: /срок рассмотрения|до 30 дней/iu, rule: { kind: 'answer', text: 'Срок рассмотрения — до 30 дней.' } },
@@ -62,10 +64,13 @@ export function rulesOf(text: string): Rule[] {
 type Step = { kind: 'call'; tool: string; args: Args } | { kind: 'answer'; parts: string[] };
 
 export function buildPlan(rules: Rule[]): Step[] {
+  // Запрет сильнее процедуры: инструменты выпадают, где бы ни стояли в скилле.
+  const skipped = new Set(rules.flatMap((r) => (r.kind === 'skip' ? r.tools : [])));
   const steps: Step[] = [];
   const answer: Step = { kind: 'answer', parts: [] };
   const later: Extract<Rule, { kind: 'call' }>[] = [];
   for (const r of rules) {
+    if (r.kind === 'skip' || (r.kind === 'call' && skipped.has(r.tool))) continue;
     if (r.kind === 'answer') {
       if (!answer.parts.includes(r.text)) answer.parts.push(r.text);
       if (!steps.includes(answer)) steps.push(answer);
