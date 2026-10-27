@@ -13,7 +13,7 @@ import { loadRegistry } from '../src/config/loader.js';
 import type { ModelDef, ModelTls } from '../src/config/types.js';
 import { startFakeGigaChat, type FakeGigaChat } from '../dev/fake-gigachat/server.js';
 import { makePki, PASSPHRASE, type Pki } from './pki.js';
-import { startStand, HOME } from './helpers.js';
+import { startStand, CONFIG } from './helpers.js';
 
 // Сертификаты создаются при загрузке модуля: от них зависит, пропускать ли тесты.
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-gigachat-'));
@@ -140,7 +140,7 @@ test('GigaChat: ошибки сертификата объясняют, что �
 test('GigaChat без сертификата: http-адрес внутри Istio — вызов как есть, сертификат по http отклоняется', async () => {
   const plain = await startFakeGigaChat();
   try {
-    const reg = await loadRegistry(HOME);
+    const reg = await loadRegistry(CONFIG);
     const env = { GIGACHAT_BASE_URL: plain.url };
     for (const id of ['op-gigachat', 'judge-gigachat']) {
       const m = reg.models.get(id)!;
@@ -171,7 +171,7 @@ test('GigaChat без сертификата: http-адрес внутри Istio
 test('файлы моделей GigaChat: сертификат необязателен, но задаётся целиком; ограничения параметров', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-gc-cfg-'));
   for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) {
-    fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
+    fs.cpSync(path.join(CONFIG, d), path.join(home, d), { recursive: true });
   }
   const w = (name: string, text: string) => fs.writeFileSync(path.join(home, 'models', `${name}.yaml`), text);
   w('gc-no-tls', 'id: gc-no-tls\nroles: [judge]\nprovider: gigachat-v1\nbaseUrl: https://gc.local/api\nmodel: GigaChat\n');
@@ -201,7 +201,7 @@ test('файлы моделей GigaChat: сертификат необязат�
 test('журнал HTTP вызовов LLM: каждая попытка — обмен «llm», токен и заголовки из окружения скрыты, переспрос формата подписан', async () => {
   const plain = await startFakeGigaChat();
   try {
-    const reg = await loadRegistry(HOME);
+    const reg = await loadRegistry(CONFIG);
     const base = reg.models.get('judge-gigachat')!;
     const env = { GIGACHAT_BASE_URL: plain.url, GC_CLIENT_ID: 'client-777' };
     const seen: any[] = [];
@@ -232,7 +232,7 @@ test('журнал HTTP вызовов LLM: каждая попытка — об
 test('прогон: оператор на GigaChat v1, оценка на GigaChat v2 — те же итоги, что на заглушке без сертификата', { skip }, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-gc-home-'));
   for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) {
-    fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
+    fs.cpSync(path.join(CONFIG, d), path.join(home, d), { recursive: true });
   }
   const tls = 'tls:\n  cert: ${env:GC_CERT}\n  key: ${env:GC_KEY}\n  ca: ${env:GC_CA}\n';
   fs.writeFileSync(path.join(home, 'models/gc-operator.yaml'), `id: gc-operator\nroles: [operator]\nprovider: gigachat-v1\nbaseUrl: \${env:GC_URL}\nmodel: GigaChat-2-Max\n${tls}params:\n  temperature: 0.3\n  retries: 0\n  devHints: true\n`);
@@ -241,7 +241,7 @@ test('прогон: оператор на GigaChat v1, оценка на GigaCha
     path.join(home, 'runs/gc-check.yaml'),
     'id: gc-check\ntitle: Проверка · вторая линия · GigaChat\nbasket: second-line-check\nagent: fake-agent\nmodels:\n  operator: gc-operator\n  judge: gc-judge\nmetrics: all\n',
   );
-  const s = await startStand({ CLAWGYM_HOME: home, GC_URL: gc.url, GC_CERT: pki!.clientCert, GC_KEY: pki!.clientKey, GC_CA: pki!.ca });
+  const s = await startStand({ CLAWGYM_CONFIG: home, GC_URL: gc.url, GC_CERT: pki!.clientCert, GC_KEY: pki!.clientKey, GC_CA: pki!.ca });
   try {
     gc.requests.length = 0;
     const created = await s.api('POST', '/api/runs', { config: 'gc-check' });

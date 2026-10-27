@@ -7,7 +7,9 @@ import { App } from '../src/app.js';
 import { startFakeAgent } from '../dev/fake-agent/server.js';
 import { startFakeGigaChat } from '../dev/fake-gigachat/server.js';
 
-export const HOME = path.resolve(process.cwd());
+export const REPO = path.resolve(process.cwd());
+/** Справочники стенда — CLAWGYM_CONFIG по умолчанию. */
+export const CONFIG = path.join(REPO, 'config');
 
 export interface Stand {
   app: App;
@@ -28,8 +30,8 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
     ...process.env,
     PORT: '0',
     HOST: '127.0.0.1',
-    CLAWGYM_HOME: HOME,
-    CLAWGYM_DATA: dataDir,
+    CLAWGYM_CONFIG: CONFIG,
+    CLAWGYM_VAR: dataDir,
     FAKE_GIGACHAT_URL: llm.url,
     LOG_LEVEL: 'warn',
     AGENT_MCP_TIMEOUT_MS: '60000',
@@ -37,7 +39,7 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
     MAX_PARALLEL_SESSIONS: '3',
     ...extraEnv,
   };
-  const app = new App(loadEnv(raw, HOME));
+  const app = new App(loadEnv(raw, REPO));
   await app.init();
   const { port } = await app.listen();
   const base = `http://127.0.0.1:${port}`;
@@ -45,8 +47,10 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
     port: 0,
     mcpUrl: `${base}/mcp`,
     workspaces: path.join(dataDir, 'fake-workspaces'),
-    buildSkills: path.join(HOME, 'dev/fake-agent/build'),
+    buildSkills: path.join(REPO, 'dev/fake-agent/build'),
     failOn: extraEnv.FAKE_AGENT_FAIL_ON ?? null,
+    slowOn: extraEnv.FAKE_AGENT_SLOW_ON ?? null,
+    slowMs: Number(extraEnv.FAKE_AGENT_SLOW_MS ?? 0),
   });
   raw.FAKE_AGENT_URL = agent.url;
   await app.checkHealth();

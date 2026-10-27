@@ -9,7 +9,7 @@ import { DEFAULT_SCORING, caseScore, classReport, countTool, finalAction, scorin
 import { loadRegistry } from '../src/config/loader.js';
 import type { CaseDef, FinalClass } from '../src/config/types.js';
 import { fakeAnswerMatch } from '../dev/fake-gigachat/brain.js';
-import { HOME } from './helpers.js';
+import { CONFIG } from './helpers.js';
 
 const calls = (...tools: string[]) => tools.map((tool) => ({ tool }));
 const tolerate = DEFAULT_SCORING.tools;
@@ -69,7 +69,7 @@ test('M1: macro-F1 по присутствующим классам, accuracy и
 });
 
 test('класс финального действия: последний выполненный итоговый вызов, иначе инструкция оператору; лимит — незавершённый', async () => {
-  const reg = await loadRegistry(HOME);
+  const reg = await loadRegistry(CONFIG);
   const s = scoringOf([...reg.metrics.values()]);
   const card = reg.cases.get('card-operation-dispute')!;
   const call = (seq: number, tool: string, args: Record<string, unknown> = {}, executed = true) => ({ seq, tool, args, executed });

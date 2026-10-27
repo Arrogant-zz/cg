@@ -1,7 +1,6 @@
-// HTTP-вызов модели через node:http(s): fetch не принимает клиентский сертификат, а GigaChat в контуре вызывается по mTLS.
+// Клиентский сертификат GigaChat (mTLS в контуре): файлы, их чтение и понятные ошибки. Сам запрос — util/request.ts.
 import fs from 'node:fs';
-import http from 'node:http';
-import https from 'node:https';
+import type { RequestOptions } from 'node:https';
 
 /** Пути к файлам и пароль после подстановки окружения; пустая строка — не задано. */
 export interface TlsFiles {
@@ -10,12 +9,6 @@ export interface TlsFiles {
   pfx: string | null;
   passphrase: string | null;
   ca: string | null;
-}
-
-export interface HttpReply {
-  status: number;
-  headers: http.IncomingHttpHeaders;
-  text: string;
 }
 
 export class TlsFileError extends Error {}
@@ -28,8 +21,8 @@ export function missingTlsFiles(tls: TlsFiles): string[] {
 }
 
 /** Содержимое файлов читается при каждом вызове: обновлённый сертификат подхватывается без перезапуска. */
-export function readTls(tls: TlsFiles): https.RequestOptions {
-  const out: https.RequestOptions = {};
+export function readTls(tls: TlsFiles): RequestOptions {
+  const out: RequestOptions = {};
   for (const k of FILES) {
     const file = tls[k];
     if (!file) continue;
@@ -41,33 +34,6 @@ export function readTls(tls: TlsFiles): https.RequestOptions {
   }
   if (tls.passphrase) out.passphrase = tls.passphrase;
   return out;
-}
-
-export function postJson(url: string, headers: Record<string, string>, body: string, tls: https.RequestOptions | null, signal: AbortSignal): Promise<HttpReply> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    // Без пула соединений: каждый вызов проходит рукопожатие с текущим сертификатом и паролем, ошибка не прячется за открытым соединением.
-    const options: https.RequestOptions = { method: 'POST', headers: { ...headers, 'Content-Length': String(Buffer.byteLength(body)) }, signal, agent: false, ...(tls ?? {}) };
-    let req: http.ClientRequest;
-    try {
-      req = u.protocol === 'https:' ? https.request(u, options) : http.request(u, options);
-    } catch (e) {
-      // Неверный ключ или пароль: ошибка возникает при сборке TLS-контекста, до соединения.
-      reject(e);
-      return;
-    }
-    req.on('response', (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }));
-      res.on('error', reject);
-      res.on('close', () => {
-        if (!res.complete) reject(Object.assign(new Error('ответ оборвался'), { code: 'ECONNRESET' }));
-      });
-    });
-    req.on('error', reject);
-    req.end(body);
-  });
 }
 
 /** Ошибки сертификатов не лечатся повтором: их нужно исправить в настройках. */

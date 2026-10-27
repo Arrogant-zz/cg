@@ -14,7 +14,7 @@ import { loadRegistry } from '../src/config/loader.js';
 import { resolveRun } from '../src/runner/resolve.js';
 import { loadEnv } from '../src/env.js';
 import { checkAllowedHost } from '../src/agent/client.js';
-import { HOME } from './helpers.js';
+import { CONFIG, REPO } from './helpers.js';
 import { BODY_LIMIT, clip, maskedHeaders, startExchange } from '../src/util/httplog.js';
 import { maskHeaders } from '../src/util/core.js';
 import YAML from 'yaml';
@@ -95,10 +95,23 @@ test('белый список хостов агента', () => {
   assert.equal(checkAllowedHost('https://a.stand.local/x', ['.stand.local']), null);
 });
 
+test('каталоги: справочники CLAWGYM_CONFIG и данные CLAWGYM_VAR независимы; старые переменные и вложенность — ошибка', () => {
+  const def = loadEnv({}, '/srv/gym');
+  assert.deepEqual([def.configDir, def.varDir, def.webDir], ['/srv/gym/config', '/srv/gym/var', '/srv/gym/web']);
+  const set = loadEnv({ CLAWGYM_CONFIG: '/mnt/config', CLAWGYM_VAR: 'state' }, '/srv/gym');
+  assert.deepEqual([set.configDir, set.varDir], ['/mnt/config', '/srv/gym/state'], 'относительный путь — от рабочего каталога');
+  assert.equal(loadEnv({ CLAWGYM_VAR: 'config-var' }, '/srv/gym').varDir, '/srv/gym/config-var', 'общий префикс имени — не вложенность');
+  assert.throws(() => loadEnv({ CLAWGYM_HOME: '/srv/gym' }, '/srv/gym'), /CLAWGYM_HOME больше не используется/);
+  assert.throws(() => loadEnv({ CLAWGYM_DATA: '/srv/var' }, '/srv/gym'), /CLAWGYM_DATA больше не используется/);
+  assert.throws(() => loadEnv({ CLAWGYM_HOME: '.', CLAWGYM_DATA: 'var' }, '/srv/gym'), /CLAWGYM_HOME, CLAWGYM_DATA больше не используются/);
+  assert.throws(() => loadEnv({ CLAWGYM_VAR: 'config/var' }, '/srv/gym'), /не должны совпадать или лежать один в другом/);
+  assert.throws(() => loadEnv({ CLAWGYM_CONFIG: '/data', CLAWGYM_VAR: '/data' }, '/srv/gym'), /не должны совпадать/);
+});
+
 test('битая ссылка в корзине: ошибка с файлом и полем, прогон не запускается', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-cfg-'));
   for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates']) {
-    fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
+    fs.cpSync(path.join(CONFIG, d), path.join(home, d), { recursive: true });
   }
   fs.mkdirSync(path.join(home, 'baskets'));
   fs.mkdirSync(path.join(home, 'runs'));
@@ -110,7 +123,7 @@ test('битая ссылка в корзине: ошибка с файлом и
     assert.ok(issue);
     assert.equal(issue!.field, 'items[1].solution');
     assert.match(issue!.reason, /transfer-delay\/explain-on-ask/);
-    const p = resolveRun(reg, loadEnv({ CLAWGYM_HOME: home }, home), 'broken');
+    const p = resolveRun(reg, loadEnv({ CLAWGYM_CONFIG: home }, REPO), 'broken');
     assert.equal(p.ok, false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
@@ -138,17 +151,17 @@ test('журнал HTTP: авторизация скрыта, большое т�
 });
 
 test('fake-agent: запрет «экспертизу не выставлять» из поправки убирает ветку экспертизы, история операций остаётся', () => {
-  const skill = fs.readFileSync(path.join(HOME, 'dev/fake-agent/build/skills/learned/card-hold/SKILL.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(REPO, 'dev/fake-agent/build/skills/learned/card-hold/SKILL.md'), 'utf8');
   const lines = skill.split('\n').filter((l) => /^\d+\.\s/.test(l)).map((l) => l.replace(/^\d+\.\s+/, ''));
   const steps = (text: string) => agentPlan(rulesOf(text)).map((x) => (x.kind === 'call' ? x.tool : 'answer'));
   assert.deepEqual(steps(lines.join('\n')), ['get_stages_expertise', 'get_card_history', 'create_expertise', 'postpone_expertises'], 'V1 ведёт блокировку суммы как спорную операцию');
-  const lesson = YAML.parse(fs.readFileSync(path.join(HOME, 'cases/card-hold-amount.yaml'), 'utf8')).reference.lessons[0].rule;
+  const lesson = YAML.parse(fs.readFileSync(path.join(CONFIG, 'cases/card-hold-amount.yaml'), 'utf8')).reference.lessons[0].rule;
   assert.deepEqual(steps([...lines, lesson].join('\n')), ['get_card_history', 'answer', 'get_close_with_answer'], 'после урока — ответ и закрытие');
 });
 
 test('продолжение на тестовом операторе: последний завершённый прогон настройки, тот же агент, свободный оператор, история', async () => {
-  const reg = await loadRegistry(HOME);
-  const env = loadEnv({ CLAWGYM_HOME: HOME }, HOME);
+  const reg = await loadRegistry(CONFIG);
+  const env = loadEnv({}, REPO);
   const run = (id: number, over: Record<string, unknown> = {}) =>
     ({
       id,
@@ -181,7 +194,7 @@ test('продолжение на тестовом операторе: посл�
 test('кейсы в подкаталогах cases/: ссылки по id, папка в списке, черновики на «_» пропускаются, повтор id — ошибка', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-folders-'));
   try {
-    for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
+    for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) fs.cpSync(path.join(CONFIG, d), path.join(home, d), { recursive: true });
     fs.mkdirSync(path.join(home, 'cases/cards/disputes'), { recursive: true });
     fs.renameSync(path.join(home, 'cases/card-hold-amount.yaml'), path.join(home, 'cases/cards/card-hold-amount.yaml'));
     fs.renameSync(path.join(home, 'cases/card-operation-dispute.yaml'), path.join(home, 'cases/cards/disputes/card-operation-dispute.yaml'));
@@ -192,7 +205,7 @@ test('кейсы в подкаталогах cases/: ссылки по id, па�
     assert.deepEqual(reg.issues.filter((i) => i.severity === 'error'), []);
     assert.equal(reg.cases.get('card-operation-dispute')!.source.file, 'cases/cards/disputes/card-operation-dispute.yaml');
     assert.ok(!reg.cases.has('draft') && !reg.cases.has('wip'), 'черновики на «_» пропущены');
-    assert.equal(resolveRun(reg, loadEnv({ CLAWGYM_HOME: home }, home), 'demo-check').ok, true, 'корзина находит решения кейсов из папок');
+    assert.equal(resolveRun(reg, loadEnv({ CLAWGYM_CONFIG: home }, REPO), 'demo-check').ok, true, 'корзина находит решения кейсов из папок');
     // Сначала верхний уровень, затем папки; внутри — по id.
     assert.deepEqual(
       casesView({ registry: reg } as any).cases.map((c) => [c.folder, c.id]),

@@ -6,7 +6,8 @@ import type { ModelDef } from '../config/types.js';
 import { hasEnvRef, resolveEnvRefs } from '../config/loader.js';
 import { errorMessage, maskHeaders, sleep } from '../util/core.js';
 import { finishExchange, maskedHeaders, startExchange, type HttpExchange } from '../util/httplog.js';
-import { TlsFileError, describeNetError, isTlsError, missingTlsFiles, postJson, readTls, type TlsFiles } from './http.js';
+import { TlsFileError, describeNetError, isTlsError, missingTlsFiles, readTls, type TlsFiles } from './http.js';
+import { httpRequest } from '../util/request.js';
 
 export interface LlmUsage {
   input: number | null;
@@ -154,7 +155,7 @@ async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, sign
     };
     let res;
     try {
-      res = await postJson(url, h, text, tls, sig);
+      res = await httpRequest('POST', url, h, text, sig, tls);
     } catch (e: any) {
       if (signal?.aborted) {
         done(null, 'вызов прерван');

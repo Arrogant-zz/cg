@@ -15,6 +15,9 @@ export interface FakeAgentOptions {
   /** Регулярное выражение: сообщения, на которые агент отвечает HTTP 500. */
   failOn?: string | null;
   delayMs?: number;
+  /** Регулярное выражение и задержка: долгий ход, как у модели, которая думает минутами. Очередь отправителя в это время занята, как у шлюза AEFClaw. */
+  slowOn?: string | null;
+  slowMs?: number;
 }
 
 export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: http.Server; port: number; url: string }> {
@@ -62,6 +65,7 @@ export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: htt
         const reply = await serial(sender, async () => {
           await a.ws.ensure();
           if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
+          if (o.slowOn && o.slowMs && new RegExp(o.slowOn, 'u').test(text)) await new Promise((r) => setTimeout(r, o.slowMs));
           return a.handle(text, taskId);
         });
         return json(res, 200, {

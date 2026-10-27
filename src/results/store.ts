@@ -1,4 +1,4 @@
-// Хранение результатов отдельно от настроек: var/results/run-NNNN/, var/sessions/.
+// Хранение результатов отдельно от справочников, в CLAWGYM_VAR: results/run-NNNN/, sessions/.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDir, listDirs, readJsonIf, safeJoin, settleWrites, walkFiles, writeJsonAtomic, writeText } from '../util/fsx.js';

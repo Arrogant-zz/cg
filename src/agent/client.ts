@@ -6,10 +6,13 @@ import { deepClone, maskHeaders, maskUrl } from '../util/core.js';
 import { queryPath, setPath, PathError } from '../util/jsonpath.js';
 import { renderDeep } from '../util/template.js';
 import { finishExchange, maskedHeaders, startExchange, type HttpExchange } from '../util/httplog.js';
+import { httpRequest, type HttpReply } from '../util/request.js';
 
 export type AgentErrorKind = 'timeout' | 'http' | 'network' | 'parse' | 'aborted' | 'agent' | 'config';
 
 export class AgentError extends Error {
+  /** Запрос дошёл до агента, а ответа нет: агент мог продолжить работу, и его сессия ещё занята. */
+  unfinished = false;
   constructor(
     public kind: AgentErrorKind,
     message: string,
@@ -44,6 +47,8 @@ export interface SendOptions {
   taskId: string;
   senderId: string;
   timeoutMs: number;
+  /** Сверх срока: запрос встанет в очередь агента за прерванным и подождёт, пока тот закончится. */
+  waitMs?: number;
   signal?: AbortSignal;
   /** Подпись обмена в журнале HTTP: реплика, стартовое сообщение, команда. */
   label?: string;
@@ -144,30 +149,31 @@ export class AgentClient {
       return err;
     };
     const started = Date.now();
-    const timeout = AbortSignal.timeout(this.def.request.timeoutMs ?? opts.timeoutMs);
+    const limitMs = (this.def.request.timeoutMs ?? opts.timeoutMs) + (opts.waitMs ?? 0);
+    const timeout = AbortSignal.timeout(limitMs);
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-    let res: Response;
+    let res: HttpReply;
     try {
-      res = await fetch(req.url, { method: this.def.request.method, headers: req.headers, body: bodyText, signal });
+      // node:http, а не fetch: у fetch ожидание заголовков ответа ограничено 300 с, а A2A в режиме sync отдаёт их в конце хода.
+      res = await httpRequest(this.def.request.method, req.url, req.headers, bodyText, signal);
     } catch (e: any) {
-      if (opts.signal?.aborted) throw fail(new AgentError('aborted', 'Запрос агенту прерван остановкой'));
-      if (timeout.aborted) throw fail(new AgentError('timeout', `Агент не ответил за ${Math.round((this.def.request.timeoutMs ?? opts.timeoutMs) / 1000)} с`));
-      throw fail(new AgentError('network', `Агент недоступен: ${e?.cause?.code ?? e?.message ?? e}`));
+      const err = opts.signal?.aborted
+        ? new AgentError('aborted', 'Запрос агенту прерван остановкой')
+        : timeout.aborted
+          ? new AgentError('timeout', e?.responded ? 'Агент не дослал ответ до таймаута' : `Агент не ответил за ${Math.round(limitMs / 1000)} с`)
+          : e?.responded
+            ? new AgentError('network', `Ответ агента оборвался: ${e?.message ?? e}`)
+            : new AgentError('network', `Агент недоступен: ${e?.code ?? e?.message ?? e}`);
+      err.unfinished = e?.sent === true && e?.responded !== true;
+      throw fail(err);
     }
-    let text: string;
-    try {
-      text = await res.text();
-    } catch (e: any) {
-      if (timeout.aborted) throw fail(new AgentError('timeout', 'Агент не дослал ответ до таймаута'));
-      throw fail(new AgentError('network', `Ответ агента оборвался: ${e?.message ?? e}`));
-    }
-    finishExchange(x, { status: res.status, headers: maskedHeaders(res.headers), body: text });
-    if (!res.ok) throw fail(new AgentError('http', `Агент вернул HTTP ${res.status}`, res.status, text.slice(0, 2000)));
+    finishExchange(x, { status: res.status, headers: maskedHeaders(res.headers), body: res.text });
+    if (res.status < 200 || res.status > 299) throw fail(new AgentError('http', `Агент вернул HTTP ${res.status}`, res.status, res.text.slice(0, 2000)));
     let raw: unknown;
     try {
-      raw = JSON.parse(text);
+      raw = JSON.parse(res.text);
     } catch {
-      throw fail(new AgentError('parse', 'Ответ агента — не JSON', res.status, text.slice(0, 2000)));
+      throw fail(new AgentError('parse', 'Ответ агента — не JSON', res.status, res.text.slice(0, 2000)));
     }
     let parsed: ReturnType<typeof parseReply>;
     try {
@@ -175,7 +181,7 @@ export class AgentClient {
     } catch (e) {
       throw fail(e instanceof AgentError ? e : new AgentError('parse', String(e)));
     }
-    if (parsed.agentError) throw fail(new AgentError('agent', `Агент сообщил об ошибке: ${parsed.agentError}`, res.status, text.slice(0, 2000)));
+    if (parsed.agentError) throw fail(new AgentError('agent', `Агент сообщил об ошибке: ${parsed.agentError}`, res.status, res.text.slice(0, 2000)));
     opts.onExchange?.(x, 'end');
     return {
       text: parsed.text,

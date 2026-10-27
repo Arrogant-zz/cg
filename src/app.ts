@@ -10,6 +10,7 @@ import { ResultsStore } from './results/store.js';
 import { RunManager } from './runner/runner.js';
 import { ManualManager } from './manual/manual.js';
 import { AgentClient } from './agent/client.js';
+import type { UnfinishedRequest } from './execution/channel.js';
 import { SseHub } from './util/sse.js';
 import { KeyedMutex, Semaphore } from './util/sync.js';
 import { buildRoutes } from './api/routes.js';
@@ -42,6 +43,8 @@ export class App {
   sse = new SseHub();
   sessions: Semaphore;
   locks = new KeyedMutex();
+  /** Прерванные запросы к агенту по тестовому оператору: следующий запрос ждёт, пока агент их закончит. */
+  unfinished = new Map<string, UnfinishedRequest>();
   secret = '';
   runs: RunManager;
   manual: ManualManager;
@@ -53,7 +56,7 @@ export class App {
 
   constructor(public env: Env) {
     setLogLevel(env.logLevel);
-    this.store = new ResultsStore(env.dataDir);
+    this.store = new ResultsStore(env.varDir);
     this.sessions = new Semaphore(env.maxParallelSessions);
     this.runs = new RunManager(this);
     this.manual = new ManualManager(this);
@@ -71,7 +74,7 @@ export class App {
   }
 
   async reload(): Promise<Registry> {
-    const reg = await loadRegistry(this.env.home);
+    const reg = await loadRegistry(this.env.configDir);
     this.registry = reg;
     const errors = reg.issues.filter((i) => i.severity === 'error').length;
     log.info(`Настройки: ${reg.fileCount} файлов, кейсов ${reg.cases.size}, решений ${reg.solutions.size}, корзин ${reg.baskets.size}, ошибок ${errors}`);

@@ -44,7 +44,7 @@ function args(name: string): string[] {
 }
 
 /** Контракт из tools/list оркестратора: записать (по умолчанию) или только сверить (--check, код выхода 1 при расхождении). */
-async function importTools(home: string): Promise<number> {
+async function importTools(configDir: string): Promise<number> {
   const url = arg('--url');
   const file = arg('--file');
   if (!url === !file) {
@@ -57,7 +57,7 @@ async function importTools(home: string): Promise<number> {
     if (i > 0) headers[h.slice(0, i).trim()] = h.slice(i + 1).trim();
   }
   const incoming = url ? await fetchToolsList(url, headers) : await readToolsFile(path.resolve(file!));
-  const target = path.join(home, 'contracts/tools.json');
+  const target = path.join(configDir, 'contracts/tools.json');
   const contract = JSON.parse(await fsp.readFile(target, 'utf8'));
   const diff = mergeTools(contract.tools ?? [], incoming);
   console.log(`Инструментов у оркестратора: ${incoming.length}, в контракте: ${(contract.tools ?? []).length}`);
@@ -74,7 +74,7 @@ async function importTools(home: string): Promise<number> {
   contract.note = `Инструменты сняты из tools/list ${url ?? path.basename(file!)} ${stamp} командой import-tools. Пометки requiresConfirmation, kind и enabled — ClawGym.`;
   contract.tools = diff.tools;
   await fsp.writeFile(target, JSON.stringify(contract, null, 2) + '\n', 'utf8');
-  console.log(`${same ? 'Изменений нет. ' : ''}Записано: contracts/tools.json`);
+  console.log(`${same ? 'Изменений нет. ' : ''}Записано: ${target}`);
   return 0;
 }
 
@@ -83,7 +83,7 @@ async function main() {
   const env = loadEnv();
   if (cmd === 'validate') {
     setLogLevel('warn');
-    const reg = await loadRegistry(env.home);
+    const reg = await loadRegistry(env.configDir);
     printIssues(reg.issues);
     const errors = reg.issues.filter((i) => i.severity === 'error').length;
     console.log(`\nФайлов: ${reg.fileCount} · кейсов ${reg.cases.size} · решений ${reg.solutions.size} · корзин ${reg.baskets.size} · прогонов ${reg.runs.size} · ошибок ${errors}`);
@@ -91,8 +91,8 @@ async function main() {
   }
   if (cmd === 'preview' && target) {
     setLogLevel('warn');
-    const reg = await loadRegistry(env.home);
-    const runs = (await new ResultsStore(env.dataDir).loadRuns()) as RunRecord[];
+    const reg = await loadRegistry(env.configDir);
+    const runs = (await new ResultsStore(env.varDir).loadRuns()) as RunRecord[];
     const p = resolveRun(reg, env, target, continueArg(), runs);
     printIssues(p.issues);
     console.log('\nПлан команд:');
@@ -128,7 +128,7 @@ async function main() {
     await app.close();
     process.exit(r.status === 'completed' ? 0 : 1);
   }
-  if (cmd === 'import-tools') process.exit(await importTools(env.home));
+  if (cmd === 'import-tools') process.exit(await importTools(env.configDir));
   console.log('Использование: clawgym validate | preview <run-config> | run <run-config> [--continue N|new] | import-tools (--url U | --file F) [--header H] [--check]');
   process.exit(2);
 }

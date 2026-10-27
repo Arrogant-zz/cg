@@ -73,7 +73,7 @@ export class Execution {
   finishedAt: string | null = null;
   turns = 0;
   operatorCalls = 0;
-  flags = { operatorTimeout: false, stopped: false };
+  flags = { operatorTimeout: false, stopped: false, closed: false };
   pending = new Map<string, Pending>();
   /** HTTP-обмены выполнения: запросы к агенту и запросы агента к MCP. В toJSON не входят — отдаются отдельно. */
   http: HttpExchange[] = [];
@@ -266,6 +266,15 @@ export class Execution {
     return true;
   }
 
+  /**
+   * Кейс завершён: поздние вызовы — от хода, который стенд перестал ждать, — сразу получают ошибку, удерживаемые тоже.
+   * Иначе вызов с подтверждением ждал бы решения до AGENT_MCP_TIMEOUT_MS и держал занятой сессию агента.
+   */
+  closeTools(): void {
+    this.flags.closed = true;
+    for (const p of [...this.pending.values()]) p.resolve({ action: 'stopped' });
+  }
+
   /** Остановка: удерживаемые вызовы получают ошибку, новые запросы не отправляются. */
   stop(reason: string): void {
     this.flags.stopped = true;
@@ -304,6 +313,7 @@ export class Execution {
       this.updateHttp(x);
     }
     if (!tool) return this.finish(ev, { outcome: 'unknown_tool', isError: true, result: this.errText('unknownTool', name), unexpected: true }, t0);
+    if (this.flags.closed) return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name), late: true }, t0);
     if (this.flags.stopped) return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name) }, t0);
 
     if (tool.requiresConfirmation) {

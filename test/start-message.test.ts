@@ -9,7 +9,7 @@ import YAML from 'yaml';
 import { loadRegistry } from '../src/config/loader.js';
 import { renderStartMessage } from '../src/execution/dialog.js';
 import { mergeTools, toolsFromJson } from '../src/config/tools-import.js';
-import { startStand, until, HOME, type Stand } from './helpers.js';
+import { startStand, until, CONFIG, type Stand } from './helpers.js';
 
 let home: string;
 
@@ -17,7 +17,7 @@ let home: string;
 before(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-start-'));
   for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) {
-    fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
+    fs.cpSync(path.join(CONFIG, d), path.join(home, d), { recursive: true });
   }
   const contractFile = path.join(home, 'contracts/tools.json');
   const contract = JSON.parse(fs.readFileSync(contractFile, 'utf8'));
@@ -61,7 +61,7 @@ test('стартовое сообщение в формате оркестрат
 });
 
 test('импорт tools/list: поля MCP из ответа, пометки ClawGym сохраняются, расхождения видны', async () => {
-  const current = JSON.parse(fs.readFileSync(path.join(HOME, 'contracts/tools.json'), 'utf8')).tools;
+  const current = JSON.parse(fs.readFileSync(path.join(CONFIG, 'contracts/tools.json'), 'utf8')).tools;
   const listed = current.map(({ requiresConfirmation: _c, kind: _k, enabled: _e, ...t }: any) => t);
   const same = mergeTools(current, toolsFromJson({ jsonrpc: '2.0', id: 1, result: { tools: listed } }));
   assert.deepEqual([same.added, same.removed, same.changed], [[], [], []]);
@@ -76,7 +76,7 @@ test('импорт tools/list: поля MCP из ответа, пометки Cl
 });
 
 test('tools/list как у оркестратора; выключенный инструмент — только для старта; x-task-id старта — в тексте, заголовке и capture', async () => {
-  const s: Stand = await startStand({ CLAWGYM_HOME: home });
+  const s: Stand = await startStand({ CLAWGYM_CONFIG: home });
   try {
     const mcp = async (method: string, params: unknown, taskId?: string) => {
       const res = await fetch(`${s.base}/mcp`, {

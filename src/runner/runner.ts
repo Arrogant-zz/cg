@@ -305,12 +305,20 @@ export class RunManager {
       line.senderId ||= `${app.env.senderPrefix}${r.basket.id}-r${run.id}-${line.index}-${randomHex(3)}`;
       this.operatorPrep(run, line);
 
-      const channel = new AgentChannel(r.agent, app.env, app.locks);
+      const channel = new AgentChannel(r.agent, app.env, app.locks, app.unfinished);
       const operator = new LlmOperator(r.models.operator!, createProvider(r.models.operator!, app.env.raw));
       const judge = r.models.judge ? new LlmJudge(r.models.judge, createProvider(r.models.judge, app.env.raw)) : null;
       const prior = new Set<string>();
       const training = r.basket.type === 'training';
       const cur = r.basket.curator;
+      // Агент не освободил сессию после прерванного запроса: следующие кейсы ждали бы его по очереди — линия останавливается.
+      const stuck = (): boolean => {
+        const u = channel.unfinishedFor(line.senderId);
+        if (!u?.stuck) return false;
+        line.error = `Линия остановлена: агент не освободил сессию — прерванный запрос «${u.what}» не закончился за время ожидания`;
+        for (const i of line.items) if (i.status === 'pending') i.reason = 'линия остановлена: агент занят прерванным запросом';
+        return true;
+      };
 
       for (const item of r.items) {
         const rec = line.items.find((x) => x.index === item.index)!;
@@ -318,15 +326,18 @@ export class RunManager {
         if (item.kind === 'curator') {
           if (training) await this.curatorPass(run, line, channel, 'explicit', this.lastPos(line), signal);
           rec.status = 'completed';
+          if (stuck()) break;
           continue;
         }
         await this.runItem(run, line, rec, item, { channel, operator, judge, prior, signal, live });
+        if (stuck()) break;
         if (training && cur.enabled && cur.every > 0 && line.counter >= cur.every && !signal.aborted) {
           rec.steps.curatorPass = line.curatorPasses.length + 1;
           await this.curatorPass(run, line, channel, 'every', item.pos!, signal);
+          if (stuck()) break;
         }
       }
-      if (training && cur.enabled && cur.final && line.counter > 0 && !signal.aborted) {
+      if (training && cur.enabled && cur.final && line.counter > 0 && !signal.aborted && !line.error) {
         const last = [...line.items].reverse().find((i) => i.kind === 'case' && i.outcome && i.outcome !== 'technical');
         if (last) last.steps.curatorPass = line.curatorPasses.length + 1;
         await this.curatorPass(run, line, channel, 'final', this.lastPos(line), signal);
@@ -429,6 +440,7 @@ export class RunManager {
       priorLessons: deps.prior,
       signal: deps.signal,
     });
+    exec.closeTools();
     exec.setStatus(outcome.status, outcome.reason);
     exec.add<StatusEvent>({ type: 'status', status: outcome.status, reason: outcome.reason });
     rec.steps.reset = (exec.events.find((e) => e.type === 'command' && (e as CommandEvent).name === 'reset') as CommandEvent | undefined)?.status ?? null;
@@ -462,7 +474,9 @@ export class RunManager {
     }
     rec.status = exec.status;
     rec.finishedAt = nowIso();
+    // Таймер обнуляется: события после конца кейса — поздние вызовы прерванного хода — тоже сохраняются.
     if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = null;
     await persist();
     this.scheduleSave(run);
   }

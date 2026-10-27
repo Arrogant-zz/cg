@@ -197,6 +197,10 @@ dialog.confirm::backdrop{background:rgba(23,28,25,.32)}
 .md-src{display:none;white-space:pre-wrap}
 .msg.md-raw .md{display:none}
 .msg.md-raw .md-src{display:block}
+/* Запись стенда и сбой команды в ленте: длинный текст переносится, а не раздвигает страницу; подпись команды и статуса не сжимается. */
+.cmd .ref{flex:none}
+.cmd .pill.note{flex:0 1 auto;min-width:0;white-space:normal;border-radius:12px;padding:4px 10px}
+.cmd .pill.note .ic{align-self:flex-start;margin-top:1px;flex:none}
 .md-sw{padding:0 4px;border:0;border-radius:5px;background:transparent;box-shadow:inset 0 0 0 1px #E4E6E1;cursor:pointer}
 .md-sw:hover{color:#A84A16}
 .md-sw[aria-pressed="true"]{background:#171C19;color:#FFFFFF;box-shadow:none}

@@ -137,7 +137,7 @@ export class ManualManager {
       run: null,
     });
     app.bindings.bindAll(exec);
-    const channel = new AgentChannel(agent, app.env, app.locks);
+    const channel = new AgentChannel(agent, app.env, app.locks, app.unfinished);
     const rec: ManualRecord = {
       id,
       key: sessionKey(id),
@@ -174,12 +174,12 @@ export class ManualManager {
   private async startCase(id: number): Promise<void> {
     const l = this.live.get(id)!;
     const rec = this.sessions.get(id)!;
-    rec.busy = '/reset';
+    rec.busy = l.channel.unfinishedFor(l.exec.senderId) ? '/reset ждёт, пока агент закончит прерванный запрос' : '/reset';
     this.schedule(id);
     l.exec.setStatus('running');
     const r = await l.channel.command(l.exec, 'reset', 'runner');
     if (r.status !== 'ok') {
-      l.exec.add<StatusEvent>({ type: 'status', status: 'reset_failed', reason: r.error ?? 'Агент не подтвердил /reset' });
+      l.exec.add<StatusEvent>({ type: 'status', status: r.busy ? 'agent_busy' : 'reset_failed', reason: r.error ?? 'Агент не подтвердил /reset' });
       return;
     }
     rec.busy = 'ход агента';

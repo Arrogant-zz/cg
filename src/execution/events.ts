@@ -67,6 +67,8 @@ export interface ToolCallEvent extends BaseEvent {
   yaml?: string;
   /** Инструмент есть в контракте, но выключен (enabled: false): агент получил ошибку «не найден». */
   disabled?: boolean;
+  /** Вызов пришёл после завершения кейса — от хода, который стенд перестал ждать: агент сразу получил ошибку. */
+  late?: boolean;
 }
 
 export interface MessageEvent extends BaseEvent {
@@ -92,6 +94,8 @@ export interface CommandEvent extends BaseEvent {
   error?: string;
   by: 'runner' | 'human';
   pass?: number;
+  /** Команда ждала в очереди агента за прерванным запросом и не дождалась: сессия агента занята. */
+  busy?: boolean;
 }
 
 export interface DecisionEvent extends BaseEvent {
@@ -158,6 +162,7 @@ export type ExecEvent = ToolCallEvent | MessageEvent | CommandEvent | DecisionEv
 /** Технические статусы: не неуспех агента (фиолетовые в интерфейсе). */
 export const TECH_STATUSES = new Set([
   'reset_failed',
+  'agent_busy',
   'agent_error',
   'agent_timeout',
   'operator_error',
@@ -179,6 +184,7 @@ export const STATUS_TITLES: Record<string, string> = {
   limit_duration: 'Исчерпан лимит времени',
   limit_operator_calls: 'Исчерпан лимит запросов оператора',
   reset_failed: 'Сбой /reset',
+  agent_busy: 'Агент занят прерванным запросом',
   agent_error: 'Сбой агента',
   agent_timeout: 'Таймаут агента',
   operator_error: 'Сбой LLM-оператора',

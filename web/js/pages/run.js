@@ -236,7 +236,7 @@ function resultsTable(run, line) {
 <tbody>${line.items
     .filter((i) => i.kind === 'case')
     .map((i) => {
-      const reason = i.outcome === 'failed' ? [...(i.checks ?? []).filter((c) => c.passed === false).map((c) => c.text), ...(i.answerFailed ?? [])][0] : i.outcome === 'technical' ? 'не ошибка агента' : i.outcome === 'not_evaluated' ? i.reason : '';
+      const reason = i.outcome === 'failed' ? [...(i.checks ?? []).filter((c) => c.passed === false).map((c) => c.text), ...(i.answerFailed ?? [])][0] : i.outcome === 'technical' ? 'не ошибка агента' : i.outcome === 'not_evaluated' || i.status === 'not_started' ? i.reason : '';
       const cmds = [html`<span class="sp ${i.steps.reset && i.steps.reset !== 'ok' ? 'tech' : ''}">reset</span>`];
       if (training) cmds.push(i.steps.capture?.status === 'not_sent' ? html`<span class="sp off">capture не отправлялся</span>` : i.steps.capture ? html`<span class="sp ${i.steps.capture.status === 'ok' ? '' : 'tech'}">capture</span>` : '');
       if (i.steps.curatorPass) cmds.push(html`<span class="sp">curator ${i.steps.curatorPass}</span>`);

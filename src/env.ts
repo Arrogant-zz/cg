@@ -4,10 +4,10 @@ import path from 'node:path';
 export interface Env {
   port: number;
   host: string;
-  /** Корень настроек: contracts/, cases/, solutions/, baskets/, runs/, agents/, models/, metrics/, data/. */
-  home: string;
-  /** Результаты прогонов, ручные сессии, полученные версии скиллов. */
-  dataDir: string;
+  /** Справочники и настройки: contracts/, cases/, solutions/, baskets/, runs/, agents/, models/, metrics/, templates/, data/. */
+  configDir: string;
+  /** Изменяемые данные: results/ прогонов, sessions/ ручного режима, counters.json, secret.json. */
+  varDir: string;
   webDir: string;
   mcpPort: number | null;
   mcpPath: string;
@@ -21,6 +21,8 @@ export interface Env {
   resetTimeoutMs: number;
   captureTimeoutMs: number;
   curatorTimeoutMs: number;
+  /** Сколько следующий запрос ждёт в очереди агента за прерванным: стенд перестал ждать ответа, а агент мог продолжить работу. */
+  agentBusyWaitMs: number;
   unmatchedMode: 'manual' | 'error';
   maxParallelSessions: number;
   requestRefSecret: string | null;
@@ -35,17 +37,26 @@ function num(v: string | undefined, def: number): number {
   return n;
 }
 
+/** Каталог внутри другого или тот же: при раздельной синхронизации с S3 файлы одного попадут в копию другого. */
+const overlaps = (a: string, b: string): boolean => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+
 export function loadEnv(e: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): Env {
-  const home = path.resolve(cwd, e.CLAWGYM_HOME ?? '.');
+  // Решение владельца от 28.10.2026: справочники и данные — два независимых каталога. Старые переменные не подхватываются молча,
+  // иначе результаты уйдут с постоянного тома в каталог по умолчанию.
+  const legacy = ['CLAWGYM_HOME', 'CLAWGYM_DATA'].filter((k) => e[k] !== undefined && e[k] !== '');
+  if (legacy.length) throw new Error(`${legacy.join(', ')} больше не ${legacy.length > 1 ? 'используются' : 'используется'}: задайте CLAWGYM_CONFIG (справочники) и CLAWGYM_VAR (результаты и сессии)`);
+  const configDir = path.resolve(cwd, e.CLAWGYM_CONFIG || 'config');
+  const varDir = path.resolve(cwd, e.CLAWGYM_VAR || 'var');
+  if (overlaps(configDir, varDir)) throw new Error(`CLAWGYM_CONFIG (${configDir}) и CLAWGYM_VAR (${varDir}) не должны совпадать или лежать один в другом`);
   const unmatched = (e.UNMATCHED_MODE ?? 'manual').toLowerCase();
   const mode = (e.MCP_RESPONSE_MODE ?? 'json').toLowerCase();
   const level = (e.LOG_LEVEL ?? 'info').toLowerCase();
   return {
     port: num(e.PORT, 8080),
     host: e.HOST ?? '0.0.0.0',
-    home,
-    dataDir: path.resolve(home, e.CLAWGYM_DATA ?? 'var'),
-    webDir: path.resolve(e.CLAWGYM_WEB ?? path.join(home, 'web')),
+    configDir,
+    varDir,
+    webDir: path.resolve(cwd, e.CLAWGYM_WEB || 'web'),
     mcpPort: e.MCP_PORT ? num(e.MCP_PORT, 0) : null,
     mcpPath: e.MCP_PATH ?? '/mcp',
     mcpTaskIdHeader: (e.MCP_TASK_ID_HEADER ?? 'x-task-id').toLowerCase(),
@@ -61,6 +72,7 @@ export function loadEnv(e: NodeJS.ProcessEnv = process.env, cwd = process.cwd())
     resetTimeoutMs: num(e.RESET_TIMEOUT_MS, 120_000),
     captureTimeoutMs: num(e.CAPTURE_TIMEOUT_MS, 300_000),
     curatorTimeoutMs: num(e.CURATOR_TIMEOUT_MS, 900_000),
+    agentBusyWaitMs: num(e.AGENT_BUSY_WAIT_MS, 900_000),
     unmatchedMode: unmatched === 'error' ? 'error' : 'manual',
     maxParallelSessions: Math.max(1, num(e.MAX_PARALLEL_SESSIONS, 2)),
     requestRefSecret: e.REQUEST_REF_SECRET ?? null,

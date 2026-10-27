@@ -206,7 +206,7 @@ export function runStatus(run, extra = '') {
   return html`<span class="st"><span class="dot ${dot}"></span>${text}${extra ? ` · ${extra}` : ''}</span>`;
 }
 
-export const TECH = new Set(['reset_failed', 'agent_error', 'agent_timeout', 'operator_error', 'operator_format_error', 'operator_timeout', 'operator_mode_violation', 'stopped', 'internal_error', 'prepare_failed']);
+export const TECH = new Set(['reset_failed', 'agent_busy', 'agent_error', 'agent_timeout', 'operator_error', 'operator_format_error', 'operator_timeout', 'operator_mode_violation', 'stopped', 'internal_error', 'prepare_failed']);
 export const STATUS_TITLES = {
   pending: 'Ожидает',
   running: 'Выполняется',
@@ -216,6 +216,7 @@ export const STATUS_TITLES = {
   limit_duration: 'Лимит времени',
   limit_operator_calls: 'Лимит запросов оператора',
   reset_failed: 'Сбой /reset',
+  agent_busy: 'Агент занят прерванным запросом',
   agent_error: 'Сбой агента',
   agent_timeout: 'Таймаут агента',
   operator_error: 'Сбой оператора',
@@ -369,6 +370,7 @@ export function toolPill(e) {
   if (e.awaiting === 'answer') return html`<span class="pill na">нет заглушки</span>`;
   if (e.outcome === 'rejected') return html`<span class="pill dark" style="margin-left: auto">${icon('x')}Отклонено ${c?.by === 'human' ? 'вами' : 'оператором'}${c?.waitedMs ? ` · ${fmtDur(c.waitedMs)}` : ''}</span>`;
   if (e.outcome === 'timeout') return html`<span class="pill tech" style="margin-left: auto">${icon('clock')}Отклонено по таймауту</span>`;
+  if (e.outcome === 'stopped' && e.late) return html`<span class="pill tech" style="margin-left: auto" title="Ход, который стенд перестал ждать: агент сразу получил ошибку">После завершения кейса</span>`;
   if (e.outcome === 'stopped') return html`<span class="pill tech" style="margin-left: auto">Остановлено</span>`;
   if (e.outcome === 'unknown_tool') return html`<span class="pill na" style="margin-left: auto">${e.disabled ? 'выключен в контракте' : 'неизвестный инструмент'}</span>`;
   if (e.outcome === 'no_stub') return html`<span class="pill na" style="margin-left: auto">нет заглушки · ошибка инструмента</span>`;
@@ -410,7 +412,7 @@ export function commandLine(e, { http = false } = {}) {
   else if (e.name === 'capture') text = p?.kind === 'captured' ? `кейс сохранён · signal ${p.signal} · ${fmtDur(e.durationMs)}` : p?.kind === 'skipped' ? 'capture пропущен агентом' : p?.kind === 'failed' ? `не сохранён: ${p.reason}` : `строка результата не найдена${e.error ? `: ${e.error}` : ''}`;
   else text = p?.kind === 'complete' ? `обработано ${p.processed}, изменено ${p.updated}, создано ${p.created} · ${fmtDur(e.durationMs)}` : p?.kind === 'empty' ? 'очередь пуста' : p?.kind === 'failed' ? `сбой: ${p.reason}` : `строка результата не найдена${e.error ? `: ${e.error}` : ''}`;
   const bad = e.status === 'failed' || e.status === 'unrecognized';
-  return html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon(e.name === 'reset' ? 'reset' : e.name === 'capture' ? 'capture' : 'curator')}${titles[e.name]}</span>${bad ? html`<span class="pill tech">${text}</span>` : html`<span>${text}</span>`}${e.by === 'human' ? html`<span class="cap">вы</span>` : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>`;
+  return html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon(e.name === 'reset' ? 'reset' : e.name === 'capture' ? 'capture' : 'curator')}${titles[e.name]}</span>${bad ? html`<span class="pill tech note">${text}</span>` : html`<span>${text}</span>`}${e.by === 'human' ? html`<span class="cap">вы</span>` : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>`;
 }
 
 // Текст агента — в Markdown. Разбор кэшируется: ленту перерисовывает каждое обновление по SSE.
@@ -584,7 +586,7 @@ export function feed(events, { full = true, toolActions = null, httpLinks = fals
         if (full) out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon('layers')}скиллы</span><span>${e.text}</span></div>`);
         break;
       case 'note':
-        out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="pill tech">${icon('bolt')}${e.text}</span>${http ? httpLink(e) : ''}</div>`);
+        out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="pill tech note">${icon('bolt')}${e.text}</span>${http ? httpLink(e) : ''}</div>`);
         break;
     }
   }

@@ -11,7 +11,7 @@ async function main() {
   await app.init();
   const { port, mcpPort } = await app.listen();
   log.info(`ClawGym ${app.version} слушает http://${env.host}:${port} · MCP ${env.mcpPath}${mcpPort ? ` и порт ${mcpPort}` : ''}`);
-  log.info(`Настройки: ${env.home} · данные: ${env.dataDir}`);
+  log.info(`Справочники: ${env.configDir} · данные: ${env.varDir}`);
   const stop = async (sig: string) => {
     log.info(`Получен ${sig}, останавливаюсь`);
     await app.close();

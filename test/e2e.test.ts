@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startStand, until, HOME, type Stand } from './helpers.js';
+import { startStand, until, REPO, type Stand } from './helpers.js';
 
 let s: Stand;
 before(async () => {
@@ -15,7 +15,7 @@ after(async () => {
 
 // Стартовые скиллы «сборки» fake-agent: новый тестовый оператор начинает с них, обучение меняет только его копию в агенте.
 const buildFiles = () =>
-  ['spasibo-bonus', 'card-dispute', 'card-hold', 'notifications-channel'].map((n) => fs.readFileSync(path.join(HOME, `dev/fake-agent/build/skills/learned/${n}/SKILL.md`), 'utf8'));
+  ['spasibo-bonus', 'card-dispute', 'card-hold', 'notifications-channel'].map((n) => fs.readFileSync(path.join(REPO, `dev/fake-agent/build/skills/learned/${n}/SKILL.md`), 'utf8'));
 const workspace = (sender: string) => path.join(s.dataDir, 'fake-workspaces', sender.replace(/[^\w.-]/g, '_'));
 
 test('обучение на новом операторе: reset перед каждым кейсом, capture после каждого, curator после 2, 4, 6 и финальный после 7; выученное — у оператора', async () => {

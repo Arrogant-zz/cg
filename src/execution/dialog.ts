@@ -161,7 +161,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
 
   exec.setStatus('running');
   const reset = await channel.command(exec, 'reset', 'runner', deps.signal);
-  if (reset.status !== 'ok') return end(deps.signal.aborted ? 'stopped' : 'reset_failed', reset.error ?? 'Агент не подтвердил /reset');
+  if (reset.status !== 'ok') return end(deps.signal.aborted ? 'stopped' : reset.busy ? 'agent_busy' : 'reset_failed', reset.error ?? 'Агент не подтвердил /reset');
 
   const started = Date.now();
   let next: { text: string; kind: 'start' | 'operator'; extra: Partial<MessageEvent> } = { text: startMessage(exec), kind: 'start', extra: {} };
