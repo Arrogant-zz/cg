@@ -13,6 +13,9 @@ import { buildPlan } from '../src/runner/plan.js';
 import { loadRegistry } from '../src/config/loader.js';
 import { resolveRun } from '../src/runner/resolve.js';
 import { loadEnv } from '../src/env.js';
+import { ResultsStore } from '../src/results/store.js';
+import { RECORD_FORMAT } from '../src/results/format.js';
+import { operatorLabel } from '../src/results/compare.js';
 import { checkAllowedHost } from '../src/agent/client.js';
 import { CONFIG, REPO } from './helpers.js';
 import { BODY_LIMIT, clip, maskedHeaders, startExchange } from '../src/util/httplog.js';
@@ -106,6 +109,98 @@ test('каталоги: справочники CLAWGYM_CONFIG и данные CL
   assert.throws(() => loadEnv({ CLAWGYM_HOME: '.', CLAWGYM_DATA: 'var' }, '/srv/gym'), /CLAWGYM_HOME, CLAWGYM_DATA больше не используются/);
   assert.throws(() => loadEnv({ CLAWGYM_VAR: 'config/var' }, '/srv/gym'), /не должны совпадать или лежать один в другом/);
   assert.throws(() => loadEnv({ CLAWGYM_CONFIG: '/data', CLAWGYM_VAR: '/data' }, '/srv/gym'), /не должны совпадать/);
+});
+
+test('номера прогонов и сессий: одновременные запросы получают разные номера, общий счётчик не теряет приращений', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-counters-'));
+  try {
+    const store = new ResultsStore(dir);
+    await store.init();
+    const runs = Promise.all([1, 2, 3, 4].map(() => store.nextNumber('run')));
+    const sessions = Promise.all([1, 2, 3].map(() => store.nextNumber('session')));
+    assert.deepEqual(await runs, [1, 2, 3, 4]);
+    assert.deepEqual(await sessions, [1, 2, 3]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'counters.json'), 'utf8')), { run: 4, session: 3 });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('формат записей: сохранение ставит версию, старые записи приводятся к текущему виду, более новые и повреждённые пропускаются с причиной', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-format-'));
+  const write = (rel: string, data: unknown) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), typeof data === 'string' ? data : JSON.stringify(data));
+  };
+  try {
+    const store = new ResultsStore(dir);
+    await store.init();
+    // Формат 0, до 27.10.2026: набор скиллов вместо тестового оператора, без истории оператора и метрик аналитика.
+    write('results/run-0001/run.json', { id: 1, settings: { skillset: { title: 'Карты', version: 'V2' } }, lines: [{ index: 1, senderId: 'lab-1', items: [{ kind: 'case', execName: 'L1-P01' }] }] });
+    write('results/run-0001/executions/L1-P01.json', { id: 'run1-L1-P01', events: [{ seq: 1, type: 'skills', text: 'установлен набор V2' }] });
+    write('results/run-0002/run.json', { format: RECORD_FORMAT + 1, id: 2, settings: {}, lines: [] });
+    write('results/run-0003/run.json', '{ оборван');
+    write('sessions/m-0001.json', { id: 1, execution: { events: [{ seq: 1, type: 'skills', text: 'установлен набор V2' }] } });
+    const skipped: string[] = [];
+    const runs = await store.loadRuns((file, reason) => skipped.push(`${file}: ${reason}`));
+    assert.deepEqual(runs.map((r) => r.id), [1]);
+    const [old] = runs;
+    assert.deepEqual(old.settings.testOperator, { mode: 'new' });
+    assert.equal(operatorLabel(old), 'набор Карты V2');
+    assert.deepEqual(old.lines[0].history, []);
+    assert.equal(old.lines[0].items[0].scores, null);
+    assert.ok(!('format' in old), 'версия — только в файле');
+    assert.equal(skipped.length, 2, skipped.join('\n'));
+    assert.ok(skipped[0].startsWith(`results/run-0002/run.json: формат ${RECORD_FORMAT + 1} новее поддерживаемого ${RECORD_FORMAT}`), skipped[0]);
+    assert.ok(skipped[1].startsWith('results/run-0003/run.json: файл не читается'), skipped[1]);
+    assert.equal((await store.loadExecution(1, 'L1-P01'))!.events[0].type, 'note', 'событие skills — заметка');
+    assert.equal((await store.loadSessions())[0].execution!.events[0].type, 'note');
+    // Сохранение ставит текущую версию первым полем; повторная загрузка даёт ту же запись.
+    await store.saveRun(old);
+    assert.match(fs.readFileSync(path.join(dir, 'results/run-0001/run.json'), 'utf8'), new RegExp(`^\\{\\s*"format": ${RECORD_FORMAT},`));
+    assert.deepEqual((await store.loadRuns())[0], old);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('условия заглушек: regex проверяется при загрузке с флагом u, как при вызове; ошибка — с полем и строкой, прогон не запускается', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-regex-'));
+  try {
+    fs.cpSync(CONFIG, dir, { recursive: true });
+    const file = path.join(dir, 'cases/spasibo-bonus-missing.yaml');
+    const stubs = [
+      'tools:',
+      '  get_client_cards:',
+      // [\w-.] допустимо в обычном JavaScript, но не с флагом u.
+      "    - when: { clientId: { regex: '[\\w-.]+' } }",
+      '      result: { json: { cards: [] } }',
+      "    - when: { clientId: { in: [{ regex: '(' }, CL-1] } }",
+      '      result: { json: { cards: [] } }',
+      // Не оператор: у объекта есть и другие ключи — regex здесь обычное поле аргумента, выражение не компилируется.
+      "    - when: { filter: { regex: '(', status: open } }",
+      '      result: { json: { cards: [] } }',
+      "    - when: { clientId: { regex: '^CL-\\d+$' } }",
+      '      result: { json: { cards: [] } }',
+    ].join('\n');
+    // Функция, а не строка замены: в строке «$'» из выражения стало бы шаблоном replace.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^tools:$/m, () => stubs));
+    const lineOf = (needle: string) => fs.readFileSync(file, 'utf8').split('\n').findIndex((l) => l.includes(needle)) + 1;
+    const reg = await loadRegistry(dir);
+    const found = reg.issues.filter((i) => i.file === 'cases/spasibo-bonus-missing.yaml' && i.reason.startsWith('Регулярное выражение не компилируется'));
+    assert.deepEqual(
+      found.map((i) => [i.severity, i.field, i.line]),
+      [
+        ['error', 'tools.get_client_cards[0].when.clientId.regex', lineOf("'[\\w-.]+'")],
+        ['error', 'tools.get_client_cards[1].when.clientId.in[0].regex', lineOf("regex: '(' }, CL-1")],
+      ],
+    );
+    assert.ok(reg.cases.has('spasibo-bonus-missing'), 'кейс загружен, ошибка видна у файла');
+    const p = resolveRun(reg, loadEnv({ CLAWGYM_CONFIG: dir }, REPO), 'demo-check');
+    assert.equal(p.ok, false, 'прогон с этим кейсом не запускается');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('битая ссылка в корзине: ошибка с файлом и полем, прогон не запускается', async () => {

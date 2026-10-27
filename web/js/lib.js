@@ -582,9 +582,6 @@ export function feed(events, { full = true, toolActions = null, httpLinks = fals
       case 'mode_violation':
         out.push(html`<div class="hid" id="ev-${e.seq}"><div class="hid-h">${icon('warn')}Нарушение режима проверки · скрыто от агента</div><span>${e.text}</span></div>`);
         break;
-      case 'skills':
-        if (full) out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon('layers')}скиллы</span><span>${e.text}</span></div>`);
-        break;
       case 'note':
         out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="pill tech note">${icon('bolt')}${e.text}</span>${http ? httpLink(e) : ''}</div>`);
         break;

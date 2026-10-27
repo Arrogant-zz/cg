@@ -90,7 +90,7 @@ reference:                            # общий эталон; агенту н
 | Запись | Значение |
 | --- | --- |
 | Значение | Равенство; числа и строки сравниваются как строки |
-| `{ regex: "^OP-" }` | Регулярное выражение |
+| `{ regex: "^OP-" }` | Регулярное выражение JavaScript с флагом `u`: например, дефис в классе символов ставится последним — `[\w.-]`. Выражение проверяется при загрузке; невалидное — ошибка с полем и строкой, прогон с таким кейсом не запускается |
 | `{ in: [a, b] }` | Одно из значений |
 | `{ exists: true }` | Аргумент задан |
 | `{ not: x }` | Не равно |
@@ -206,7 +206,7 @@ commands:                             # по умолчанию — тексты
   reset: /reset
   capture: /case-capture request_ref={{taskId}} category={{topic}}   # {{taskId}} — x-task-id стартового сообщения; {{requestRef}} — HMAC по INTEGRATION.md
   curator: /skill-curator
-mcp: { contract: contracts/tools.json, protocolVersion: 2025-06-18, taskIdFrom: [header] }   # header | meta | argument
+mcp: { contract: contracts/tools.json }   # x-task-id и версию протокола MCP-сервер выбирает сам для всех агентов — CONTRACTS.md, раздел 4
 model: задана развёртыванием AEFClaw   # метка для снимка и сравнения: модель задаёт сборка, ClawGym её не переключает
 sessions: { max: 3 }
 healthUrl: ${env:AEF_CLAW_HEALTH_URL:-http://127.0.0.1:18789/readyz}   # без него доступность «не проверяется»

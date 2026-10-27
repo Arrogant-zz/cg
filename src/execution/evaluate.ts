@@ -1,6 +1,6 @@
 // Оценка выполнения после завершения кейса (SOL-06, MET-05) и сводка исходных событий для метрик.
 import type { Execution } from './execution.js';
-import type { CheckItem, ChecksEvent, DecisionEvent, JudgeEvent, MessageEvent, ScoresEvent, ToolCallEvent } from './events.js';
+import type { CheckItem, ChecksEvent, CommandEvent, DecisionEvent, JudgeEvent, MessageEvent, ScoresEvent, ToolCallEvent } from './events.js';
 import { LIMIT_STATUSES, TECH_STATUSES } from './events.js';
 import { runActionChecks } from '../checks/actions.js';
 import { frozenResult, type LlmJudge } from '../judge/judge.js';
@@ -145,8 +145,8 @@ export function execStats(exec: Execution): ExecStats {
   const corrected = [
     ...msgs.filter((m) => m.marks?.correction).map((m) => ({ lessonId: m.marks!.lessonId, repeated: !!m.marks!.repeated })),
     ...decisions
-      .filter((d) => d.event === 'confirmation' && (d.decision as any)?.correction && !(d.decision as any)?.reply)
-      .map((d) => ({ lessonId: ((d.decision as any).lessonId as string) ?? null, repeated: false })),
+      .filter((d) => d.event === 'confirmation' && d.decision?.correction && !d.decision?.reply)
+      .map((d) => ({ lessonId: typeof d.decision?.lessonId === 'string' ? d.decision.lessonId : null, repeated: false })),
   ];
   for (const c of corrected) {
     if (c.lessonId) {
@@ -157,7 +157,7 @@ export function execStats(exec: Execution): ExecStats {
 
   const confWait = calls.reduce((s, c) => s + (c.confirmation?.waitedMs ?? 0), 0);
   const agentTime = agentMsgs.reduce((s, m) => s + (m.durationMs ?? 0), 0);
-  const commands = ev.filter((e) => e.type === 'command').reduce((s, e: any) => s + (e.durationMs ?? 0), 0);
+  const commands = ev.filter((e): e is CommandEvent => e.type === 'command').reduce((s, e) => s + (e.durationMs ?? 0), 0);
   const opTime = decisions.reduce((s, d) => s + (d.durationMs ?? 0), 0);
   const judgeTime = [...judge, ...answerJudge].reduce((s, j) => s + (j.durationMs ?? 0), 0);
 

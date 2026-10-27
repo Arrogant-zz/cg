@@ -31,10 +31,6 @@ function fmtMs(ms: number): string {
   return `${Math.floor(m / 60)} ч ${m % 60} мин`;
 }
 
-export function formatDuration(ms: number | null | undefined): string {
-  return ms === null || ms === undefined ? '—' : fmtMs(ms);
-}
-
 function na(id: string, title: string, builtin: string, reason: string): MetricValue {
   return { id, title, builtin, status: 'na', value: null, denominator: null, display: 'нет данных', note: '', reason };
 }

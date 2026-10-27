@@ -4,6 +4,7 @@ import type {
   AgentDef,
   BasketDef,
   CaseDef,
+  ContractDef,
   Issue,
   Limits,
   MetricDef,
@@ -44,6 +45,8 @@ export interface ResolvedRun {
   basket: BasketDef;
   items: ResolvedItem[];
   agent: AgentDef;
+  /** Контракт инструментов на момент запуска: перечитывание настроек не меняет идущий прогон. Без контракта прогон не запускается. */
+  contract: ContractDef | null;
   models: { operator: ModelDef | null; judge: ModelDef | null };
   /** Тестовый оператор: новый — стартовые скиллы сборки агента; продолжение — скиллы, полученные в прошлом прогоне. */
   operator: { mode: 'new' } | { mode: 'continue'; source: RunRecord; lines: { senderId: string; history: OperatorStep[] }[] };
@@ -176,7 +179,7 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
       else {
         if (source.status === 'stopped') warn(cfg.source.file, `Прогон #${source.id} остановлен: скиллы оператора — на момент остановки`, 'continueFrom');
         const step = (index: number): OperatorStep => ({ run: source.id, title: source.title, type: source.type, line: index });
-        operator = { mode: 'continue', source, lines: lines.map((l) => ({ senderId: l.senderId, history: [...(l.history ?? []), step(l.index)] })) };
+        operator = { mode: 'continue', source, lines: lines.map((l) => ({ senderId: l.senderId, history: [...l.history, step(l.index)] })) };
       }
     }
   }
@@ -207,6 +210,7 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
           basket,
           items,
           agent,
+          contract: reg.contract,
           models,
           operator,
           metrics,

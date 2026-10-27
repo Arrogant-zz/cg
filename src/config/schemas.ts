@@ -226,8 +226,6 @@ export const agentSchema = {
       type: 'object',
       properties: {
         contract: str,
-        protocolVersion: str,
-        taskIdFrom: { type: 'array', items: { enum: ['header', 'meta', 'argument'] } },
       },
       additionalProperties: false,
     },

@@ -15,8 +15,7 @@ export type EventType =
   | 'scores'
   | 'status'
   | 'note'
-  | 'mode_violation'
-  | 'skills';
+  | 'mode_violation';
 
 export interface BaseEvent {
   seq: number;
@@ -152,7 +151,7 @@ export interface StatusEvent extends BaseEvent {
 }
 
 export interface NoteEvent extends BaseEvent {
-  type: 'note' | 'mode_violation' | 'skills';
+  type: 'note' | 'mode_violation';
   text: string;
   data?: unknown;
 }

@@ -4,7 +4,7 @@ import { Execution } from '../execution/execution.js';
 import { AgentChannel } from '../execution/channel.js';
 import { startMessage } from '../execution/dialog.js';
 import { evaluate, execStats, type Evaluation, type ExecStats } from '../execution/evaluate.js';
-import type { MessageEvent, StatusEvent } from '../execution/events.js';
+import type { MessageEvent, NoteEvent, StatusEvent } from '../execution/events.js';
 import { StubState } from '../stubs/engine.js';
 import { LlmJudge } from '../judge/judge.js';
 import { scoringOf } from '../metrics/scoring.js';
@@ -58,7 +58,7 @@ export class ManualManager {
   constructor(private app: App) {}
 
   async init(): Promise<void> {
-    for (const s of (await this.app.store.loadSessions()) as ManualRecord[]) {
+    for (const s of await this.app.store.loadSessions((file, reason) => this.app.stand.add('warn', 'store.skipped', `Ручная сессия из ${file} не загружена: ${reason}`))) {
       if (s.status === 'active') {
         s.status = 'closed';
         s.closedAt = s.closedAt ?? nowIso();
@@ -207,7 +207,7 @@ export class ManualManager {
       await fn();
     } catch (e) {
       log.error(`Ручная сессия ${id}`, e);
-      this.live.get(id)?.exec.add({ type: 'note', text: `Сбой стенда: ${errorMessage(e)}` } as any);
+      this.live.get(id)?.exec.add<NoteEvent>({ type: 'note', text: `Сбой стенда: ${errorMessage(e)}` });
     } finally {
       rec.busy = null;
       this.schedule(id, true);
@@ -288,7 +288,7 @@ export class ManualManager {
     const events = l ? l.exec.events : s.execution?.events ?? [];
     const ev = events.find((e) => e.seq === seq) as MessageEvent | undefined;
     if (!ev || (ev.type !== 'human_message' && ev.type !== 'operator_message')) throw new HttpError(404, 'Реплика не найдена');
-    ev.marks = { ...(ev.marks ?? { explanation: false, approval: false, finish: false }), correction: !!body.correction, lessonId: body.correction ? (body.lessonId ?? null) : null, lessonNote: body.correction ? (body.lessonNote ?? null) : null, manual: true } as any;
+    ev.marks = { ...(ev.marks ?? { explanation: false, approval: false, finish: false }), correction: !!body.correction, lessonId: body.correction ? (body.lessonId ?? null) : null, lessonNote: body.correction ? (body.lessonNote ?? null) : null, manual: true };
     if (l) l.exec.update(ev);
     this.schedule(id);
   }
@@ -343,6 +343,11 @@ export class ManualManager {
     this.app.publish(`manual:${id}`, 'manual', { id, status: 'deleted' });
     this.app.publish('runs', 'manual', { id, status: 'deleted' });
     log.info(`Ручная сессия ${s.key} удалена`);
+  }
+
+  /** Перед остановкой ClawGym: отложенные сохранения сессий — сразу. */
+  flush(): void {
+    for (const id of [...this.timers.keys()]) this.schedule(id, true);
   }
 
   private schedule(id: number, now = false): void {

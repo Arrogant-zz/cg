@@ -14,9 +14,7 @@ export interface CompareRow {
 
 /** С какими скиллами тестовый оператор начал прогон: стартовые скиллы сборки или результат его прошлых прогонов. */
 export function operatorLabel(r: RunRecord): string {
-  // Записи до 27.10.2026: прогон шёл на установленной версии набора.
-  const legacy = (r.settings as any).skillset;
-  if (!r.settings.testOperator && legacy) return legacy === 'build' ? 'стартовые скиллы сборки' : `набор ${legacy.title} ${legacy.version}`;
+  if (r.settings.legacySkillset) return r.settings.legacySkillset;
   const h = r.lines[0]?.history ?? [];
   if (!h.length) return 'новый · стартовые скиллы сборки';
   return `после ${h.map((x) => `#${x.run} ${x.type === 'training' ? 'обучение' : 'проверка'}`).join(' → ')}`;

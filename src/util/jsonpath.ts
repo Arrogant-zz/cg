@@ -64,11 +64,6 @@ export function queryPath(obj: unknown, path: string): unknown[] {
   return cur;
 }
 
-export function getPath(obj: unknown, path: string): unknown {
-  const r = queryPath(obj, path);
-  return r.length ? r[0] : undefined;
-}
-
 /** Запись по пути без подстановочных знаков; недостающие объекты и массивы создаются. */
 export function setPath(obj: any, path: string, value: unknown): void {
   const tokens = parsePath(path);

@@ -79,6 +79,12 @@ export class Router {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const m = this.match(req.method ?? 'GET', url.pathname);
     if (!m) return false;
+    // POST — только с телом JSON. Такой запрос с чужой страницы браузер шлёт лишь после OPTIONS, а стенд его не разрешает:
+    // форма или fetch без CORS не запустят прогон и не напишут в ручную сессию от имени сотрудника. DELETE без OPTIONS не уходит и так.
+    if (req.method === 'POST' && !isJson(req.headers['content-type'])) {
+      sendJson(res, 415, { error: 'Нужен заголовок Content-Type: application/json' });
+      return true;
+    }
     const ctx: Ctx = { req, res, params: m.params, query: url.searchParams, url, body: () => readJsonBody(req) };
     try {
       const result = await m.route.handler(ctx);
@@ -102,6 +108,9 @@ export class Router {
     return true;
   }
 }
+
+/** Тип содержимого — application/json, параметры вроде charset допускаются. */
+const isJson = (type: string | undefined): boolean => /^application\/json\s*(;|$)/i.test(type ?? '');
 
 export function sendJson(res: ServerResponse, status: number, data: unknown, headers: Record<string, string> = {}): void {
   const body = JSON.stringify(data);

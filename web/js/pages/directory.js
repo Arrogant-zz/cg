@@ -31,7 +31,8 @@ ${issuesBox(a.issues, 'Ошибки в подключении')}${warningsList(a
 </div>
 <div>
 <span class="lbl" style="padding-bottom: 6px">Инструменты и команды</span>
-<div class="kv"><span class="k">MCP-контракт</span><span class="mono">${a.mcp.contract} · ${a.mcp.protocolVersion} · x-task-id из ${a.mcp.taskIdFrom.join(', ')}</span></div>
+<div class="kv"><span class="k">MCP-контракт</span><span class="mono">${a.mcp.contract}</span></div>
+<div class="kv"><span class="k">MCP-сервер стенда</span><span>x-task-id — из заголовка <span class="mono">${a.mcp.taskIdHeader}</span>, затем из _meta и аргумента; протокол — запрошенный агентом, если поддержан (${a.mcp.protocols.join(', ')}), иначе ${a.mcp.protocols[0]}. Общий для всех агентов</span></div>
 <div class="kv"><span class="k">Служебные команды</span><span class="row" style="gap: 6px"><span class="ref">${a.commands.reset}</span><span class="ref">${a.commands.capture}</span><span class="ref">${a.commands.curator}</span></span></div>
 <div class="kv"><span class="k">Модель и скиллы</span><span>${icon('lock', 's14')} ${a.model ?? 'модель не указана'} · задаёт сборка агента; скиллы живут у тестового оператора, ClawGym их не ставит и не выгружает</span></div>
 <div class="kv"><span class="k">Версия агента</span><span>${a.build ?? 'не указана'}${a.learningKit ? ` · ${a.learningKit}` : ''}</span></div>

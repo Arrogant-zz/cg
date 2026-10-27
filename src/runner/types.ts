@@ -1,7 +1,7 @@
 // Сохраняемая запись прогона: настройки, план, линии (повторения) с тестовыми операторами, элементы корзины, проходы curator, итоги.
 import type { ExecStats, Outcome } from '../execution/evaluate.js';
 import type { CheckItem } from '../execution/events.js';
-import type { Issue, Limits } from '../config/types.js';
+import type { BasketDef, CuratorPolicy, Issue, Limits } from '../config/types.js';
 import type { PlanStep } from './plan.js';
 import type { MetricAvailability } from './resolve.js';
 import type { HttpExchange } from '../util/httplog.js';
@@ -38,8 +38,8 @@ export interface ItemRecord {
   };
   checks: CheckItem[] | null;
   answerFailed: string[];
-  /** Метрики аналитика по кейсу (M1, M2); нет у технических сбоев и в записях до 27.10.2026. */
-  scores?: ItemScores | null;
+  /** Метрики аналитика по кейсу (M1, M2); null у технических сбоев и в записях до 27.10.2026. */
+  scores: ItemScores | null;
   stats: ExecStats | null;
   repeated: string[];
   limits: Limits;
@@ -104,11 +104,13 @@ export interface RunRecord {
   finishedAt: string | null;
   overrides: Record<string, unknown>;
   settings: {
-    basket: { id: string; title: string; file: string; hash: string; type: 'training' | 'checking'; curator: unknown; checking: unknown; items: number };
+    basket: { id: string; title: string; file: string; hash: string; type: 'training' | 'checking'; curator: CuratorPolicy; checking: BasketDef['checking']; items: number };
     /** model — метка модели из подключения: модель и стартовые скиллы задаёт сборка агента. */
     agent: { id: string; title: string; file: string; hash: string; build: string | null; model: string | null; learningKit: string | null };
     /** Новый тестовый оператор или продолжение на операторе прошлого прогона (решение владельца от 27.10.2026). */
     testOperator: { mode: 'new' } | { mode: 'continue'; run: number; title: string; type: 'training' | 'checking'; configId: string };
+    /** Только записи до 27.10.2026: набор скиллов, который ClawGym установил оператору (results/format.ts). */
+    legacySkillset?: string;
     operator: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     judge: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     metrics: { id: string; title: string; builtin: string; version: string; params?: Record<string, unknown> }[];

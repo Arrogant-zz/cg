@@ -43,7 +43,7 @@ export interface LlmProvider {
   complete(req: LlmRequest): Promise<LlmResponse>;
 }
 
-export type LlmErrorKind = 'config' | 'http' | 'network' | 'timeout' | 'refusal' | 'truncated' | 'aborted' | 'sdk';
+export type LlmErrorKind = 'config' | 'http' | 'network' | 'timeout' | 'refusal' | 'truncated' | 'aborted' | 'unexpected';
 
 export class LlmError extends Error {
   constructor(

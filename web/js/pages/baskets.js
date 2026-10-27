@@ -30,7 +30,7 @@ ${typeBadge('training')}
 <li>${icon('capture')}<span>/case-capture после каждого завершённого кейса, даже решённого неверно</span></li>
 <li>${icon('curator')}<span>/skill-curator — по настройке корзины</span></li>
 <li>${icon('bot')}<span>Оператор помогает по сценарию решения</span></li>
-<li>${icon('layers')}<span>Изменения скиллов фиксируются после каждого /skill-curator; итог — новая версия набора</span></li>
+<li>${icon('layers')}<span>Выученное остаётся у тестового оператора в агенте; что сделал /skill-curator — видно по строке его результата</span></li>
 </ul>
 </div>
 <div style="background: #F7F7F4">
@@ -39,7 +39,7 @@ ${typeBadge('checking')}
 <li>${icon('reset')}<span>/reset перед каждым кейсом</span></li>
 <li>${icon('x')}<span>Без /case-capture и /skill-curator</span></li>
 <li>${icon('bot')}<span>Оператор только уточняет факты; поправки из инструкции решения не исполняются, расхождение отмечается</span></li>
-<li>${icon('layers')}<span>Набор скиллов меняться не должен: файлы сверяются до и после, изменение отмечается в результате</span></li>
+<li>${icon('layers')}<span>Проверка идёт на скиллах тестового оператора: стартовых — у нового, выученных — у продолжающего прошлый прогон</span></li>
 </ul>
 </div>
 </section>

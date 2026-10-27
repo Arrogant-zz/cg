@@ -6,7 +6,7 @@ import { parseCapture, parseCurator, renderCommand, type CommandName } from '../
 import { KeyedMutex } from '../util/sync.js';
 import { errorMessage, nowIso } from '../util/core.js';
 import type { Execution } from './execution.js';
-import type { CommandEvent, MessageEvent } from './events.js';
+import type { CommandEvent, MessageEvent, NoteEvent } from './events.js';
 import type { HttpExchange } from '../util/httplog.js';
 
 export type SendResult = { ok: true; reply: MessageEvent; raw: AgentReply } | { ok: false; error: AgentError };
@@ -69,7 +69,7 @@ export class AgentChannel {
     const u = this.unfinished.get(senderId) ?? null;
     if (u && exec) {
       const ago = span(Date.now() - Date.parse(u.sentAt));
-      exec.add({ type: 'note', text: `Агент ещё выполняет прерванный запрос «${u.what}» (x-task-id ${u.taskId}), отправленный ${ago} назад: ${label.charAt(0).toLowerCase()}${label.slice(1)} встанет за ним в очередь — ждём не дольше ${span(this.env.agentBusyWaitMs)}` } as any);
+      exec.add<NoteEvent>({ type: 'note', text: `Агент ещё выполняет прерванный запрос «${u.what}» (x-task-id ${u.taskId}), отправленный ${ago} назад: ${label.charAt(0).toLowerCase()}${label.slice(1)} встанет за ним в очередь — ждём не дольше ${span(this.env.agentBusyWaitMs)}` });
     }
     return u;
   }
@@ -106,7 +106,7 @@ export class AgentChannel {
       const type = kind === 'start' ? 'start_message' : kind === 'operator' ? 'operator_message' : 'human_message';
       const waited = this.waitFor(exec.senderId, LABELS[kind], exec);
       const sentAt = nowIso();
-      const out = exec.add<MessageEvent>({ type, text, taskId, ...extra } as any);
+      const out = exec.add<MessageEvent>({ type, text, taskId, ...extra });
       const onExchange = (x: HttpExchange, phase: 'start' | 'end') => {
         if (phase === 'start') {
           x.eventSeq = out.seq;
@@ -136,7 +136,7 @@ export class AgentChannel {
         const err = e instanceof AgentError ? e : new AgentError('network', errorMessage(e));
         this.settle(exec.senderId, LABELS[kind], taskId, sentAt, err, waited);
         err.message = this.busyError(err, waited) ?? err.message;
-        exec.add({ type: 'note', text: `Агент: ${err.message}`, httpId: err.exchange?.id ?? null, data: { kind: err.kind, httpStatus: err.httpStatus, body: err.body } } as any);
+        exec.add<NoteEvent>({ type: 'note', text: `Агент: ${err.message}`, httpId: err.exchange?.id ?? null, data: { kind: err.kind, httpStatus: err.httpStatus, body: err.body } });
         return { ok: false as const, error: err };
       }
     });

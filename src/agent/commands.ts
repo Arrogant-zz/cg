@@ -4,12 +4,6 @@ import { renderString } from '../util/template.js';
 
 export type CommandName = 'reset' | 'capture' | 'curator';
 
-export const COMMAND_TITLES: Record<CommandName, string> = {
-  reset: '/reset',
-  capture: '/case-capture',
-  curator: '/skill-curator',
-};
-
 export function renderCommand(agent: AgentDef, name: CommandName, vars: { requestRef?: string; topic?: string; taskId?: string }): string {
   return renderString(agent.commands[name], { requestRef: vars.requestRef ?? '', topic: vars.topic ?? '', taskId: vars.taskId ?? '' }).trim();
 }

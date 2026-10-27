@@ -13,7 +13,7 @@ import { ANSWER_JUDGE_PROMPT_VERSION, ANSWER_JUDGE_SYSTEM, JUDGE_PROMPT_VERSION,
 import { itemScores, scoringOf } from '../metrics/scoring.js';
 import { createProvider } from '../llm/provider.js';
 import { resolveRun, type ResolvedItem, type ResolvedRun, type RunOverrides } from './resolve.js';
-import type { CuratorPassRecord, ItemRecord, LineRecord, PrepItem, RunRecord } from './types.js';
+import type { CuratorPassRecord, ItemRecord, LineRecord, RunRecord } from './types.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { runKey } from '../results/store.js';
 import { HttpError } from '../util/http.js';
@@ -26,6 +26,8 @@ interface Live {
   abort: AbortController;
   resolved: ResolvedRun;
   execs: Map<string, Execution>;
+  /** Прогон взят из очереди в работу. */
+  started: boolean;
 }
 
 export const execName = (line: number, pos: number) => `L${line}-P${String(pos).padStart(2, '0')}`;
@@ -42,11 +44,13 @@ export class RunManager {
   private live = new Map<number, Live>();
   private timer: NodeJS.Timeout | null = null;
   private saveTimers = new Map<number, NodeJS.Timeout>();
+  /** Отложенные сохранения журналов кейсов; ключ — «прогон/кейс». */
+  private persists = new Map<string, { timer: NodeJS.Timeout; persist: () => Promise<unknown> }>();
 
   constructor(private app: App) {}
 
   async init(): Promise<void> {
-    for (const r of (await this.app.store.loadRuns()) as RunRecord[]) {
+    for (const r of await this.app.store.loadRuns((file, reason) => this.app.stand.add('warn', 'store.skipped', `Прогон из ${file} не загружен: ${reason}`))) {
       if (r.status === 'running' || r.status === 'queued') {
         const wasRunning = r.status === 'running';
         r.status = 'failed';
@@ -67,6 +71,24 @@ export class RunManager {
   close(): void {
     if (this.timer) clearInterval(this.timer);
     for (const l of this.live.values()) l.abort.abort(new Error('ClawGym останавливается'));
+  }
+
+  /** Перед остановкой ClawGym: отложенные сохранения прогонов и журналов кейсов — сразу. */
+  flush(): void {
+    for (const key of [...this.persists.keys()]) this.persistNow(key)?.catch(() => undefined);
+    for (const id of [...this.saveTimers.keys()]) {
+      const run = this.runs.get(id);
+      if (run) this.scheduleSave(run, true);
+    }
+  }
+
+  /** Отложенное сохранение журнала кейса — сейчас; undefined — ничего не отложено. */
+  private persistNow(key: string): Promise<unknown> | undefined {
+    const p = this.persists.get(key);
+    if (!p) return undefined;
+    clearTimeout(p.timer);
+    this.persists.delete(key);
+    return p.persist();
   }
 
   list(): RunRecord[] {
@@ -101,19 +123,19 @@ export class RunManager {
     // Снимок: копии файлов, участвующих в прогоне; правка исходников потом не меняет результат.
     const snapFiles: { file: string; hash: string }[] = [];
     const texts = new Map<string, string>();
-    const reg = app.registry;
+    const contract = r.contract;
     const sources = [
       r.config.source,
       r.basket.source,
       r.agent.source,
-      ...(reg.contract ? [reg.contract.source] : []),
-      ...(reg.contract?.defaultsSource ? [reg.contract.defaultsSource] : []),
+      ...(contract ? [contract.source] : []),
+      ...(contract?.defaultsSource ? [contract.defaultsSource] : []),
       ...r.items.flatMap((i) => [i.solution?.source, i.caseDef?.source, ...(i.caseDef?.dataFiles ?? [])]),
       ...[r.models.operator, r.models.judge].map((m) => m?.source),
       ...r.metrics.map((m) => m.source),
     ].filter(Boolean) as { file: string; hash: string; text: string }[];
     for (const s of sources) if (!texts.has(s.file)) texts.set(s.file, s.file.startsWith('agents/') || s.file.startsWith('models/') ? redactSecrets(s.text) : s.text);
-    if (reg.contract) texts.set(reg.contract.startMessage.file, reg.contract.startMessage.text);
+    if (contract) texts.set(contract.startMessage.file, contract.startMessage.text);
     if (r.agent.request.bodySource) texts.set(r.agent.request.bodySource, JSON.stringify(r.agent.request.body, null, 2));
     texts.set(`prompts/${OPERATOR_PROMPT_VERSION}.txt`, OPERATOR_SYSTEM);
     texts.set(`prompts/${JUDGE_PROMPT_VERSION}.txt`, JUDGE_SYSTEM);
@@ -150,7 +172,7 @@ export class RunManager {
         limits: r.limits,
         repetitions: r.repetitions,
         prompts: { operator: OPERATOR_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION, answerJudge: ANSWER_JUDGE_PROMPT_VERSION },
-        contract: reg.contract ? { file: reg.contract.source.file, hash: reg.contract.source.hash, version: reg.contract.version, conditional: reg.contract.conditional } : { file: '', hash: '', version: '', conditional: true },
+        contract: contract ? { file: contract.source.file, hash: contract.source.hash, version: contract.version, conditional: contract.conditional } : { file: '', hash: '', version: '', conditional: true },
       },
       snapshot: { createdAt, files: snapFiles },
       plan: preview.plan,
@@ -161,7 +183,7 @@ export class RunManager {
       summary: null,
     };
     this.runs.set(id, run);
-    this.live.set(id, { abort: new AbortController(), resolved: r, execs: new Map() });
+    this.live.set(id, { abort: new AbortController(), resolved: r, execs: new Map(), started: false });
     await app.store.saveRun(run);
     this.publish(run);
     log.info(`Прогон #${id} (${r.config.id}) поставлен в очередь`);
@@ -252,9 +274,9 @@ export class RunManager {
     for (const run of [...this.runs.values()].sort((a, b) => a.id - b.id)) {
       if (run.status !== 'queued') continue;
       const live = this.live.get(run.id);
-      if (!live || (live as any).started) continue;
+      if (!live || live.started) continue;
       if (run.startAt && Date.parse(run.startAt) > Date.now()) continue;
-      (live as any).started = true;
+      live.started = true;
       this.execute(run, live).catch((e) => {
         log.error(`Прогон #${run.id} упал`, e);
         run.status = 'failed';
@@ -267,18 +289,23 @@ export class RunManager {
 
   private async execute(run: RunRecord, live: Live): Promise<void> {
     await Promise.all(run.lines.map((l) => this.runLine(run, l, live)));
-    const aborted = live.abort.signal.aborted;
-    run.finishedAt = nowIso();
-    if (aborted) run.status = 'stopped';
-    else if (run.lines.every((l) => l.status === 'failed')) {
-      run.status = 'failed';
-      run.error = run.error ?? run.lines.map((l) => l.error).filter(Boolean).join('; ');
-    } else run.status = 'completed';
-    if (!run.startedAt) run.startedAt = run.finishedAt;
-    run.summary = computeRunMetrics(run);
-    await this.app.store.saveRun(run);
-    for (const e of live.execs.values()) this.app.bindings.unbindAll(e);
-    this.live.delete(run.id);
+    try {
+      const aborted = live.abort.signal.aborted;
+      run.finishedAt = nowIso();
+      if (aborted) run.status = 'stopped';
+      else if (run.lines.every((l) => l.status === 'failed')) {
+        run.status = 'failed';
+        run.error = run.error ?? run.lines.map((l) => l.error).filter(Boolean).join('; ');
+      } else run.status = 'completed';
+      if (!run.startedAt) run.startedAt = run.finishedAt;
+      run.summary = computeRunMetrics(run);
+      await this.app.store.saveRun(run);
+    } finally {
+      // Линии закончились: привязки x-task-id и живая запись снимаются, даже если упали метрики или запись run.json.
+      // Иначе прогон нельзя удалить, а поздние вызовы агента попадают в законченные кейсы.
+      for (const e of live.execs.values()) this.app.bindings.unbindAll(e);
+      this.live.delete(run.id);
+    }
     this.publish(run);
     log.info(`Прогон #${run.id} — ${run.status}`);
   }
@@ -349,6 +376,27 @@ export class RunManager {
       log.error(`Линия ${line.index} прогона #${run.id}`, e);
       line.status = 'failed';
       line.error = errorMessage(e);
+      // Сбой стенда посреди линии: начатый кейс закрывается — удерживаемые вызовы получают ошибку, в записи он не остаётся «идёт».
+      const reason = `сбой стенда: ${line.error}`;
+      for (const i of line.items) {
+        if (i.status === 'running') {
+          const exec = i.execName ? live.execs.get(i.execName) : undefined;
+          if (exec && !exec.terminal) {
+            exec.stop(reason);
+            exec.setStatus('internal_error', reason);
+            exec.add<StatusEvent>({ type: 'status', status: 'internal_error', reason });
+          }
+          i.status = 'internal_error';
+          i.outcome = 'technical';
+          i.reason = reason;
+          i.finishedAt = nowIso();
+        } else if (i.status === 'pending') i.status = 'not_started';
+      }
+      for (const p of line.curatorPasses) {
+        if (p.status !== 'running') continue;
+        p.status = 'failed';
+        p.error = reason;
+      }
     } finally {
       line.finishedAt = nowIso();
       line.current = null;
@@ -396,7 +444,8 @@ export class RunManager {
       id: `run${run.id}-${name}`,
       mode: 'auto',
       caseDef,
-      contract: app.registry.contract!,
+      // Контракт — из снимка запуска, а не из текущих настроек: «Проверить файлы снова» не меняет идущий прогон.
+      contract: r.contract!,
       solution,
       basketType: r.basket.type,
       senderId: line.senderId,
@@ -412,7 +461,7 @@ export class RunManager {
     rec.status = 'running';
     rec.startedAt = nowIso();
     line.current = { index: item.index, execName: name, phase: 'диалог' };
-    let persistTimer: NodeJS.Timeout | null = null;
+    const key = `${run.id}/${name}`;
     const persist = () => Promise.all([app.store.saveExecution(run.id, name, { ...exec.toJSON(), item: rec }), app.store.saveHttp(run.id, name, exec.http)]);
     exec.onChange((c) => {
       // Шаг /reset отмечается сразу, не дожидаясь конца диалога.
@@ -420,12 +469,7 @@ export class RunManager {
         rec.steps.reset = c.event.status;
         this.scheduleSave(run);
       }
-      if (!persistTimer) {
-        persistTimer = setTimeout(() => {
-          persistTimer = null;
-          persist().catch(() => undefined);
-        }, 400);
-      }
+      if (!this.persists.has(key)) this.persists.set(key, { persist, timer: setTimeout(() => void this.persistNow(key)?.catch(() => undefined), 400) });
       app.publish(`run:${run.id}`, 'exec', { line: line.index, name, kind: c.kind, seq: c.kind === 'event' ? c.event.seq : null, status: exec.status });
     });
     this.scheduleSave(run);
@@ -474,10 +518,8 @@ export class RunManager {
     }
     rec.status = exec.status;
     rec.finishedAt = nowIso();
-    // Таймер обнуляется: события после конца кейса — поздние вызовы прерванного хода — тоже сохраняются.
-    if (persistTimer) clearTimeout(persistTimer);
-    persistTimer = null;
-    await persist();
+    // Отложенное сохранение снимается: события после конца кейса — поздние вызовы прерванного хода — тоже сохраняются.
+    await (this.persistNow(key) ?? persist());
     this.scheduleSave(run);
   }
 
@@ -490,7 +532,7 @@ export class RunManager {
     this.scheduleSave(run);
     const taskId = `cg-${run.id}-${line.index}-cur${pass}-${randomHex(2)}`;
     const t0 = Date.now();
-    if (run.settings.basket.curator && (run.settings.basket.curator as any).resetBefore) {
+    if (run.settings.basket.curator.resetBefore) {
       const rs = await channel.rawCommand(line.senderId, taskId, 'reset', signal);
       rec.reset = { status: rs.status, durationMs: rs.durationMs, error: rs.error };
       rec.http = [...rs.http];

@@ -11,7 +11,6 @@ import { App } from './app.js';
 import { loadRegistry } from './config/loader.js';
 import { resolveRun, type RunOverrides } from './runner/resolve.js';
 import { ResultsStore } from './results/store.js';
-import type { RunRecord } from './runner/types.js';
 import type { Issue } from './config/types.js';
 import { computeRunMetrics } from './metrics/builtins.js';
 import { setLogLevel } from './util/log.js';
@@ -92,7 +91,7 @@ async function main() {
   if (cmd === 'preview' && target) {
     setLogLevel('warn');
     const reg = await loadRegistry(env.configDir);
-    const runs = (await new ResultsStore(env.varDir).loadRuns()) as RunRecord[];
+    const runs = await new ResultsStore(env.varDir).loadRuns((file, reason) => console.log(`Прогон из ${file} пропущен: ${reason}`));
     const p = resolveRun(reg, env, target, continueArg(), runs);
     printIssues(p.issues);
     console.log('\nПлан команд:');

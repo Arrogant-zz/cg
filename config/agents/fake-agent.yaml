@@ -24,8 +24,6 @@ commands:
   capture: /case-capture request_ref={{taskId}} category={{topic}}
 mcp:
   contract: contracts/tools.json
-  protocolVersion: 2025-06-18
-  taskIdFrom: [header]
 # Метка модели для снимка прогона: fake-agent — сценарий на разговорнике, без LLM.
 model: fake-agent (сценарий, без LLM)
 sessions:

@@ -40,7 +40,8 @@ import {
   type ToolDef,
 } from './types.js';
 import { isPlainObject, shortHash } from '../util/core.js';
-import { listDirs, manifestChecksum, readJsonIf, readTree, walkFiles } from '../util/fsx.js';
+import { whenRegexErrors } from '../stubs/engine.js';
+import { walkFiles } from '../util/fsx.js';
 
 const Ajv: any = (AjvModule as any).default ?? AjvModule;
 const ajv = new Ajv({ allErrors: true, strict: false, allowUnionTypes: true });
@@ -177,8 +178,8 @@ function schemaCheck(c: Collector, parsed: Parsed, schema: object): boolean {
   return !fatal;
 }
 
-async function parseFile(c: Collector, home: string, rel: string): Promise<Parsed | null> {
-  const abs = path.join(home, rel);
+async function parseFile(c: Collector, configDir: string, rel: string): Promise<Parsed | null> {
+  const abs = path.join(configDir, rel);
   let text: string;
   try {
     text = await fsp.readFile(abs, 'utf8');
@@ -215,8 +216,8 @@ async function parseFile(c: Collector, home: string, rel: string): Promise<Parse
 const src = (p: Parsed): Source => ({ file: p.rel, hash: shortHash(p.text), text: p.text });
 
 /** Файлы настроек каталога; recursive — с подкаталогами. Файл или папка с именем на «_» пропускаются: так откладывают черновики. */
-async function listConfigFiles(home: string, dir: string, recursive = false): Promise<string[]> {
-  const base = path.join(home, dir);
+async function listConfigFiles(configDir: string, dir: string, recursive = false): Promise<string[]> {
+  const base = path.join(configDir, dir);
   const files = recursive
     ? await walkFiles(base)
     : (await fsp.readdir(base, { withFileTypes: true }).catch(() => [] as any[])).filter((e: any) => e.isFile()).map((e: any) => e.name);
@@ -245,9 +246,9 @@ export const hasEnvRef = (s: string | null | undefined): boolean => !!s && /\$\{
 
 // ------------------------------------------------------------------ контракт
 
-async function loadContract(c: Collector, home: string): Promise<ContractDef | null> {
+async function loadContract(c: Collector, configDir: string): Promise<ContractDef | null> {
   const rel = 'contracts/tools.json';
-  const p = await parseFile(c, home, rel);
+  const p = await parseFile(c, configDir, rel);
   if (!p) {
     c.error(rel, 'Нет определений MCP-инструментов', { action: 'Добавьте contracts/tools.json с инструментами из кода оркестратора' });
     return null;
@@ -273,7 +274,7 @@ async function loadContract(c: Collector, home: string): Promise<ContractDef | n
   const smRel = d.startMessage ?? 'contracts/start-message.txt';
   let smText = '';
   try {
-    smText = await fsp.readFile(path.join(home, smRel), 'utf8');
+    smText = await fsp.readFile(path.join(configDir, smRel), 'utf8');
     c.files++;
   } catch {
     c.error(smRel, 'Нет шаблона стартового сообщения', { action: 'Добавьте шаблон по коду оркестратора' });
@@ -293,11 +294,11 @@ async function loadContract(c: Collector, home: string): Promise<ContractDef | n
   };
   const defRel = 'contracts/tool-defaults.yaml';
   try {
-    await fsp.access(path.join(home, defRel));
-    const dp = await parseFile(c, home, defRel);
+    await fsp.access(path.join(configDir, defRel));
+    const dp = await parseFile(c, configDir, defRel);
     if (dp && schemaCheck(c, dp, toolDefaultsSchema)) {
       contract.defaultsSource = src(dp);
-      contract.defaults = await normalizeStubs(c, home, dp, dp.data.tools ?? {}, 'default', 'tools', []);
+      contract.defaults = await normalizeStubs(c, configDir, dp, dp.data.tools ?? {}, 'default', 'tools', []);
     }
   } catch {
     /* файла умолчаний может не быть */
@@ -307,7 +308,7 @@ async function loadContract(c: Collector, home: string): Promise<ContractDef | n
 
 async function normalizeStubs(
   c: Collector,
-  home: string,
+  configDir: string,
   p: Parsed,
   tools: Record<string, any[]>,
   origin: 'case' | 'default',
@@ -321,6 +322,14 @@ async function normalizeStubs(
       const s = list[i];
       const field = `${base}.${tool}[${i}]`;
       const line = lineOf(p, [base, tool, i]);
+      for (const bad of isPlainObject(s.when) ? whenRegexErrors(s.when) : []) {
+        const at = [base, tool, i, 'when', ...bad.path];
+        c.error(p.rel, `Регулярное выражение не компилируется: ${bad.error}`, {
+          field: fieldFromPath(at),
+          line: lineOf(p, at),
+          action: 'Исправьте выражение: ClawGym проверяет его с флагом u, где, например, дефис в классе символов ставится последним — [\\w.-]',
+        });
+      }
       if (!s.result && !s.error && !s.sequence) {
         c.error(p.rel, 'Заглушка без ответа: нужен result, error или sequence', { field, line });
         continue;
@@ -335,7 +344,7 @@ async function normalizeStubs(
           if (r.result.file) {
             const fileRel = `data/${r.result.file}`;
             try {
-              const text = await fsp.readFile(path.join(home, fileRel), 'utf8');
+              const text = await fsp.readFile(path.join(configDir, fileRel), 'utf8');
               dataFiles.push({ file: fileRel, hash: shortHash(text), text });
               r.result.fileContent = fileRel.endsWith('.json') ? JSON.parse(text) : text;
             } catch (e: any) {
@@ -373,11 +382,11 @@ function refTools(list: (string | { tool: string; count?: number })[]): RefTool[
   return [...out].map(([tool, count]) => ({ tool, count }));
 }
 
-async function loadCase(c: Collector, home: string, p: Parsed, contract: ContractDef | null): Promise<CaseDef | null> {
+async function loadCase(c: Collector, configDir: string, p: Parsed, contract: ContractDef | null): Promise<CaseDef | null> {
   if (!schemaCheck(c, p, caseSchema)) return null;
   const d = p.data;
   const dataFiles: Source[] = [];
-  const tools = await normalizeStubs(c, home, p, d.tools ?? {}, 'case', 'tools', dataFiles);
+  const tools = await normalizeStubs(c, configDir, p, d.tools ?? {}, 'case', 'tools', dataFiles);
   const ref = d.reference ?? {};
   const actions = ref.actions ?? {};
   const toAction = (a: any, i: number, prefix: string): ActionRequirement => ({
@@ -505,7 +514,7 @@ function loadBasket(c: Collector, p: Parsed): BasketDef | null {
   };
 }
 
-async function loadAgent(c: Collector, home: string, p: Parsed): Promise<AgentDef | null> {
+async function loadAgent(c: Collector, configDir: string, p: Parsed): Promise<AgentDef | null> {
   if (!schemaCheck(c, p, agentSchema)) return null;
   const d = p.data;
   const r = d.request;
@@ -514,7 +523,7 @@ async function loadAgent(c: Collector, home: string, p: Parsed): Promise<AgentDe
   if (typeof r.body === 'string') {
     bodySource = r.body;
     try {
-      body = JSON.parse(await fsp.readFile(path.join(home, r.body), 'utf8'));
+      body = JSON.parse(await fsp.readFile(path.join(configDir, r.body), 'utf8'));
       c.files++;
     } catch (e: any) {
       c.error(p.rel, `Шаблон тела ${r.body} не прочитан: ${e.message}`, { field: 'request.body', line: lineOf(p, ['request', 'body']) });
@@ -550,11 +559,7 @@ async function loadAgent(c: Collector, home: string, p: Parsed): Promise<AgentDe
       sample: d.response.sample ?? null,
     },
     commands: { ...DEFAULT_COMMANDS, ...(d.commands ?? {}) },
-    mcp: {
-      contract: d.mcp?.contract ?? 'contracts/tools.json',
-      protocolVersion: d.mcp?.protocolVersion ?? '2025-06-18',
-      taskIdFrom: d.mcp?.taskIdFrom ?? ['header', 'meta', 'argument'],
-    },
+    mcp: { contract: d.mcp?.contract ?? 'contracts/tools.json' },
     model: d.model ?? null,
     sessions: { max: d.sessions?.max ?? 3 },
     healthUrl: d.healthUrl ?? null,
@@ -668,11 +673,11 @@ function loadRun(c: Collector, p: Parsed): RunConfigDef | null {
 
 // ------------------------------------------------------------------ сборка
 
-export async function loadRegistry(home: string): Promise<Registry> {
+export async function loadRegistry(configDir: string): Promise<Registry> {
   const c = new Collector();
-  const contract = await loadContract(c, home);
+  const contract = await loadContract(c, configDir);
   const reg: Registry = {
-    home,
+    configDir,
     loadedAt: new Date().toISOString(),
     contract,
     cases: new Map(),
@@ -697,32 +702,32 @@ export async function loadRegistry(home: string): Promise<Registry> {
   };
 
   // Кейсы можно раскладывать по папкам (просьба владельца от 27.10.2026): ссылки на кейс идут по id, а не по пути.
-  for (const rel of await listConfigFiles(home, 'cases', true)) {
-    const p = await parseFile(c, home, rel);
-    if (p) put(reg.cases, await loadCase(c, home, p, contract), 'Кейс');
+  for (const rel of await listConfigFiles(configDir, 'cases', true)) {
+    const p = await parseFile(c, configDir, rel);
+    if (p) put(reg.cases, await loadCase(c, configDir, p, contract), 'Кейс');
   }
-  for (const rel of await listConfigFiles(home, 'solutions', true)) {
-    const p = await parseFile(c, home, rel);
+  for (const rel of await listConfigFiles(configDir, 'solutions', true)) {
+    const p = await parseFile(c, configDir, rel);
     if (p) put(reg.solutions, loadSolution(c, p), 'Решение');
   }
-  for (const rel of await listConfigFiles(home, 'baskets')) {
-    const p = await parseFile(c, home, rel);
+  for (const rel of await listConfigFiles(configDir, 'baskets')) {
+    const p = await parseFile(c, configDir, rel);
     if (p) put(reg.baskets, loadBasket(c, p), 'Корзина');
   }
-  for (const rel of await listConfigFiles(home, 'agents')) {
-    const p = await parseFile(c, home, rel);
-    if (p) put(reg.agents, await loadAgent(c, home, p), 'Агент');
+  for (const rel of await listConfigFiles(configDir, 'agents')) {
+    const p = await parseFile(c, configDir, rel);
+    if (p) put(reg.agents, await loadAgent(c, configDir, p), 'Агент');
   }
-  for (const rel of await listConfigFiles(home, 'models')) {
-    const p = await parseFile(c, home, rel);
+  for (const rel of await listConfigFiles(configDir, 'models')) {
+    const p = await parseFile(c, configDir, rel);
     if (p) put(reg.models, loadModel(c, p), 'Модель');
   }
-  for (const rel of await listConfigFiles(home, 'metrics')) {
-    const p = await parseFile(c, home, rel);
+  for (const rel of await listConfigFiles(configDir, 'metrics')) {
+    const p = await parseFile(c, configDir, rel);
     if (p) for (const m of loadMetrics(c, p)) put(reg.metrics, m, 'Метрика');
   }
-  for (const rel of await listConfigFiles(home, 'runs')) {
-    const p = await parseFile(c, home, rel);
+  for (const rel of await listConfigFiles(configDir, 'runs')) {
+    const p = await parseFile(c, configDir, rel);
     if (p) put(reg.runs, loadRun(c, p), 'Настройка прогона');
   }
 
@@ -769,9 +774,4 @@ function crossCheck(c: Collector, reg: Registry): void {
       if (mid !== '*' && !reg.metrics.has(mid)) c.error(r.source.file, `Метрика «${mid}» не найдена в metrics/`, { field: 'metrics' });
     }
   }
-}
-
-export function issuesFor(reg: Registry, files: string[]): Issue[] {
-  const set = new Set(files);
-  return reg.issues.filter((i) => set.has(i.file));
 }

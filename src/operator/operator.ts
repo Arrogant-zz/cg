@@ -106,12 +106,12 @@ export class LlmOperator {
   ) {}
 
   async decide(exec: Execution, event: OperatorEvent, mode: BasketType, limits: OperatorLimits, signal?: AbortSignal, onExchange?: LlmRequest['onExchange']): Promise<StructuredResult<OperatorDecision>> {
-    const ctx = operatorContext(exec, event, mode, limits, !!(this.model.params as any).devHints);
+    const ctx = operatorContext(exec, event, mode, limits, !!this.model.params.devHints);
     const known = new Set(lessonCatalog(exec).map((l) => l.id));
     const label = event.type === 'confirmation' ? `LLM-оператор · подтверждение ${event.call.tool}` : 'LLM-оператор · конец хода';
     return structuredCall<OperatorDecision>(
       this.provider,
-      { system: OPERATOR_SYSTEM, user: operatorUserPrompt(ctx), schema: OPERATOR_SCHEMA as any, schemaName: 'operator_decision', signal, label, onExchange },
+      { system: OPERATOR_SYSTEM, user: operatorUserPrompt(ctx), schema: OPERATOR_SCHEMA, schemaName: 'operator_decision', signal, label, onExchange },
       (d) => {
         const errs: string[] = [];
         if (event.type === 'confirmation' && !d.confirmation) errs.push('для события confirmation поле confirmation должно быть approve или reject');

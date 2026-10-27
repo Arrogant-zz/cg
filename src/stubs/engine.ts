@@ -1,7 +1,7 @@
 // Заглушки инструментов (CASE-02–04): условия на аргументы, последовательности, состояние выполнения.
 import type { CaseDef, StubDef, StubResponse } from '../config/types.js';
 import { getDotted, setDotted } from '../util/jsonpath.js';
-import { deepClone, isPlainObject, stableStringify } from '../util/core.js';
+import { deepClone, errorMessage, isPlainObject, stableStringify } from '../util/core.js';
 import { renderDeep, type TemplateContext } from '../util/template.js';
 
 export interface StubMatch {
@@ -15,16 +15,21 @@ function scalar(v: unknown): boolean {
   return v === null || ['string', 'number', 'boolean'].includes(typeof v);
 }
 
+/** Операторы условия `when`: объект только из этих ключей — проверка, иначе — сравнение вложенного объекта. */
+const WHEN_OPS = ['regex', 'in', 'exists', 'not', 'eq'];
+
+/** Выражение `regex` компилируется одинаково при вызове и при проверке файлов: строка и флаг u. */
+const whenRegex = (source: unknown): RegExp => new RegExp(String(source), 'u');
+
 /** Одно условие `when`: равенство, {regex}, {in}, {exists}, {not}. */
 export function condMatches(actual: unknown, expected: unknown): boolean {
   if (isPlainObject(expected)) {
     const keys = Object.keys(expected);
-    const ops = ['regex', 'in', 'exists', 'not', 'eq'];
-    if (keys.length && keys.every((k) => ops.includes(k))) {
+    if (keys.length && keys.every((k) => WHEN_OPS.includes(k))) {
       if ('exists' in expected && (actual !== undefined) !== Boolean(expected.exists)) return false;
       if ('regex' in expected) {
         if (actual === undefined || actual === null) return false;
-        if (!new RegExp(String(expected.regex), 'u').test(String(actual))) return false;
+        if (!whenRegex(expected.regex).test(String(actual))) return false;
       }
       if ('in' in expected && !(Array.isArray(expected.in) && expected.in.some((x) => condMatches(actual, x)))) return false;
       if ('not' in expected && condMatches(actual, expected.not)) return false;
@@ -36,6 +41,34 @@ export function condMatches(actual: unknown, expected: unknown): boolean {
   }
   if (scalar(expected) && scalar(actual)) return String(actual) === String(expected);
   return stableStringify(actual) === stableStringify(expected);
+}
+
+/**
+ * Выражения `regex` условия when, которые не компилируются, — по тем же правилам, что condMatches при вызове.
+ * Путь — внутри when: так загрузка справочников показывает поле и строку, а не вызов инструмента падает посреди кейса.
+ */
+export function whenRegexErrors(when: Record<string, unknown>): { path: (string | number)[]; error: string }[] {
+  const out: { path: (string | number)[]; error: string }[] = [];
+  const walk = (expected: unknown, path: (string | number)[]): void => {
+    if (!isPlainObject(expected)) return;
+    const keys = Object.keys(expected);
+    if (keys.length && keys.every((k) => WHEN_OPS.includes(k))) {
+      if ('regex' in expected) {
+        try {
+          whenRegex(expected.regex);
+        } catch (e) {
+          out.push({ path: [...path, 'regex'], error: errorMessage(e) });
+        }
+      }
+      if ('in' in expected && Array.isArray(expected.in)) expected.in.forEach((x: unknown, i: number) => walk(x, [...path, 'in', i]));
+      if ('not' in expected) walk(expected.not, [...path, 'not']);
+      if ('eq' in expected) walk(expected.eq, [...path, 'eq']);
+      return;
+    }
+    for (const [k, v] of Object.entries(expected)) walk(v, [...path, k]);
+  };
+  for (const [k, v] of Object.entries(when)) walk(v, [k]);
+  return out;
 }
 
 export function whenMatches(when: Record<string, unknown> | undefined, args: Record<string, unknown>): boolean {

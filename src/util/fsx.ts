@@ -1,8 +1,7 @@
-// Файлы: чтение, атомарная запись JSON, обход каталогов, контрольные суммы.
+// Файлы: чтение, атомарная запись JSON, обход каталогов, пути внутри каталога.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { sha256 } from './core.js';
 
 export const exists = (p: string): boolean => fs.existsSync(p);
 
@@ -76,46 +75,12 @@ export async function walkFiles(dir: string): Promise<string[]> {
   return out.sort();
 }
 
-export interface FileEntry {
-  path: string;
-  sha256: string;
-  size: number;
-  content: string;
-}
-
-export async function readTree(dir: string): Promise<FileEntry[]> {
-  const files = await walkFiles(dir);
-  const out: FileEntry[] = [];
-  for (const rel of files) {
-    const buf = await fsp.readFile(path.join(dir, rel));
-    out.push({ path: rel, sha256: sha256(buf), size: buf.length, content: buf.toString('utf8') });
-  }
-  return out;
-}
-
-export async function writeTree(dir: string, files: { path: string; content: string }[]): Promise<void> {
-  for (const f of files) {
-    const target = safeJoin(dir, f.path);
-    await writeText(target, f.content);
-  }
-}
-
 /** Путь внутри каталога; выход за его пределы — ошибка. */
 export function safeJoin(base: string, rel: string): string {
   const target = path.resolve(base, rel);
   const root = path.resolve(base);
   if (target !== root && !target.startsWith(root + path.sep)) throw new Error(`Путь вне каталога: ${rel}`);
   return target;
-}
-
-/** Контрольная сумма набора файлов: sha256 строк «путь:sha» в порядке путей. */
-export function manifestChecksum(files: { path: string; sha256: string }[]): string {
-  return sha256(
-    [...files]
-      .sort((a, b) => a.path.localeCompare(b.path))
-      .map((f) => `${f.path}:${f.sha256}`)
-      .join('\n'),
-  );
 }
 
 export async function listDirs(dir: string): Promise<string[]> {

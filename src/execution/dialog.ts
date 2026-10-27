@@ -2,7 +2,7 @@
 import type { BasketType, CaseDef, ContractDef, Limits } from '../config/types.js';
 import type { Execution } from './execution.js';
 import type { AgentChannel } from './channel.js';
-import type { DecisionEvent, MessageEvent, ToolCallEvent } from './events.js';
+import type { DecisionEvent, MessageEvent, NoteEvent, ToolCallEvent } from './events.js';
 import { MODE_MARK, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../operator/operator.js';
 import { StructuredError } from '../llm/structured.js';
 import { renderLines } from '../util/template.js';
@@ -101,7 +101,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
   const classify = (e: unknown): { status: string; reason: string } => {
     if (e instanceof StructuredError) {
       if (e.kind === 'format' && e.message.includes(MODE_MARK)) {
-        exec.add({ type: 'mode_violation', hidden: true, text: 'LLM-оператор дважды предложил поправку в проверяющей корзине; реплика не отправлена', data: { attempts: e.attempts.map((a) => a.error) } } as any);
+        exec.add<NoteEvent>({ type: 'mode_violation', hidden: true, text: 'LLM-оператор дважды предложил поправку в проверяющей корзине; реплика не отправлена', data: { attempts: e.attempts.map((a) => a.error) } });
         return { status: 'operator_mode_violation', reason: 'Оператор нарушил режим проверки' };
       }
       if (e.kind === 'format') return { status: 'operator_format_error', reason: e.message };

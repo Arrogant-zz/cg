@@ -64,10 +64,6 @@ export function stableStringify(v: unknown): string {
   return JSON.stringify(v ?? null);
 }
 
-export function pad(n: number, width = 2): string {
-  return String(n).padStart(width, '0');
-}
-
 export function plural(n: number, one: string, few: string, many: string): string {
   const m10 = n % 10;
   const m100 = n % 100;

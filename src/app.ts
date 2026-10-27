@@ -74,10 +74,16 @@ export class App {
   }
 
   async reload(): Promise<Registry> {
+    const prev: Registry | undefined = this.registry;
     const reg = await loadRegistry(this.env.configDir);
     this.registry = reg;
     const errors = reg.issues.filter((i) => i.severity === 'error').length;
     log.info(`Настройки: ${reg.fileCount} файлов, кейсов ${reg.cases.size}, решений ${reg.solutions.size}, корзин ${reg.baskets.size}, ошибок ${errors}`);
+    // Прогоны работают со снимком контракта, а tools/list агент получает из текущих настроек: расхождение видно в журнале стенда.
+    const active = this.runs.list().filter((r) => r.status === 'queued' || r.status === 'running');
+    if (prev && active.length && prev.contract?.source.hash !== reg.contract?.source.hash) {
+      this.stand.add('warn', 'config.contract', `Контракт инструментов изменился, пока идут прогоны ${active.map((r) => `#${r.id}`).join(', ')}: вызовы в них обрабатываются по контракту на момент запуска, а tools/list агент получает уже из перечитанных настроек`);
+    }
     this.publish('config', 'config', { loadedAt: reg.loadedAt, errors });
     void this.checkHealth();
     return reg;
@@ -168,7 +174,9 @@ export class App {
           }),
       ),
     );
-    // Начатые записи результатов доводятся до конца: файл прогона не обрывается на остановке.
+    // Отложенные сохранения — сразу, затем начатые записи доводятся до конца: файлы не обрываются и не теряют последних изменений.
+    this.runs.flush();
+    this.manual.flush();
     await settleWrites(this.store.dataDir);
   }
 }

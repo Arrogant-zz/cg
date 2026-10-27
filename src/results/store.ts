@@ -2,14 +2,23 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDir, listDirs, readJsonIf, safeJoin, settleWrites, walkFiles, writeJsonAtomic, writeText } from '../util/fsx.js';
-import { randomHex } from '../util/core.js';
+import { errorMessage, randomHex } from '../util/core.js';
+import { KeyedMutex } from '../util/sync.js';
+import { RECORD_FORMAT, loadExecutionRecord, loadRunRecord, loadSessionRecord, type Loaded, type SavedExecution } from './format.js';
+import type { RunRecord } from '../runner/types.js';
+import type { ManualRecord } from '../manual/manual.js';
 
 export const runKey = (id: number) => `run-${String(id).padStart(4, '0')}`;
 export const sessionKey = (id: number) => `m-${String(id).padStart(4, '0')}`;
 
+/** Пропущенная при загрузке запись: путь внутри CLAWGYM_VAR и причина. */
+export type OnSkip = (file: string, reason: string) => void;
+
 export class ResultsStore {
   readonly resultsDir: string;
   readonly sessionsDir: string;
+  /** counters.json общий для прогонов и сессий: чтение и запись номера идут по очереди. */
+  private counters = new KeyedMutex();
   constructor(public dataDir: string) {
     this.resultsDir = path.join(dataDir, 'results');
     this.sessionsDir = path.join(dataDir, 'sessions');
@@ -31,7 +40,12 @@ export class ResultsStore {
     return secret;
   }
 
-  async nextNumber(kind: 'run' | 'session'): Promise<number> {
+  /** Номер прогона или сессии. Одновременные запуски получают разные номера. */
+  nextNumber(kind: 'run' | 'session'): Promise<number> {
+    return this.counters.run('counters', () => this.allocate(kind));
+  }
+
+  private async allocate(kind: 'run' | 'session'): Promise<number> {
     const file = path.join(this.dataDir, 'counters.json');
     const c = (await readJsonIf<Record<string, number>>(file)) ?? {};
     let n = (c[kind] ?? 0) + 1;
@@ -49,25 +63,45 @@ export class ResultsStore {
     return path.join(this.resultsDir, runKey(id));
   }
 
-  async saveRun(run: { id: number }): Promise<void> {
-    await writeJsonAtomic(path.join(this.runDir(run.id), 'run.json'), run);
+  /** Запись через миграцию формата (format.ts). Нет файла — undefined; повреждённая или более новая запись — пропуск с причиной. */
+  private async readRecord<T>(file: string, load: (raw: unknown) => Loaded<T>, onSkip?: OnSkip): Promise<T | undefined> {
+    const rel = path.relative(this.dataDir, file);
+    let raw: unknown;
+    try {
+      raw = await readJsonIf(file);
+    } catch (e) {
+      onSkip?.(rel, `файл не читается: ${errorMessage(e)}`);
+      return undefined;
+    }
+    if (raw === undefined) return undefined;
+    const r = load(raw);
+    if (r.ok) return r.record;
+    onSkip?.(rel, r.reason);
+    return undefined;
   }
 
-  async loadRuns(): Promise<any[]> {
-    const out: any[] = [];
+  async saveRun(run: RunRecord): Promise<void> {
+    await writeJsonAtomic(path.join(this.runDir(run.id), 'run.json'), { format: RECORD_FORMAT, ...run });
+  }
+
+  async loadRuns(onSkip?: OnSkip): Promise<RunRecord[]> {
+    const out: RunRecord[] = [];
     for (const d of await listDirs(this.resultsDir)) {
-      const r = await readJsonIf(path.join(this.resultsDir, d, 'run.json')).catch(() => undefined);
+      const r = await this.readRecord(path.join(this.resultsDir, d, 'run.json'), loadRunRecord, onSkip);
       if (r) out.push(r);
     }
     return out.sort((a, b) => a.id - b.id);
   }
 
-  async saveExecution(runId: number, name: string, data: unknown): Promise<void> {
-    await writeJsonAtomic(path.join(this.runDir(runId), 'executions', `${name}.json`), data);
+  async saveExecution(runId: number, name: string, data: SavedExecution): Promise<void> {
+    await writeJsonAtomic(path.join(this.runDir(runId), 'executions', `${name}.json`), { format: RECORD_FORMAT, ...data });
   }
 
-  async loadExecution(runId: number, name: string): Promise<any | undefined> {
-    return readJsonIf(path.join(this.runDir(runId), 'executions', `${name}.json`));
+  /** Журнал кейса прогона; несовместимый журнал — ошибка с причиной, а не «не найден». */
+  async loadExecution(runId: number, name: string): Promise<SavedExecution | undefined> {
+    return this.readRecord(path.join(this.runDir(runId), 'executions', `${name}.json`), loadExecutionRecord, (file, reason) => {
+      throw new Error(`${file}: ${reason}`);
+    });
   }
 
   async saveHttp(runId: number, name: string, list: unknown[]): Promise<void> {
@@ -86,7 +120,7 @@ export class ResultsStore {
     return readJsonIf(path.join(this.sessionsDir, `${sessionKey(id)}.http.json`));
   }
 
-  /** Каталог прогона целиком: запись, журналы кейсов, HTTP-обмены, файлы скиллов и материалы. */
+  /** Каталог прогона целиком: запись, журналы кейсов, HTTP-обмены и снимок настроек. */
   async deleteRun(id: number): Promise<void> {
     const dir = this.runDir(id);
     await settleWrites(dir);
@@ -101,12 +135,6 @@ export class ResultsStore {
     }
   }
 
-  async saveFiles(runId: number, sub: string, files: { path: string; content: string }[]): Promise<void> {
-    const base = path.join(this.runDir(runId), sub);
-    await fsp.rm(base, { recursive: true, force: true });
-    for (const f of files) await writeText(safeJoin(base, f.path), f.content);
-  }
-
   async saveText(runId: number, rel: string, text: string): Promise<void> {
     await writeText(safeJoin(this.runDir(runId), rel), text);
   }
@@ -119,14 +147,14 @@ export class ResultsStore {
     return fsp.readFile(safeJoin(this.runDir(runId), rel));
   }
 
-  async saveSession(id: number, data: unknown): Promise<void> {
-    await writeJsonAtomic(path.join(this.sessionsDir, `${sessionKey(id)}.json`), data);
+  async saveSession(id: number, data: ManualRecord): Promise<void> {
+    await writeJsonAtomic(path.join(this.sessionsDir, `${sessionKey(id)}.json`), { format: RECORD_FORMAT, ...data });
   }
 
-  async loadSessions(): Promise<any[]> {
-    const out: any[] = [];
+  async loadSessions(onSkip?: OnSkip): Promise<ManualRecord[]> {
+    const out: ManualRecord[] = [];
     for (const f of (await fsp.readdir(this.sessionsDir).catch(() => [] as string[])).filter((x) => x.endsWith('.json') && !x.endsWith('.http.json')).sort()) {
-      const s = await readJsonIf(path.join(this.sessionsDir, f)).catch(() => undefined);
+      const s = await this.readRecord(path.join(this.sessionsDir, f), loadSessionRecord, onSkip);
       if (s) out.push(s);
     }
     return out;

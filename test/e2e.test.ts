@@ -2,8 +2,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { startStand, until, REPO, type Stand } from './helpers.js';
+import { Execution } from '../src/execution/execution.js';
+import type { NoteEvent } from '../src/execution/events.js';
+import { settleWrites } from '../src/util/fsx.js';
+import { startStand, until, CONFIG, REPO, type Stand } from './helpers.js';
 
 let s: Stand;
 before(async () => {
@@ -289,4 +293,150 @@ test('иконка вкладки: ICO и PNG для Safari, SVG для оста
   assert.equal(png.headers.get('content-type'), 'image/png');
   assert.deepEqual([...new Uint8Array(await png.arrayBuffer()).slice(1, 4)], [0x50, 0x4e, 0x47]);
   assert.equal((await fetch(s.base + '/favicon.svg')).headers.get('content-type'), 'image/svg+xml');
+});
+
+test('перечитывание с битым контрактом во время прогона: прогон доходит до конца на контракте запуска, журнал стенда предупреждает', async () => {
+  const config = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-contract-'));
+  fs.cpSync(CONFIG, config, { recursive: true });
+  // Агент медленно отвечает на стартовое сообщение: перечитывание приходится на первый кейс.
+  const t = await startStand({ CLAWGYM_CONFIG: config, FAKE_AGENT_SLOW_ON: 'Тематика', FAKE_AGENT_SLOW_MS: '500' });
+  try {
+    const created = await t.api('POST', '/api/runs', { config: 'demo-check' });
+    const id = created.data.id;
+    await until(async () => (await t.api('GET', `/api/runs/${id}`)).data.lines[0].items[0].status === 'running', 10000, 'первый кейс');
+    fs.writeFileSync(path.join(config, 'contracts/tools.json'), '{ сломан');
+    const reload = await t.api('POST', '/api/config/reload');
+    assert.ok(reload.data.issues.some((i: any) => i.severity === 'error' && i.file === 'contracts/tools.json'), 'контракт в настройках сломан');
+    const run = await t.waitRun(id);
+    assert.equal(run.status, 'completed', run.error ?? '');
+    const cases = run.lines[0].items.filter((i: any) => i.kind === 'case');
+    assert.equal(cases.length, 4);
+    assert.ok(
+      cases.every((i: any) => i.outcome && i.outcome !== 'technical'),
+      JSON.stringify(cases.map((i: any) => [i.pos, i.status, i.outcome, i.reason])),
+    );
+    const log = (await t.api('GET', '/api/stand-log')).data as any[];
+    assert.ok(log.some((e) => e.kind === 'config.contract' && e.message.includes(`#${id}`)), 'журнал стенда предупреждает: tools/list — из новых настроек');
+  } finally {
+    await t.close();
+    fs.rmSync(config, { recursive: true, force: true });
+  }
+});
+
+test('сбой стенда посреди линии: начатый кейс закрывается как технический сбой, остальные не начаты', async () => {
+  // Сбой подстраивается в стартовом сообщении второго кейса: /reset уже отправлен, кейс идёт.
+  const reserve = Execution.prototype.reserveTaskId;
+  Execution.prototype.reserveTaskId = function (this: Execution) {
+    if (this.id.endsWith('-L1-P02')) throw new Error('сбой для теста');
+    return reserve.call(this);
+  };
+  try {
+    const created = await s.api('POST', '/api/runs', { config: 'demo-check' });
+    const run = await s.waitRun(created.data.id);
+    assert.equal(run.status, 'failed');
+    const line = run.lines[0];
+    assert.equal(line.status, 'failed');
+    assert.match(line.error, /сбой для теста/);
+    const [first, second, ...rest] = line.items.filter((i: any) => i.kind === 'case');
+    assert.ok(first.outcome && first.outcome !== 'technical', 'первый кейс пройден до сбоя');
+    assert.deepEqual([second.status, second.outcome], ['internal_error', 'technical']);
+    assert.match(second.reason, /^сбой стенда: сбой для теста/);
+    assert.ok(rest.every((i: any) => i.status === 'not_started'), 'следующие кейсы не начаты');
+    // Журнал кейса сохраняется со статусом сбоя, а не «выполняется».
+    const exec = await until(async () => {
+      const e = (await s.api('GET', `/api/runs/${run.id}/executions/${second.execName}`)).data;
+      return e.status === 'internal_error' ? e : null;
+    }, 5000, 'журнал кейса со сбоем');
+    assert.ok(exec.events.some((e: any) => e.type === 'status' && e.status === 'internal_error'));
+  } finally {
+    Execution.prototype.reserveTaskId = reserve;
+  }
+});
+
+test('API: POST только с Content-Type: application/json — форма или text/plain с чужой страницы ничего не запускают', async () => {
+  const count = async () => (await s.api('GET', '/api/runs')).data.runs.length;
+  const before = await count();
+  for (const type of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x']) {
+    const res = await fetch(`${s.base}/api/runs`, { method: 'POST', headers: { 'Content-Type': type }, body: JSON.stringify({ config: 'demo-check' }) });
+    assert.equal(res.status, 415, type);
+  }
+  assert.equal((await fetch(`${s.base}/api/runs/1/stop`, { method: 'POST' })).status, 415, 'без заголовка');
+  assert.equal(await count(), before, 'прогон не создан');
+  const ok = await fetch(`${s.base}/api/config/reload`, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+  assert.equal(ok.status, 200, 'charset допускается');
+});
+
+test('остановка: отложенные сохранения журнала идущего кейса и записи прогона уходят на диск сразу', async () => {
+  // Агент долго отвечает на стартовое сообщение: кейс идёт, пока проверяется сброс.
+  const t = await startStand({ FAKE_AGENT_SLOW_ON: 'Тематика', FAKE_AGENT_SLOW_MS: '5000' });
+  try {
+    const id = (await t.api('POST', '/api/runs', { config: 'demo-check' })).data.id;
+    const runDir = path.join(t.dataDir, 'results', `run-${String(id).padStart(4, '0')}`);
+    await until(async () => (await t.api('GET', `/api/runs/${id}/executions/L1-P01`)).data?.events?.some((e: any) => e.type === 'start_message'), 10000, 'стартовое сообщение');
+    // Изменения прямо перед остановкой: их сохранение отложено на 300–400 мс.
+    t.app.runs.liveExecution(id, 'L1-P01')!.add<NoteEvent>({ type: 'note', text: 'событие перед остановкой' });
+    const run = t.app.runs.get(id);
+    run.title = 'изменено перед остановкой';
+    t.app.runs.scheduleSave(run);
+    t.app.runs.flush();
+    await settleWrites(t.dataDir);
+    const exec = JSON.parse(fs.readFileSync(path.join(runDir, 'executions/L1-P01.json'), 'utf8'));
+    assert.ok(exec.events.some((e: any) => e.text === 'событие перед остановкой'), 'журнал кейса сохранён без ожидания');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).title, 'изменено перед остановкой');
+    await t.api('POST', `/api/runs/${id}/stop`);
+  } finally {
+    await t.close();
+  }
+});
+
+test('остановка: отложенная разметка ручной сессии сохраняется при закрытии ClawGym', async () => {
+  const t = await startStand();
+  try {
+    const { id, key } = (await t.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent' })).data;
+    const get = async () => (await t.api('GET', `/api/manual/${id}`)).data;
+    await until(async () => ((await get()).busy === null ? true : null), 20000, 'стартовое сообщение');
+    await t.api('POST', `/api/manual/${id}/message`, { text: 'Проверьте историю начислений СберСпасибо' });
+    await until(async () => ((await get()).busy === null ? true : null), 20000, 'ответ агента');
+    const seq = (await get()).execution.events.find((e: any) => e.type === 'human_message').seq;
+    // Разметка сохраняется с задержкой 250 мс, а ClawGym закрывается сразу.
+    assert.equal((await t.api('POST', `/api/manual/${id}/mark`, { seq, correction: true, lessonNote: 'сначала история начислений' })).status, 200);
+    await t.app.close();
+    const saved = JSON.parse(fs.readFileSync(path.join(t.dataDir, 'sessions', `${key}.json`), 'utf8'));
+    const ev = saved.execution.events.find((e: any) => e.seq === seq);
+    assert.deepEqual([ev.marks.correction, ev.marks.lessonNote], [true, 'сначала история начислений']);
+  } finally {
+    await t.close();
+  }
+});
+
+test('сбой итоговой записи прогона: привязки x-task-id сняты, прогон можно удалить, поздний вызов агента — без привязки', async () => {
+  const t = await startStand();
+  const save = t.app.store.saveRun.bind(t.app.store);
+  // Итоговая запись прогона падает, промежуточные проходят.
+  t.app.store.saveRun = async (run) => {
+    if (run.status === 'completed') throw new Error('диск недоступен');
+    return save(run);
+  };
+  try {
+    const id = (await t.api('POST', '/api/runs', { config: 'demo-check' })).data.id;
+    const run = await until(async () => {
+      const r = (await t.api('GET', `/api/runs/${id}`)).data;
+      return r.status === 'failed' ? r : null;
+    }, 60000, 'прогон упал на итоговой записи');
+    assert.match(run.error, /диск недоступен/);
+    const taskId = (await t.api('GET', `/api/runs/${id}/executions/L1-P01`)).data.taskIds[0];
+    assert.equal(t.app.bindings.get(taskId), undefined, 'привязка снята');
+    const late = await fetch(`${t.base}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-task-id': taskId },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_client_cards', arguments: {} } }),
+    });
+    assert.equal(((await late.json()) as any).result.isError, true);
+    const log = (await t.api('GET', '/api/stand-log')).data as any[];
+    assert.ok(log.some((e) => e.kind === 'mcp.unbound' && e.message.includes(taskId)), 'поздний вызов не попал в законченный кейс');
+    assert.equal((await t.api('DELETE', `/api/runs/${id}`)).status, 200, 'прогон удаляется');
+  } finally {
+    t.app.store.saveRun = save;
+    await t.close();
+  }
 });

@@ -1,4 +1,4 @@
-// Предметная модель файловых настроек (CFG-01): кейс, решение, корзина, прогон, агент, модель, набор скиллов, метрика.
+// Предметная модель файловых настроек (CFG-01): кейс, решение, корзина, прогон, агент, модель, метрика.
 
 export type Severity = 'error' | 'warning';
 
@@ -13,7 +13,7 @@ export interface Issue {
 }
 
 export interface Source {
-  /** Путь относительно корня настроек. */
+  /** Путь относительно каталога справочников (CLAWGYM_CONFIG). */
   file: string;
   /** Короткая метка содержимого, @a91c. */
   hash: string;
@@ -214,7 +214,8 @@ export interface AgentDef {
     sample: string | null;
   };
   commands: { reset: string; capture: string; curator: string };
-  mcp: { contract: string; protocolVersion: string; taskIdFrom: string[] };
+  /** Где искать x-task-id и какую версию протокола отвечать, решает MCP-сервер стенда для всех агентов (MCP_TASK_ID_HEADER). */
+  mcp: { contract: string };
   /** Модель агента — метка из файла подключения: задана сборкой или развёртыванием, в снимке прогона для сравнения. */
   model: string | null;
   sessions: { max: number };
@@ -315,7 +316,8 @@ export interface RunConfigDef {
 }
 
 export interface Registry {
-  home: string;
+  /** Каталог справочников (CLAWGYM_CONFIG). */
+  configDir: string;
   loadedAt: string;
   contract: ContractDef | null;
   cases: Map<string, CaseDef>;

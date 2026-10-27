@@ -68,7 +68,3 @@ export function renderLines(template: string, ctx: TemplateContext, missing?: Se
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
-
-export function placeholders(s: string): string[] {
-  return [...s.matchAll(RE)].map((m) => m[1]);
-}

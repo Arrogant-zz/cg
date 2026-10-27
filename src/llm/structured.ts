@@ -68,7 +68,7 @@ export async function structuredCall<T>(
       usage = r.usage;
       model = r.model;
     } catch (e) {
-      const le = e instanceof LlmError ? e : new LlmError('sdk', errorMessage(e));
+      const le = e instanceof LlmError ? e : new LlmError('unexpected', errorMessage(e));
       attempts.push({ n, ok: false, kind: 'llm', error: le.message, durationMs: Date.now() - t0, usage: null });
       const kind = le.kind === 'timeout' ? 'timeout' : le.kind === 'aborted' ? 'aborted' : 'llm';
       throw new StructuredError(kind, le.message, attempts);

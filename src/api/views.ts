@@ -10,6 +10,7 @@ import { operatorLabel } from '../results/compare.js';
 import type { RunRecord } from '../runner/types.js';
 import { endpointOf, modelAuth, modelReadiness } from '../llm/provider.js';
 import { HttpError } from '../util/http.js';
+import { SUPPORTED_PROTOCOLS } from '../mcp/server.js';
 
 export function issueCounts(issues: Issue[]) {
   return { errors: issues.filter((i) => i.severity === 'error').length, warnings: issues.filter((i) => i.severity === 'warning').length };
@@ -221,7 +222,7 @@ export function directory(app: App) {
       },
       response: a.response,
       commands: a.commands,
-      mcp: a.mcp,
+      mcp: { contract: a.mcp.contract, taskIdHeader: app.env.mcpTaskIdHeader, protocols: SUPPORTED_PROTOCOLS },
       model: a.model,
       sessions: a.sessions,
       build: a.build,
