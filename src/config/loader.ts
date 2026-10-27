@@ -214,13 +214,14 @@ async function parseFile(c: Collector, home: string, rel: string): Promise<Parse
 
 const src = (p: Parsed): Source => ({ file: p.rel, hash: shortHash(p.text), text: p.text });
 
+/** Файлы настроек каталога; recursive — с подкаталогами. Файл или папка с именем на «_» пропускаются: так откладывают черновики. */
 async function listConfigFiles(home: string, dir: string, recursive = false): Promise<string[]> {
   const base = path.join(home, dir);
   const files = recursive
     ? await walkFiles(base)
     : (await fsp.readdir(base, { withFileTypes: true }).catch(() => [] as any[])).filter((e: any) => e.isFile()).map((e: any) => e.name);
   return files
-    .filter((f: string) => /\.(ya?ml|json)$/.test(f) && !f.startsWith('_'))
+    .filter((f: string) => /\.(ya?ml|json)$/.test(f) && !f.split('/').some((seg) => seg.startsWith('_')))
     .map((f: string) => `${dir}/${f}`)
     .sort();
 }
@@ -695,7 +696,8 @@ export async function loadRegistry(home: string): Promise<Registry> {
     map.set(item.id, item);
   };
 
-  for (const rel of await listConfigFiles(home, 'cases')) {
+  // Кейсы можно раскладывать по папкам (просьба владельца от 27.10.2026): ссылки на кейс идут по id, а не по пути.
+  for (const rel of await listConfigFiles(home, 'cases', true)) {
     const p = await parseFile(c, home, rel);
     if (p) put(reg.cases, await loadCase(c, home, p, contract), 'Кейс');
   }

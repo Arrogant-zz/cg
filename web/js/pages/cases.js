@@ -71,7 +71,9 @@ export async function render(ctx) {
   const list = await get('/api/cases');
   const sel = ctx.params[0] ?? list.cases[0]?.id;
   const q = (ctx.state.q ?? '').toLowerCase();
-  const filtered = list.cases.filter((c) => !q || `${c.id} ${c.title} ${c.topic} ${c.tags.join(' ')}`.toLowerCase().includes(q));
+  const filtered = list.cases.filter((c) => !q || `${c.id} ${c.title} ${c.topic} ${c.tags.join(' ')} ${c.folder}`.toLowerCase().includes(q));
+  // Кейсы по папкам cases/: заголовок папки — только если хотя бы один кейс лежит в подкаталоге.
+  const grouped = list.cases.some((x) => x.folder);
   const c = sel ? await get(`/api/cases/${encodeURIComponent(sel)}`).catch(() => null) : null;
   const ok = !list.errors;
   return html`<header class="ph">
@@ -80,9 +82,9 @@ export async function render(ctx) {
 </header>
 <div class="split">
 <div class="lst">
-<label class="field" style="padding-bottom: 8px"><span class="lbl">Поиск по кейсам</span><input class="input" type="search" placeholder="Название, тема или тег" value="${ctx.state.q ?? ''}" data-change="search"></label>
+<label class="field" style="padding-bottom: 8px"><span class="lbl">Поиск по кейсам</span><input class="input" type="search" placeholder="Название, тема, тег или папка" value="${ctx.state.q ?? ''}" data-change="search"></label>
 ${filtered.map(
-    (x) => html`<a class="li ${x.id === sel ? 'on' : ''}" href="/cases/${x.id}" ${x.id === sel ? 'aria-current="true"' : ''}><span class="mono sm m5">${x.id}</span><span class="sm">${x.title}</span><span class="row cap" style="gap: 6px">${x.topic} · ${x.solutions ? `${x.solutions} ${plural(x.solutions, 'решение', 'решения', 'решений')}` : html`<span class="pill na" style="min-height: 20px">только вручную</span>`}${x.errors ? html`<span class="pill fail" style="min-height: 20px">ошибка</span>` : ''}</span></a>`,
+    (x, i) => html`${grouped && (i === 0 || filtered[i - 1].folder !== x.folder) ? html`<span class="row lbl" style="gap: 6px; padding: ${i ? '14px' : '4px'} 16px 6px">${icon('folder', 's14')}${x.folder || 'cases/'}</span>` : ''}<a class="li ${x.id === sel ? 'on' : ''}" href="/cases/${x.id}" ${x.id === sel ? 'aria-current="true"' : ''}><span class="mono sm m5">${x.id}</span><span class="sm">${x.title}</span><span class="row cap" style="gap: 6px">${x.topic} · ${x.solutions ? `${x.solutions} ${plural(x.solutions, 'решение', 'решения', 'решений')}` : html`<span class="pill na" style="min-height: 20px">только вручную</span>`}${x.errors ? html`<span class="pill fail" style="min-height: 20px">ошибка</span>` : ''}</span></a>`,
   )}
 ${filtered.length ? '' : html`<span class="cap" style="padding: 8px 16px">Ничего не найдено</span>`}
 </div>

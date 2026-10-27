@@ -19,6 +19,7 @@ import { BODY_LIMIT, clip, maskedHeaders, startExchange } from '../src/util/http
 import { maskHeaders } from '../src/util/core.js';
 import YAML from 'yaml';
 import { buildPlan as agentPlan, rulesOf } from '../dev/fake-agent/agent.js';
+import { cases as casesView } from '../src/api/views.js';
 
 const stub = (s: Partial<StubDef>, index: number): StubDef => ({ id: `s${index}`, tool: 't', origin: 'case', index, ...s });
 
@@ -175,4 +176,38 @@ test('продолжение на тестовом операторе: посл�
   assert.match(errors(resolveRun(reg, env, 'demo-check', { continueFrom: 6 }, [run(6, { status: 'running' })]))[0], /не завершён/);
   const busy = resolveRun(reg, env, 'demo-check', { continueFrom: 7 }, [run(7), run(8, { status: 'queued', lines: [{ index: 1, senderId: 's-7', history: [] }] })]);
   assert.match(errors(busy)[0], /занят прогоном #8/);
+});
+
+test('кейсы в подкаталогах cases/: ссылки по id, папка в списке, черновики на «_» пропускаются, повтор id — ошибка', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-folders-'));
+  try {
+    for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
+    fs.mkdirSync(path.join(home, 'cases/cards/disputes'), { recursive: true });
+    fs.renameSync(path.join(home, 'cases/card-hold-amount.yaml'), path.join(home, 'cases/cards/card-hold-amount.yaml'));
+    fs.renameSync(path.join(home, 'cases/card-operation-dispute.yaml'), path.join(home, 'cases/cards/disputes/card-operation-dispute.yaml'));
+    fs.mkdirSync(path.join(home, 'cases/_drafts'));
+    fs.writeFileSync(path.join(home, 'cases/_drafts/draft.yaml'), 'id: draft\n');
+    fs.writeFileSync(path.join(home, 'cases/cards/_wip.yaml'), 'id: wip\n');
+    const reg = await loadRegistry(home);
+    assert.deepEqual(reg.issues.filter((i) => i.severity === 'error'), []);
+    assert.equal(reg.cases.get('card-operation-dispute')!.source.file, 'cases/cards/disputes/card-operation-dispute.yaml');
+    assert.ok(!reg.cases.has('draft') && !reg.cases.has('wip'), 'черновики на «_» пропущены');
+    assert.equal(resolveRun(reg, loadEnv({ CLAWGYM_HOME: home }, home), 'demo-check').ok, true, 'корзина находит решения кейсов из папок');
+    // Сначала верхний уровень, затем папки; внутри — по id.
+    assert.deepEqual(
+      casesView({ registry: reg } as any).cases.map((c) => [c.folder, c.id]),
+      [
+        ['', 'notifications-channel-change'],
+        ['', 'spasibo-bonus-missing'],
+        ['cards', 'card-hold-amount'],
+        ['cards/disputes', 'card-operation-dispute'],
+      ],
+    );
+    // Один id в двух папках — ошибка с указанием другого файла.
+    fs.copyFileSync(path.join(home, 'cases/cards/card-hold-amount.yaml'), path.join(home, 'cases/card-hold-amount.yaml'));
+    const dup = (await loadRegistry(home)).issues.find((i) => i.severity === 'error' && /card-hold-amount/.test(i.reason));
+    assert.match(dup?.reason ?? '', /уже есть в cases\/(cards\/)?card-hold-amount\.yaml/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

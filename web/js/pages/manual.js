@@ -3,6 +3,14 @@ import { html, icon, get, post, fmtDate, hint, plural, toast, removeSession } fr
 
 export const title = 'Ручной режим';
 
+/** Кейсы в выборе — по папкам cases/, если они есть. */
+function caseOptions(list, pre) {
+  const option = (c) => html`<option value="${c.id}" ${c.id === pre ? 'selected' : ''}>${c.id} · ${c.title}${c.solutions ? '' : ' · только вручную'}</option>`;
+  if (!list.some((c) => c.folder)) return list.map(option);
+  const folders = [...new Set(list.map((c) => c.folder))];
+  return folders.map((f) => html`<optgroup label="${f || 'cases/'}">${list.filter((c) => c.folder === f).map(option)}</optgroup>`);
+}
+
 export async function render(ctx) {
   const [cases, dir, sessions, { runs }] = await Promise.all([get('/api/cases'), get('/api/directory'), get('/api/manual'), get('/api/runs')]);
   const pre = ctx.state.case ?? ctx.query.get('case') ?? cases.cases[0]?.id;
@@ -21,7 +29,7 @@ export async function render(ctx) {
 <form class="mn sec" data-submit="start" aria-labelledby="new-h" style="gap: 20px">
 <h2 class="h2" id="new-h">Новый ручной кейс</h2>
 <div class="form-grid">
-<label class="field"><span class="lbl">Кейс</span><select class="input" name="case" data-change="field" data-key="case">${cases.cases.map((c) => html`<option value="${c.id}" ${c.id === pre ? 'selected' : ''}>${c.id} · ${c.title}${c.solutions ? '' : ' · только вручную'}</option>`)}</select></label>
+<label class="field"><span class="lbl">Кейс</span><select class="input" name="case" data-change="field" data-key="case">${caseOptions(cases.cases, pre)}</select></label>
 <label class="field"><span class="lbl">Агент</span><select class="input" name="agent" data-change="field" data-key="agent">${dir.agents.map((a) => html`<option value="${a.id}" ${a.id === agent?.id ? 'selected' : ''}>${a.title}${a.health?.ok === false ? ` · ${a.health.note}` : ''}</option>`)}</select></label>
 <label class="field"><span class="lbl">Тестовый оператор</span><select class="input" name="senderMode" data-change="field" data-key="senderMode"><option value="new" ${existing ? '' : 'selected'}>новый — стартовые скиллы сборки</option><option value="existing" ${existing ? 'selected' : ''}>существующий — его накопленные скиллы</option></select></label>
 ${existing

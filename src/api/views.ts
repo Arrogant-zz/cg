@@ -94,16 +94,21 @@ function solutionUsage(app: App, solutionId: string) {
   return out;
 }
 
+/** Папка кейса внутри cases/: '' — верхний уровень. */
+const caseFolder = (file: string) => file.replace(/^cases\//, '').split('/').slice(0, -1).join('/');
+
 export function cases(app: App) {
   const reg = app.registry;
+  // Сначала кейсы верхнего уровня, затем по папкам; внутри — по id.
   const list = [...reg.cases.values()]
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .sort((a, b) => caseFolder(a.source.file).localeCompare(caseFolder(b.source.file)) || a.id.localeCompare(b.id))
     .map((c) => ({
       id: c.id,
       title: c.title,
       topic: c.topic,
       tags: c.tags,
       file: c.source.file,
+      folder: caseFolder(c.source.file),
       solutions: [...reg.solutions.values()].filter((s) => s.case === c.id).length,
       ...issueCounts(reg.issues.filter((i) => i.file === c.source.file)),
     }));
