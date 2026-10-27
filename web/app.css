@@ -148,3 +148,56 @@ dialog.confirm::backdrop{background:rgba(23,28,25,.32)}
 .tbl.cm td.hit{background:#E6F2EA;color:#17603F;font-weight:600}
 .tbl.cm td.miss{background:#FCEAE8;color:#A51C14;font-weight:600}
 .tbl.cm td.zero{color:#A6ADA7}
+
+/* Папка в списке кейсов: заголовок-кнопка сворачивает её кейсы, рядом — сколько кейсов в папке. */
+.fold{display:flex;align-items:center;gap:6px;width:100%;min-height:32px;padding:4px 16px;border:0;border-radius:10px;background:transparent;color:#69716B;font:inherit;font-size:12px;line-height:16px;font-weight:500;text-align:left;cursor:pointer}
+.fold:hover{background:#F7F7F4;color:#171C19}
+.fold .cnt{display:inline-flex;align-items:center;min-height:18px;padding:0 7px;border-radius:999px;background:#F0F1ED;color:#3E4641;font-variant-numeric:tabular-nums}
+.fold.all{justify-content:flex-end;min-height:24px;padding:0 16px 4px;color:#69716B}
+.fold.all:hover{background:transparent;color:#A84A16;text-decoration:underline}
+
+/* Markdown в сообщениях агента (web/js/md.js): типографика внутри пузыря; код и таблицы — на белом, прокручиваются в своей рамке. */
+.msg>.bub{max-width:100%}
+.md{min-width:0;overflow-wrap:anywhere}
+.md :is(p,ul,ol,pre,blockquote,div,h1,h2,h3,h4,h5,h6){margin:0}
+.md :is(p,ul,ol,pre,blockquote,div,h1,h2,h3,h4,h5,h6)+:is(p,ul,ol,pre,blockquote,div){margin-top:8px}
+.md :is(p,ul,ol,pre,blockquote,div,h1,h2,h3,h4,h5,h6)+:is(h1,h2,h3,h4,h5,h6){margin-top:12px}
+.md :is(h1,h2,h3,h4,h5,h6){font-weight:600}
+.md h1{font-size:17px;line-height:24px}
+.md h2{font-size:16px;line-height:24px}
+.md h3{font-size:15px;line-height:22px}
+.md :is(h4,h5,h6){font-size:14px;line-height:22px}
+.md :is(ul,ol){padding-left:22px}
+.md ul{list-style:disc}
+.md ul ul{list-style:circle}
+.md ol{list-style:decimal}
+.md li+li{margin-top:4px}
+.md .loose>li+li{margin-top:8px}
+.md li>:is(ul,ol){margin-top:4px}
+.md li>:is(pre,blockquote,div){margin-top:8px}
+.md li::marker{color:#69716B}
+.md li.task{list-style:none}
+.md li.task>input{margin:0 8px 0 -20px;vertical-align:-1px;accent-color:#171C19}
+.md a{text-decoration-color:#8A918B}
+.md a:hover{text-decoration-color:#F17A35}
+.md strong{font-weight:600}
+.md del{color:#69716B}
+.md code{padding:1px 5px;border-radius:5px;background:#FFFFFF;box-shadow:inset 0 0 0 1px #E4E6E1;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:.88em}
+.md pre{max-height:420px;overflow:auto;padding:10px 12px;border:1px solid #E4E6E1;border-radius:10px;background:#FFFFFF}
+.md pre code{padding:0;border-radius:0;box-shadow:none;background:none;font-size:12px;line-height:18px;white-space:pre;overflow-wrap:normal}
+.md blockquote{padding-left:12px;border-left:3px solid #C9CDC4;color:#3E4641}
+.md hr{height:1px;margin:12px 0;border:0;background:#D7DAD3}
+.md div{overflow-x:auto;border:1px solid #E4E6E1;border-radius:10px;background:#FFFFFF}
+.md table{min-width:100%;border-collapse:collapse;font-size:13px;line-height:20px}
+.md :is(th,td){padding:6px 12px;border-bottom:1px solid #EEEFEB;text-align:left;vertical-align:top;overflow-wrap:normal}
+.md th{border-bottom-color:#E4E6E1;color:#69716B;font-size:12px;line-height:18px;font-weight:500}
+.md tr:last-child td{border-bottom:0}
+.md :is(th,td).al-c{text-align:center}
+.md :is(th,td).al-r{text-align:right}
+.md-src{display:none;white-space:pre-wrap}
+.msg.md-raw .md{display:none}
+.msg.md-raw .md-src{display:block}
+.md-sw{padding:0 4px;border:0;border-radius:5px;background:transparent;box-shadow:inset 0 0 0 1px #E4E6E1;cursor:pointer}
+.md-sw:hover{color:#A84A16}
+.md-sw[aria-pressed="true"]{background:#171C19;color:#FFFFFF;box-shadow:none}
+

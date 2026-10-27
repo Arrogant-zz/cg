@@ -62,7 +62,8 @@ export async function structuredCall<T>(
     let text: string;
     let usage: LlmUsage | null = null;
     try {
-      const r = await provider.complete({ ...req, user });
+      // Переспрос формата — отдельный обмен в журнале HTTP со своей подписью.
+      const r = await provider.complete({ ...req, user, label: n > 1 && req.label ? `${req.label} · переспрос формата` : req.label });
       text = r.text;
       usage = r.usage;
       model = r.model;

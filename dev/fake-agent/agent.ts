@@ -409,20 +409,22 @@ export class FakeAgent {
         if (r.isError) {
           if (/отклон/i.test(r.text)) {
             d.awaiting = { kind: 'correction', tool: step.tool };
-            return `${prefix}Понял, не выполняю ${step.tool}. Что нужно сделать иначе?`;
+            return `${prefix}Понял, не выполняю \`${step.tool}\`. Что нужно сделать иначе?`;
           }
-          notes.push(`${step.tool}: ${r.text}`);
+          notes.push(`\`${step.tool}\`: ${r.text}`);
           d.done.add(step.tool);
           continue;
         }
         d.done.add(step.tool);
         if (r.json && typeof r.json === 'object') flatten(r.json, d.facts, true);
-        notes.push(`${step.tool} выполнен`);
+        notes.push(`\`${step.tool}\` выполнен`);
       } else if (!d.answered) {
         d.answered = true;
         d.awaiting = { kind: 'close' };
         d.facts.answer = step.parts.join(' ');
-        return `${prefix}${notes.length ? `Проверил: ${notes.join('; ')}. ` : ''}Ответ клиенту: «${step.parts.join(' ')}» Можно закрывать обращение?`;
+        // Ответ хода — в Markdown, как его показывает интерфейс: проверки списком, ответ клиенту выделен.
+        const checked = notes.length ? `Проверил:\n${notes.map((n) => `- ${n}`).join('\n')}\n\n` : '';
+        return `${prefix}${checked}**Ответ клиенту:** «${step.parts.join(' ')}»\n\nМожно закрывать обращение?`;
       }
     }
     d.awaiting = null;
@@ -453,7 +455,7 @@ export class FakeAgent {
     }
     if (aw && d.questions < 2) {
       d.questions++;
-      return aw.kind === 'correction' ? `Какую проверку нужно выполнить перед ${aw.tool}?` : 'Что нужно изменить в ответе клиенту?';
+      return aw.kind === 'correction' ? `Какую проверку нужно выполнить перед \`${aw.tool}\`?` : 'Что нужно изменить в ответе клиенту?';
     }
     if (aw?.kind === 'close') {
       d.awaiting = null;

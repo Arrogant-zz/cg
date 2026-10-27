@@ -1,7 +1,7 @@
 // Отдельная LLM-оценка ответа после завершения кейса (MET-05): свой контекст, оценка скрыта от агента.
 import type { ModelDef } from '../config/types.js';
 import type { Execution } from '../execution/execution.js';
-import type { LlmProvider } from '../llm/provider.js';
+import type { LlmProvider, LlmRequest } from '../llm/provider.js';
 import { structuredCall, type StructuredResult } from '../llm/structured.js';
 import { ANSWER_JUDGE_SCHEMA, ANSWER_JUDGE_SYSTEM, JUDGE_SCHEMA, JUDGE_SYSTEM } from '../operator/prompts.js';
 import { FINAL_TEXT_KINDS, type FinalAction } from '../metrics/scoring.js';
@@ -45,13 +45,13 @@ export class LlmJudge {
     private provider: LlmProvider,
   ) {}
 
-  async evaluate(exec: Execution, uptoSeq: number, signal?: AbortSignal): Promise<StructuredResult<JudgeVerdict>> {
+  async evaluate(exec: Execution, uptoSeq: number, signal?: AbortSignal, onExchange?: LlmRequest['onExchange']): Promise<StructuredResult<JudgeVerdict>> {
     const ctx = judgeContext(exec, uptoSeq, !!(this.model.params as any).devHints);
     const ids = new Set(exec.caseDef.reference.criteria.map((c) => c.id));
     const user = `Оцени результат агента по критериям.\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\``;
     return structuredCall<JudgeVerdict>(
       this.provider,
-      { system: JUDGE_SYSTEM, user, schema: JUDGE_SCHEMA as any, schemaName: 'judge_verdict', signal },
+      { system: JUDGE_SYSTEM, user, schema: JUDGE_SCHEMA as any, schemaName: 'judge_verdict', signal, label: 'LLM-оценка · критерии ответа', onExchange },
       (v) => {
         const got = new Set(v.criteria.map((c) => c.id));
         const errs: string[] = [];
@@ -66,7 +66,7 @@ export class LlmJudge {
   }
 
   /** A_judge: соответствует ли итоговый текст агента эталонному. Один прогон из runs; судья видит только тексты и тематику. */
-  async matchText(exec: Execution, final: FinalAction, reference: string, n: number, runs: number, signal?: AbortSignal): Promise<StructuredResult<TextVerdict>> {
+  async matchText(exec: Execution, final: FinalAction, reference: string, n: number, runs: number, signal?: AbortSignal, onExchange?: LlmRequest['onExchange']): Promise<StructuredResult<TextVerdict>> {
     const c = exec.caseDef;
     const ctx = {
       case: { id: c.id, title: c.title, topic: c.topic },
@@ -78,6 +78,6 @@ export class LlmJudge {
       runs,
     };
     const user = `Сравни итоговый текст агента с эталонным.\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\``;
-    return structuredCall<TextVerdict>(this.provider, { system: ANSWER_JUDGE_SYSTEM, user, schema: ANSWER_JUDGE_SCHEMA as any, schemaName: 'answer_match', signal }, () => [], 1);
+    return structuredCall<TextVerdict>(this.provider, { system: ANSWER_JUDGE_SYSTEM, user, schema: ANSWER_JUDGE_SCHEMA as any, schemaName: 'answer_match', signal, label: `LLM-оценка · эталонный текст, прогон ${n} из ${runs}`, onExchange }, () => [], 1);
   }
 }

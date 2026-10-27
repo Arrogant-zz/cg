@@ -6,8 +6,8 @@
 
 | Копия | Оригинал в проекте AEFClaw | sha256 оригинала | Что это |
 | --- | --- | --- | --- |
-| [gap.md](gap.md) | `gap.md` | `0d6955721cd0…` | Решения владельца, задачи первой автоматической версии, сквозные сценарии приёмки, статус реализации (раздел 18) |
-| [plan.md](plan.md) | `plan.md` | `4cf3dee08e45…` | Полный план ClawGym: этап 0 (контракты), архитектура, модель и поведение, этапы |
+| [gap.md](gap.md) | `gap.md` | `3daaf43557a7…` | Решения владельца, задачи первой автоматической версии, сквозные сценарии приёмки, статус реализации (раздел 18) |
+| [plan.md](plan.md) | `plan.md` | `f1003fe8bddf…` | Полный план ClawGym: этап 0 (контракты), архитектура, модель и поведение, этапы |
 | [plan_start.md](plan_start.md) | `plan_start.md` | `3eaa66c99b41…` | Ручной режим: чат с агентом на заглушках и его приёмка на стенде |
 | [ui/style-guide.md](ui/style-guide.md) | `ui/style-guide.md` | `39fb93e8fe3b…` | Стиль интерфейса ClawGym. Классы — в `web/clawgym.css` |
 | [files/learning-scripts/INTEGRATION.md](files/learning-scripts/INTEGRATION.md) | `files/learning-scripts/INTEGRATION.md` | `8515df90fe65…` | Что оркестратор отправляет агенту для обучения и как разбирать ответы `/case-capture` и `/skill-curator` |

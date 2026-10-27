@@ -198,6 +198,37 @@ test('файлы моделей GigaChat: сертификат необязат�
   }
 });
 
+test('журнал HTTP вызовов LLM: каждая попытка — обмен «llm», токен и заголовки из окружения скрыты, переспрос формата подписан', async () => {
+  const plain = await startFakeGigaChat();
+  try {
+    const reg = await loadRegistry(HOME);
+    const base = reg.models.get('judge-gigachat')!;
+    const env = { GIGACHAT_BASE_URL: plain.url, GC_CLIENT_ID: 'client-777' };
+    const seen: any[] = [];
+    const onExchange: LlmRequest['onExchange'] = (x, phase) => {
+      if (phase === 'end') seen.push(x);
+    };
+    const m: ModelDef = { ...base, apiKey: 'tok-123456', headers: { 'X-Client-ID': '${env:GC_CLIENT_ID}' }, params: { ...base.params, retries: 0 } };
+    await createProvider(m, env).complete({ ...judgeReq, label: 'LLM-оценка · проба', onExchange });
+    assert.equal(seen.length, 1);
+    assert.deepEqual([seen[0].kind, seen[0].label, seen[0].response.status], ['llm', 'LLM-оценка · проба', 200]);
+    assert.match(seen[0].request.url, /\/v2\/chat\/completions$/);
+    assert.equal(JSON.parse(seen[0].request.body).model, 'GigaChat-2-Max', 'тело запроса — как ушло в модель');
+    const dump = JSON.stringify(seen[0]);
+    assert.ok(!dump.includes('tok-123456') && !dump.includes('client-777'), 'токен и заголовок из окружения скрыты');
+    // Ответ не JSON: переспрос формата — второй обмен со своей подписью.
+    seen.length = 0;
+    const bad: ModelDef = { ...m, headers: { 'X-Fake-Fail': 'format' } };
+    await assert.rejects(structuredCall(createProvider(bad, env), { ...judgeReq, label: 'LLM-оценка · проба', onExchange }, () => [], 1));
+    assert.deepEqual(
+      seen.map((x) => x.label),
+      ['LLM-оценка · проба', 'LLM-оценка · проба · переспрос формата'],
+    );
+  } finally {
+    await plain.close();
+  }
+});
+
 test('прогон: оператор на GigaChat v1, оценка на GigaChat v2 — те же итоги, что на заглушке без сертификата', { skip }, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-gc-home-'));
   for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'metrics', 'templates', 'baskets', 'runs']) {

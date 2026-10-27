@@ -131,7 +131,7 @@ ${view === 'http'
         filter: ctx.state.httpFilter ?? 'all',
         download: `/api/runs/${id}/executions/${name}/http?download=1`,
         empty: ex.httpCount === undefined ? 'Обмены этого кейса не записаны: прогон выполнен до того, как стенд начал сохранять HTTP-обмены.' : 'HTTP-обменов пока нет.',
-        note: 'Каждый запрос ClawGym к агенту и каждый запрос агента к MCP-серверу ClawGym с этим x-task-id: заголовки (авторизация скрыта), тело, статус и время. Запросы MCP без x-task-id — initialize, tools/list — относятся к сессии MCP, а не к кейсу: они в журнале стенда на странице «Прогоны».',
+        note: 'Каждый запрос ClawGym к агенту, каждый запрос агента к MCP-серверу ClawGym с этим x-task-id и каждый вызов LLM-оператора и судьи — с повторами и переспросом формата: заголовки (авторизация скрыта), тело, статус и время. Запросы MCP без x-task-id — initialize, tools/list — относятся к сессии MCP, а не к кейсу: они в журнале стенда на странице «Прогоны».',
       })
     : feed(ex.events, { full, httpLinks: true })}
 </section>

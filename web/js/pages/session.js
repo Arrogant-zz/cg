@@ -128,7 +128,7 @@ export async function render(ctx) {
         filter: ctx.state.httpFilter ?? 'all',
         download: `/api/manual/${id}/http?download=1`,
         empty: s.execution && n === undefined ? 'Обмены этой сессии не записаны: она прошла до того, как стенд начал сохранять HTTP-обмены.' : 'HTTP-обменов пока нет.',
-        note: 'Каждый запрос ClawGym к агенту и каждый запрос агента к MCP-серверу ClawGym в этой сессии: заголовки (авторизация скрыта), тело, статус и время. Висящий вызов MCP виден сразу, ответ появляется после вашего решения.',
+        note: 'Каждый запрос ClawGym к агенту, каждый запрос агента к MCP-серверу ClawGym в этой сессии и вызовы LLM-оценки при завершении: заголовки (авторизация скрыта), тело, статус и время. Висящий вызов MCP виден сразу, ответ появляется после вашего решения.',
       })
     : s.execution
       ? feed(s.execution.events, { full: true, toolActions: (e) => toolActions(e, closed), httpLinks: true })

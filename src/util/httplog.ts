@@ -1,4 +1,4 @@
-// HTTP-обмены для разбора: запрос ClawGym к агенту и запрос агента к MCP-серверу ClawGym.
+// HTTP-обмены для разбора: запрос ClawGym к агенту, запрос агента к MCP-серверу ClawGym и вызовы LLM-оператора и судьи.
 // Заголовки авторизации маскируются, тела ограничены по размеру.
 import type { IncomingHttpHeaders } from 'node:http';
 import { isSecretName, maskSecret, maskUrl, nowIso, randomHex } from './core.js';
@@ -14,8 +14,8 @@ export interface HttpPart {
 
 export interface HttpExchange {
   id: string;
-  /** agent — ClawGym вызывает агента; mcp — агент вызывает MCP-сервер ClawGym. */
-  kind: 'agent' | 'mcp';
+  /** agent — ClawGym вызывает агента; mcp — агент вызывает MCP-сервер ClawGym; llm — ClawGym вызывает модель оператора или оценки. */
+  kind: 'agent' | 'mcp' | 'llm';
   label: string;
   startedAt: string;
   finishedAt: string | null;
@@ -27,7 +27,7 @@ export interface HttpExchange {
   senderId: string | null;
   mcpSessionId: string | null;
   execId: string | null;
-  /** Событие журнала, к которому относится обмен: исходящая реплика, команда или вызов инструмента. */
+  /** Событие журнала, к которому относится обмен: исходящая реплика, команда, вызов инструмента, решение оператора или оценка. */
   eventSeq: number | null;
   /** Ответ агента в журнале. */
   replySeq: number | null;

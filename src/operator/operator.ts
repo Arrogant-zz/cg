@@ -2,7 +2,7 @@
 import type { BasketType, LessonDef, ModelDef } from '../config/types.js';
 import type { Execution } from '../execution/execution.js';
 import type { ToolCallEvent } from '../execution/events.js';
-import type { LlmProvider } from '../llm/provider.js';
+import type { LlmProvider, LlmRequest } from '../llm/provider.js';
 import { structuredCall, type StructuredResult } from '../llm/structured.js';
 import { OPERATOR_SCHEMA, OPERATOR_SYSTEM } from './prompts.js';
 
@@ -105,12 +105,13 @@ export class LlmOperator {
     private provider: LlmProvider,
   ) {}
 
-  async decide(exec: Execution, event: OperatorEvent, mode: BasketType, limits: OperatorLimits, signal?: AbortSignal): Promise<StructuredResult<OperatorDecision>> {
+  async decide(exec: Execution, event: OperatorEvent, mode: BasketType, limits: OperatorLimits, signal?: AbortSignal, onExchange?: LlmRequest['onExchange']): Promise<StructuredResult<OperatorDecision>> {
     const ctx = operatorContext(exec, event, mode, limits, !!(this.model.params as any).devHints);
     const known = new Set(lessonCatalog(exec).map((l) => l.id));
+    const label = event.type === 'confirmation' ? `LLM-оператор · подтверждение ${event.call.tool}` : 'LLM-оператор · конец хода';
     return structuredCall<OperatorDecision>(
       this.provider,
-      { system: OPERATOR_SYSTEM, user: operatorUserPrompt(ctx), schema: OPERATOR_SCHEMA as any, schemaName: 'operator_decision', signal },
+      { system: OPERATOR_SYSTEM, user: operatorUserPrompt(ctx), schema: OPERATOR_SCHEMA as any, schemaName: 'operator_decision', signal, label, onExchange },
       (d) => {
         const errs: string[] = [];
         if (event.type === 'confirmation' && !d.confirmation) errs.push('для события confirmation поле confirmation должно быть approve или reject');

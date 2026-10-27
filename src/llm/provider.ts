@@ -3,8 +3,9 @@
 // клиентский сертификат — если заданы его файлы, иначе адрес вызывается как есть (http внутри Istio).
 import crypto from 'node:crypto';
 import type { ModelDef } from '../config/types.js';
-import { resolveEnvRefs } from '../config/loader.js';
-import { errorMessage, sleep } from '../util/core.js';
+import { hasEnvRef, resolveEnvRefs } from '../config/loader.js';
+import { errorMessage, maskHeaders, sleep } from '../util/core.js';
+import { finishExchange, maskedHeaders, startExchange, type HttpExchange } from '../util/httplog.js';
 import { TlsFileError, describeNetError, isTlsError, missingTlsFiles, postJson, readTls, type TlsFiles } from './http.js';
 
 export interface LlmUsage {
@@ -18,6 +19,17 @@ export interface LlmRequest {
   schema: Record<string, unknown>;
   schemaName: string;
   signal?: AbortSignal;
+  /** Подпись обмена в журнале HTTP: чей вызов и зачем. */
+  label?: string;
+  /** Каждая HTTP-попытка, включая повторы, — отдельный обмен в журнале выполнения. */
+  onExchange?: (x: HttpExchange, phase: 'start' | 'end') => void;
+}
+
+interface ExchangeLog {
+  label: string;
+  onExchange: (x: HttpExchange, phase: 'start' | 'end') => void;
+  /** Заголовки из ${env:NAME}: маскируются при любом имени, как у подключения агента. */
+  envHeaders: string[];
 }
 
 export interface LlmResponse {
@@ -113,7 +125,7 @@ export function modelAuth(model: ModelDef, env: NodeJS.ProcessEnv): string | nul
 const RETRYABLE = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529]);
 
 /** POST с повторами при 429, 5xx и сетевых сбоях. Ошибки сертификата и остальные HTTP-ошибки не повторяются. */
-async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, signal: AbortSignal | undefined, headers: () => Record<string, string>): Promise<{ data: any; requestId: string | null }> {
+async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, signal: AbortSignal | undefined, headers: () => Record<string, string>, log: ExchangeLog | null = null): Promise<{ data: any; requestId: string | null }> {
   const p = model.params;
   const url = String(r.url);
   const text = JSON.stringify(body);
@@ -132,24 +144,41 @@ async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, sign
     const requestId = h['X-Request-ID'] ?? null;
     const timeout = AbortSignal.timeout(timeoutMs);
     const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    // Журнал HTTP: запрос — до отправки, ответ или ошибка — по факту. Сертификат в заголовки не попадает, токен маскируется.
+    const x = log ? startExchange('llm', attempt ? `${log.label} · повтор ${attempt}` : log.label, { method: 'POST', url, headers: maskHeaders(h, log.envHeaders), body: text }) : null;
+    if (x) log!.onExchange(x, 'start');
+    const done = (reply: { status: number; headers: Record<string, string>; body: string } | null, error: string | null) => {
+      if (!x) return;
+      finishExchange(x, reply, error);
+      log!.onExchange(x, 'end');
+    };
     let res;
     try {
       res = await postJson(url, h, text, tls, sig);
     } catch (e: any) {
-      if (signal?.aborted) throw new LlmError('aborted', 'Вызов модели прерван');
+      if (signal?.aborted) {
+        done(null, 'вызов прерван');
+        throw new LlmError('aborted', 'Вызов модели прерван');
+      }
       if (timeout.aborted) {
         lastErr = new LlmError('timeout', `Модель не ответила за ${Math.round(timeoutMs / 1000)} с`);
+        done(null, lastErr.message);
         continue;
       }
       const code = String(e?.code ?? '');
       const text = describeNetError(e, r.clientCert);
       // Ключ не расшифрован или не подходит к сертификату — ошибка настройки, до соединения с моделью.
-      if (/^ERR_OSSL_/.test(code) || /bad decrypt|key values mismatch|no start line/i.test(String(e?.message))) throw new LlmError('config', `Клиентский сертификат не загружен: ${text}`);
+      if (/^ERR_OSSL_/.test(code) || /bad decrypt|key values mismatch|no start line/i.test(String(e?.message))) {
+        done(null, `клиентский сертификат не загружен: ${text}`);
+        throw new LlmError('config', `Клиентский сертификат не загружен: ${text}`);
+      }
       const err = new LlmError('network', `Модель недоступна: ${text}`);
+      done(null, err.message);
       if (isTlsError(code)) throw err;
       lastErr = err;
       continue;
     }
+    done({ status: res.status, headers: maskedHeaders(res.headers), body: res.text }, null);
     if (res.status < 200 || res.status >= 300) {
       const rid = requestId ? ` (X-Request-ID ${requestId})` : '';
       const certHint = r.clientCert && (res.status === 401 || res.status === 403 || /SSL certificate|client certificate/i.test(res.text)) ? '. Проверьте клиентский сертификат и его права доступа: tls.cert и tls.key или tls.pfx' : '';
@@ -229,7 +258,10 @@ class GigaChat implements LlmProvider {
       if (r.apiKey) h.Authorization = `Bearer ${r.apiKey}`;
       return h;
     };
-    const { data, requestId } = await postWithRetries(this.model, r, this.body(req, String(r.name)), req.signal, headers);
+    const log = req.onExchange
+      ? { label: req.label ?? `LLM ${this.model.id}`, onExchange: req.onExchange, envHeaders: Object.entries(this.model.headers).filter(([, v]) => hasEnvRef(v)).map(([k]) => k) }
+      : null;
+    const { data, requestId } = await postWithRetries(this.model, r, this.body(req, String(r.name)), req.signal, headers, log);
     const rid = requestId ? ` (X-Request-ID ${requestId})` : '';
     let finish: string | undefined;
     let text: unknown;

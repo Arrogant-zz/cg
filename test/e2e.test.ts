@@ -91,6 +91,16 @@ test('обучение на новом операторе: reset перед ка
   assert.ok(http.every((x) => x.eventSeq && seqs.has(x.eventSeq)), 'каждый обмен ведёт к событию журнала');
   const toolEv = ex.data.events.find((e: any) => e.type === 'tool_call');
   assert.ok(mcpX.some((x) => x.id === toolEv.httpId), 'вызов инструмента ведёт к своему обмену');
+  // Вызовы LLM-оператора и судьи — тоже в журнале HTTP, с подписью и привязкой к решению или оценке.
+  const llmX = http.filter((x) => x.kind === 'llm');
+  assert.ok(llmX.some((x) => /^LLM-оператор · (конец хода|подтверждение \w+)$/.test(x.label)));
+  assert.equal(llmX.filter((x) => x.label === 'LLM-оценка · критерии ответа').length, 1);
+  assert.equal(llmX.filter((x) => /^LLM-оценка · эталонный текст, прогон \d из 3$/.test(x.label)).length, 3);
+  assert.ok(llmX.every((x) => x.response?.status === 200 && /\/v[12]\/chat\/completions$/.test(x.request.url) && JSON.parse(x.request.body).messages));
+  const decision = ex.data.events.find((e: any) => e.type === 'operator_decision' && !e.forced);
+  assert.ok(llmX.some((x) => x.id === decision.httpId && x.eventSeq === decision.seq), 'решение оператора ведёт к своему обмену');
+  const judgeEv = ex.data.events.find((e: any) => e.type === 'judge');
+  assert.ok(llmX.some((x) => x.id === judgeEv.httpId && x.eventSeq === judgeEv.seq), 'оценка ведёт к своему обмену');
   assert.equal(ex.data.httpCount, http.length);
 });
 

@@ -112,10 +112,11 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     return { status: 'operator_error', reason: errorMessage(e) };
   };
 
-  const decide = async (event: OperatorEvent, timeoutMs: number) => {
+  // HTTP-обмены вызова оператора привязываются к его решению после ответа: решение появляется в журнале только тогда.
+  const decide = async (event: OperatorEvent, timeoutMs: number, log: ReturnType<Execution['llmLog']>) => {
     exec.operatorCalls++;
     const signal = AbortSignal.any([deps.signal, AbortSignal.timeout(timeoutMs)]);
-    return operator.decide(exec, event, mode, limits, signal);
+    return operator.decide(exec, event, mode, limits, signal, log.onExchange);
   };
 
   exec.confirmationHandler = async (call: ToolCallEvent) => {
@@ -140,15 +141,17 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
       return { action: 'reject', by: 'auto' };
     }
     const event: OperatorEvent = { type: 'confirmation', call };
+    const log = exec.llmLog();
     try {
-      const res = await decide(event, deps.confirmationTimeoutMs);
+      const res = await decide(event, deps.confirmationTimeoutMs, log);
       const d = res.value;
       const dec = recordDecision(event, res, null, call.callId);
+      log.attach(dec);
       if (d.reply) queued.push({ text: d.reply, marks: marksOf(d, deps.priorLessons), decisionSeq: dec.seq });
       return { action: d.confirmation ?? 'reject', by: 'operator', decisionSeq: dec.seq };
     } catch (e) {
       const err = e instanceof StructuredError ? e : null;
-      recordDecision(event, null, err, call.callId);
+      log.attach(recordDecision(event, null, err, call.callId));
       const f = classify(e);
       failure.status = failure.status || f.status;
       failure.reason = failure.reason || f.reason;
@@ -193,22 +196,24 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
 
     if (exec.operatorCalls >= limits.maxOperatorCalls) return end('limit_operator_calls', `Исчерпан лимит ${limits.maxOperatorCalls} запросов оператора`);
     const event: OperatorEvent = { type: 'turn_end', agentReply: r.reply.text };
+    const log = exec.llmLog();
     let res;
     try {
-      res = await decideTurn(event);
+      res = await decideTurn(event, log);
     } catch (e) {
-      recordDecision(event, null, e instanceof StructuredError ? e : null);
+      log.attach(recordDecision(event, null, e instanceof StructuredError ? e : null));
       const f = classify(e);
       return end(f.status, f.reason);
     }
     const dec = recordDecision(event, res, null);
+    log.attach(dec);
     const d = res.value;
     if (d.finish && !d.reply) return end('completed', 'Оператор завершил кейс');
     if (d.finish) finishAfterTurn = true;
     next = { text: d.reply!, kind: 'operator', extra: { marks: marksOf(d, deps.priorLessons), decisionSeq: dec.seq } };
   }
 
-  async function decideTurn(event: OperatorEvent) {
-    return decide(event, Math.max(30_000, deps.confirmationTimeoutMs));
+  async function decideTurn(event: OperatorEvent, log: ReturnType<Execution['llmLog']>) {
+    return decide(event, Math.max(30_000, deps.confirmationTimeoutMs), log);
   }
 }

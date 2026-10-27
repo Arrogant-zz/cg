@@ -90,6 +90,8 @@ async function render(ctx, mod, my, keepScroll) {
       const d = document.getElementById(id);
       if (d && d.tagName === 'DETAILS') d.open = true;
     }
+    // И сообщения агента, переключённые на исходный текст.
+    for (const id of ctx.state.sourceIds ?? []) showSource(document.getElementById(id), true);
     // Переход к событию или обмену, запрошенный действием страницы.
     if (ctx.state.focus) {
       const el = document.getElementById(ctx.state.focus);
@@ -151,6 +153,22 @@ async function copyFrom(el) {
   }
 }
 
+// Сообщение агента: с разметкой Markdown или исходным текстом, как его прислал агент.
+function showSource(msg, on) {
+  if (!msg) return;
+  msg.classList.toggle('md-raw', on);
+  msg.querySelector('[data-action="mdSource"]')?.setAttribute('aria-pressed', String(on));
+}
+function toggleSource(el) {
+  const msg = el.closest('.msg');
+  if (!msg || !current) return;
+  const on = !msg.classList.contains('md-raw');
+  showSource(msg, on);
+  const ids = (current.ctx.state.sourceIds ??= new Set());
+  if (on) ids.add(msg.id);
+  else ids.delete(msg.id);
+}
+
 // Enter отправляет: data-enter — по Enter (Shift+Enter — перенос строки), data-enter-mod — по Cmd/Ctrl+Enter.
 main.addEventListener('keydown', async (ev) => {
   if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229 || !current) return;
@@ -179,6 +197,10 @@ main.addEventListener('click', async (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
     return copyFrom(el);
+  }
+  if (el.dataset.action === 'mdSource') {
+    ev.preventDefault();
+    return toggleSource(el);
   }
   const fn = current.mod.actions?.[el.dataset.action];
   if (!fn) return;

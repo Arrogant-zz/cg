@@ -169,6 +169,30 @@ export class Execution {
     this.emit({ kind: 'http', id: x.id });
   }
 
+  /**
+   * Обмены одного вызова LLM-оператора или судьи: попадают в журнал HTTP сразу, а к событию решения
+   * или оценки привязываются после ответа — событие появляется только тогда.
+   */
+  llmLog(): { onExchange: (x: HttpExchange, phase: 'start' | 'end') => void; attach: (ev: ExecEvent) => void } {
+    const list: HttpExchange[] = [];
+    return {
+      onExchange: (x, phase) => {
+        if (phase === 'end') return this.updateHttp(x);
+        list.push(x);
+        this.addHttp(x);
+      },
+      attach: (ev) => {
+        for (const x of list) {
+          x.eventSeq = ev.seq;
+          this.updateHttp(x);
+        }
+        if (!list.length) return;
+        ev.httpId = list[list.length - 1].id;
+        this.update(ev);
+      },
+    };
+  }
+
   setStatus(status: string, reason = ''): void {
     this.status = status;
     this.reason = reason;

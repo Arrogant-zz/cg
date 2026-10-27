@@ -67,6 +67,27 @@ ${s.issues.length ? warningsList(s.issues) : ''}
 </div>`;
 }
 
+// Свёрнутые папки списка кейсов — удобство одного зрителя: хранятся в браузере и переживают переходы между страницами.
+const FOLDERS_KEY = 'clawgym.cases.collapsed';
+function loadCollapsed() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? '[]'));
+  } catch {
+    return new Set();
+  }
+}
+function saveCollapsed(set) {
+  try {
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify([...set]));
+  } catch {
+    /* хранилище браузера недоступно: свёрнутость не запомнится, список работает */
+  }
+}
+
+function folderHeader(folder, shown, total, collapsed, first) {
+  return html`<button type="button" class="fold" data-action="toggleFolder" data-folder="${folder}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? 'Развернуть' : 'Свернуть'} папку" style="margin-top: ${first ? '0' : '10px'}">${icon(collapsed ? 'chevRight' : 'chevDown', 's14')}${icon('folder', 's14')}<span>${folder || 'cases/'}</span><span class="cnt">${shown === total ? total : `${shown} из ${total}`}</span></button>`;
+}
+
 export async function render(ctx) {
   const list = await get('/api/cases');
   const sel = ctx.params[0] ?? list.cases[0]?.id;
@@ -74,6 +95,18 @@ export async function render(ctx) {
   const filtered = list.cases.filter((c) => !q || `${c.id} ${c.title} ${c.topic} ${c.tags.join(' ')} ${c.folder}`.toLowerCase().includes(q));
   // Кейсы по папкам cases/: заголовок папки — только если хотя бы один кейс лежит в подкаталоге.
   const grouped = list.cases.some((x) => x.folder);
+  const collapsed = loadCollapsed();
+  // Открытый по ссылке кейс виден: его папка разворачивается при переходе на кейс.
+  const selFolder = list.cases.find((x) => x.id === sel)?.folder;
+  if (ctx.params[0] && ctx.state.opened !== sel && selFolder !== undefined && collapsed.delete(selFolder)) saveCollapsed(collapsed);
+  ctx.state.opened = sel;
+  const count = (xs) => xs.reduce((m, x) => m.set(x.folder, (m.get(x.folder) ?? 0) + 1), new Map());
+  const totals = count(list.cases);
+  const shown = count(filtered);
+  const folders = [...totals.keys()];
+  // При поиске видны все найденные кейсы: свёрнутая папка не прячет совпадения.
+  const hidden = (f) => !q && collapsed.has(f);
+  const allCollapsed = folders.every((f) => collapsed.has(f));
   const c = sel ? await get(`/api/cases/${encodeURIComponent(sel)}`).catch(() => null) : null;
   const ok = !list.errors;
   return html`<header class="ph">
@@ -83,8 +116,9 @@ export async function render(ctx) {
 <div class="split">
 <div class="lst">
 <label class="field" style="padding-bottom: 8px"><span class="lbl">Поиск по кейсам</span><input class="input" type="search" placeholder="Название, тема, тег или папка" value="${ctx.state.q ?? ''}" data-change="search"></label>
+${grouped && folders.length > 1 && !q ? html`<button type="button" class="fold all" data-action="toggleAll" data-mode="${allCollapsed ? 'expand' : 'collapse'}" data-folders="${JSON.stringify(folders)}">${allCollapsed ? 'Развернуть все папки' : 'Свернуть все папки'}</button>` : ''}
 ${filtered.map(
-    (x, i) => html`${grouped && (i === 0 || filtered[i - 1].folder !== x.folder) ? html`<span class="row lbl" style="gap: 6px; padding: ${i ? '14px' : '4px'} 16px 6px">${icon('folder', 's14')}${x.folder || 'cases/'}</span>` : ''}<a class="li ${x.id === sel ? 'on' : ''}" href="/cases/${x.id}" ${x.id === sel ? 'aria-current="true"' : ''}><span class="mono sm m5">${x.id}</span><span class="sm">${x.title}</span><span class="row cap" style="gap: 6px">${x.topic} · ${x.solutions ? `${x.solutions} ${plural(x.solutions, 'решение', 'решения', 'решений')}` : html`<span class="pill na" style="min-height: 20px">только вручную</span>`}${x.errors ? html`<span class="pill fail" style="min-height: 20px">ошибка</span>` : ''}</span></a>`,
+    (x, i) => html`${grouped && (i === 0 || filtered[i - 1].folder !== x.folder) ? folderHeader(x.folder, shown.get(x.folder), totals.get(x.folder), hidden(x.folder), i === 0) : ''}${grouped && hidden(x.folder) ? '' : html`<a class="li ${x.id === sel ? 'on' : ''}" href="/cases/${x.id}" ${x.id === sel ? 'aria-current="true"' : ''}><span class="mono sm m5">${x.id}</span><span class="sm">${x.title}</span><span class="row cap" style="gap: 6px">${x.topic} · ${x.solutions ? `${x.solutions} ${plural(x.solutions, 'решение', 'решения', 'решений')}` : html`<span class="pill na" style="min-height: 20px">только вручную</span>`}${x.errors ? html`<span class="pill fail" style="min-height: 20px">ошибка</span>` : ''}</span></a>`}`,
   )}
 ${filtered.length ? '' : html`<span class="cap" style="padding: 8px 16px">Ничего не найдено</span>`}
 </div>
@@ -136,6 +170,17 @@ ${hint(html`Кейс и решения правятся в файлах; ClawGym
 export const refreshOn = (msg) => msg.type === 'config';
 
 export const actions = {
+  toggleFolder(el, ctx) {
+    const set = loadCollapsed();
+    const f = el.dataset.folder ?? '';
+    if (!set.delete(f)) set.add(f);
+    saveCollapsed(set);
+    return ctx.rerender();
+  },
+  toggleAll(el, ctx) {
+    saveCollapsed(el.dataset.mode === 'collapse' ? new Set(JSON.parse(el.dataset.folders)) : new Set());
+    return ctx.rerender();
+  },
   search(el, ctx) {
     ctx.state.q = el.value;
     return ctx.rerender();
