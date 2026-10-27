@@ -262,11 +262,13 @@ function snapshot(run) {
   return html`<section class="sec" id="snap" aria-labelledby="mat-h">
 <div class="sec-h"><h2 class="h2" id="mat-h">Снимок настроек</h2><a class="btn" href="/api/runs/${run.id}/materials.zip" download>${icon('download')}Скачать снимок и журналы</a></div>
 <div class="col" style="gap: 0">
-<div class="okr">${mk(true)}<span>Корзина, ${run.settings.basket.items} ${plural(run.settings.basket.items, 'решение', 'решения', 'решений')} с кейсами, агент, модели оператора и оценки, подсказки (${[p.operator, p.judge, p.answerJudge].filter(Boolean).join(', ')}), определения метрик, контракт ${run.settings.contract.version}</span><span class="cap num">${snapFiles} ${plural(snapFiles, 'файл', 'файла', 'файлов')}</span></div>
+<div class="okr">${mk(true)}<span>Корзина, ${run.settings.basket.items} ${plural(run.settings.basket.items, 'решение', 'решения', 'решений')} с кейсами и файлами ответов, агент и шаблон запроса, модели оператора и оценки, подсказки (${[p.operator, p.judge, p.answerJudge].filter(Boolean).join(', ')}), определения метрик, контракт ${run.settings.contract.version} со стартовым сообщением и заглушками по умолчанию</span><span class="cap num">${snapFiles} ${plural(snapFiles, 'файл', 'файла', 'файлов')}</span></div>
+${run.snapshot.settings ? html`<div class="okr">${mk(true)}<span>Подстановки окружения и настройки стенда: адрес агента, модели, таймауты. По ним и по полному хешу каждого файла сравниваются прогоны</span><span class="cap num">${run.snapshot.settings.length}</span></div>` : html`<div class="okr">${mk('na')}<span>Запись до 28.10.2026: полных хешей и настроек окружения в снимке нет — сравнение с ней не подтверждает сопоставимость</span><span class="cap"></span></div>`}
 <div class="okr">${mk(true)}<span>Авторизация в снимок не входит. Правка исходных файлов не меняет этот результат</span><span class="cap">${fmtDate(run.snapshot.createdAt)}</span></div>
 <div class="okr">${mk('na')}<span>Файлы скиллов в снимок не входят: они живут в агенте у тестового оператора</span><span class="cap"></span></div>
 </div>
 ${run.snapshot.files.length ? html`<details class="raw"><summary>Файлы снимка</summary><pre>${run.snapshot.files.map((f) => `${f.file}${f.hash ? ` @${f.hash}` : ''}`).join('\n')}</pre></details>` : ''}
+${run.snapshot.settings?.length ? html`<details class="raw"><summary>Настройки окружения</summary><pre>${run.snapshot.settings.map((s) => `${s.key} = ${s.value}`).join('\n')}</pre></details>` : ''}
 </section>`;
 }
 

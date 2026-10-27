@@ -26,15 +26,19 @@ function operatorRow(p, ctx) {
   const t = p.resolved?.testOperator;
   const training = p.resolved?.basket.type === 'training';
   const kind = (x) => (x.type === 'training' ? 'обучение' : 'проверка');
+  // Отката скиллов нет: после выбранного прогона оператор мог пройти другие, и агент продолжит с его текущими скиллами.
+  const current = t?.later?.length
+    ? `После него оператор прошёл ${t.later.join(', ')}: агент продолжит с текущими скиллами оператора, а не с теми, что были сразу после #${t.run}.`
+    : 'Агент продолжит со скиллами, которые оператор получил там.';
   const note =
     t?.mode === 'continue'
-      ? `Тот же x-a2a-sender-id, что в прогоне #${t.run}: агент продолжит со скиллами, которые оператор получил там. ${training ? 'Обучение продолжит менять его скиллы.' : 'Проверка не отправляет /case-capture и /skill-curator — скиллы оператора не меняются.'}`
+      ? `Тот же x-a2a-sender-id, что в прогоне #${t.run}. ${current} ${training ? 'Обучение продолжит менять его скиллы.' : 'Проверка не отправляет /case-capture и /skill-curator — скиллы оператора не меняются.'}`
       : 'Новый x-a2a-sender-id: агент начнёт со стартовых скиллов своей сборки. Чтобы проверить результат обучения, продолжите на операторе обучающего прогона.';
   return html`<span class="col" style="gap: 8px">
 <select class="input" data-change="operator" aria-label="Тестовый оператор">
 <option value="new" ${value === 'new' ? 'selected' : ''}>Новый — стартовые скиллы сборки агента</option>
 ${p.continueFrom && !value ? html`<option value="" selected disabled>Продолжить на последнем прогоне ${p.continueFrom} — завершённого нет</option>` : ''}
-${p.continueOptions.map((o) => html`<option value="${o.id}" ${value === String(o.id) ? 'selected' : ''}>Продолжить на операторе #${o.id} ${o.title} · ${kind(o)} · ${fmtDate(o.finishedAt, false)}</option>`)}
+${p.continueOptions.map((o) => html`<option value="${o.id}" ${value === String(o.id) ? 'selected' : ''}>Продолжить на операторе #${o.id} ${o.title} · ${kind(o)} · ${fmtDate(o.finishedAt, false)}${o.later.length ? ` · потом прошёл ${o.later.join(', ')}` : ''}</option>`)}
 </select>
 <span class="cap">${note}${p.continueFrom ? ` По умолчанию файл продолжает последний завершённый прогон «${p.continueFrom}».` : ''}</span>
 </span>`;

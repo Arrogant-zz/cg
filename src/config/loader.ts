@@ -291,14 +291,17 @@ async function loadContract(c: Collector, configDir: string): Promise<ContractDe
     tools,
     startMessage: { file: smRel, text: smText, hash: shortHash(smText) },
     defaults: {},
+    defaultsFile: null,
+    defaultsData: [],
   };
   const defRel = 'contracts/tool-defaults.yaml';
   try {
     await fsp.access(path.join(configDir, defRel));
+    contract.defaultsFile = defRel;
     const dp = await parseFile(c, configDir, defRel);
     if (dp && schemaCheck(c, dp, toolDefaultsSchema)) {
       contract.defaultsSource = src(dp);
-      contract.defaults = await normalizeStubs(c, configDir, dp, dp.data.tools ?? {}, 'default', 'tools', []);
+      contract.defaults = await normalizeStubs(c, configDir, dp, dp.data.tools ?? {}, 'default', 'tools', contract.defaultsData);
     }
   } catch {
     /* файла умолчаний может не быть */
@@ -519,12 +522,13 @@ async function loadAgent(c: Collector, configDir: string, p: Parsed): Promise<Ag
   const d = p.data;
   const r = d.request;
   let body: unknown = r.body ?? { text: '{{text}}' };
-  let bodySource: string | null = null;
+  let bodyFile: Source | null = null;
   if (typeof r.body === 'string') {
-    bodySource = r.body;
     try {
-      body = JSON.parse(await fsp.readFile(path.join(configDir, r.body), 'utf8'));
+      const text = await fsp.readFile(path.join(configDir, r.body), 'utf8');
       c.files++;
+      bodyFile = { file: r.body, hash: shortHash(text), text };
+      body = JSON.parse(text);
     } catch (e: any) {
       c.error(p.rel, `Шаблон тела ${r.body} не прочитан: ${e.message}`, { field: 'request.body', line: lineOf(p, ['request', 'body']) });
     }
@@ -539,7 +543,7 @@ async function loadAgent(c: Collector, configDir: string, p: Parsed): Promise<Ag
       method: String(r.method ?? 'POST').toUpperCase(),
       headers: stringMap(r.headers),
       body,
-      bodySource,
+      bodyFile,
       textPath: r.textPath ?? null,
       taskIdHeader: (r.taskIdHeader ?? 'x-task-id').toLowerCase(),
       senderIdHeader: (r.senderIdHeader ?? 'x-a2a-sender-id').toLowerCase(),

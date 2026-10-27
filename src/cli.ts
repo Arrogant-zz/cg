@@ -10,6 +10,7 @@ import { loadEnv } from './env.js';
 import { App } from './app.js';
 import { loadRegistry } from './config/loader.js';
 import { resolveRun, type RunOverrides } from './runner/resolve.js';
+import { operatorsFromRecords } from './runner/operators.js';
 import { ResultsStore } from './results/store.js';
 import type { Issue } from './config/types.js';
 import { computeRunMetrics } from './metrics/builtins.js';
@@ -91,8 +92,12 @@ async function main() {
   if (cmd === 'preview' && target) {
     setLogLevel('warn');
     const reg = await loadRegistry(env.configDir);
-    const runs = await new ResultsStore(env.varDir).loadRuns((file, reason) => console.log(`Прогон из ${file} пропущен: ${reason}`));
-    const p = resolveRun(reg, env, target, continueArg(), runs);
+    const store = new ResultsStore(env.varDir);
+    const skipped = (file: string, reason: string) => console.log(`${file} пропущен: ${reason}`);
+    const runs = await store.loadRuns(skipped);
+    // История операторов — по их журналу, как в работающем ClawGym; предпросмотр в var/ ничего не пишет.
+    const operators = operatorsFromRecords(runs, await store.loadSessions(skipped), await store.loadOperators(skipped));
+    const p = resolveRun(reg, env, target, continueArg(), runs, operators);
     printIssues(p.issues);
     console.log('\nПлан команд:');
     for (const s of p.plan) console.log(s.kind === 'case' ? `  /reset → кейс ${s.pos} (${s.solution})${s.capture ? ' → /case-capture' : ''}` : `  /skill-curator ${s.pass}${s.reason === 'final' ? ' (финальный)' : ''}`);

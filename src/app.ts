@@ -8,6 +8,7 @@ import { loadRegistry } from './config/loader.js';
 import { McpServer, StandLog, TaskBindings } from './mcp/server.js';
 import { ResultsStore } from './results/store.js';
 import { RunManager } from './runner/runner.js';
+import { TestOperators } from './runner/operators.js';
 import { ManualManager } from './manual/manual.js';
 import { AgentClient } from './agent/client.js';
 import type { UnfinishedRequest } from './execution/channel.js';
@@ -48,6 +49,8 @@ export class App {
   secret = '';
   runs: RunManager;
   manual: ManualManager;
+  /** Резервы и журнал тестовых операторов: общие для прогонов и ручных сессий. */
+  operators: TestOperators;
   mcp: McpServer;
   health = new Map<string, AgentHealth>();
   version = VERSION;
@@ -60,6 +63,7 @@ export class App {
     this.sessions = new Semaphore(env.maxParallelSessions);
     this.runs = new RunManager(this);
     this.manual = new ManualManager(this);
+    this.operators = new TestOperators(this.store, this.stand);
     this.mcp = new McpServer(env, () => this.registry?.contract ?? null, this.bindings, this.stand, VERSION);
     this.stand.onAdd((e) => this.publish('stand', 'stand', e));
   }
@@ -70,6 +74,7 @@ export class App {
     await this.reload();
     await this.runs.init();
     await this.manual.init();
+    await this.operators.init(this.runs.list(), this.manual.list());
     if (this.env.maxParallelSessions > 3) this.stand.add('warn', 'sessions', `MAX_PARALLEL_SESSIONS=${this.env.maxParallelSessions}: стенд по сведениям от 15 октября выдерживает 2–3 сессии`);
   }
 

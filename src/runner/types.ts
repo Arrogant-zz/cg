@@ -6,6 +6,7 @@ import type { PlanStep } from './plan.js';
 import type { MetricAvailability } from './resolve.js';
 import type { HttpExchange } from '../util/httplog.js';
 import type { ItemScores } from '../metrics/scoring.js';
+import type { InputGroup, InputSetting } from './inputs.js';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'stopped' | 'failed';
 
@@ -63,19 +64,24 @@ export interface CuratorPassRecord {
   http?: HttpExchange[];
 }
 
-/** Прогон, через который прошёл тестовый оператор: так видно, с какими скиллами он начинает следующий. */
-export interface OperatorStep {
-  run: number;
-  title: string;
-  type: 'training' | 'checking';
-  line: number;
+/** Прогон (его линия) или ручная сессия, через которые прошёл тестовый оператор: так видно, с какими скиллами он начинает следующий. */
+export type OperatorStep =
+  | { kind: 'run'; run: number; title: string; type: 'training' | 'checking'; line: number }
+  | { kind: 'manual'; session: number; key: string; title: string };
+
+/** Файл снимка. group и sha256 — null в записях до 28.10.2026: тогда сравнение идёт по коротким меткам основных файлов. */
+export interface SnapshotFile {
+  file: string;
+  hash: string;
+  group: InputGroup | null;
+  sha256: string | null;
 }
 
 export interface LineRecord {
   index: number;
   /** x-a2a-sender-id тестового оператора: у него в агенте живут скиллы. */
   senderId: string;
-  /** Прошлые прогоны этого оператора; пусто — новый оператор со стартовыми скиллами сборки. */
+  /** Через что оператор прошёл до этого прогона, по журналу операторов; пусто — новый оператор со стартовыми скиллами сборки. */
   history: OperatorStep[];
   status: RunStatus;
   startedAt: string | null;
@@ -119,7 +125,8 @@ export interface RunRecord {
     prompts: { operator: string; judge: string; answerJudge?: string };
     contract: { file: string; hash: string; version: string; conditional: boolean };
   };
-  snapshot: { createdAt: string; files: { file: string; hash: string }[] };
+  /** Входные данные прогона: копии файлов в snapshot/ и значимые настройки окружения; settings — null в записях до 28.10.2026. */
+  snapshot: { createdAt: string; files: SnapshotFile[]; settings: InputSetting[] | null };
   plan: PlanStep[];
   planText: string[];
   metricsAvailability: MetricAvailability[];

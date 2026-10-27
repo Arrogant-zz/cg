@@ -16,6 +16,9 @@ import { loadEnv } from '../src/env.js';
 import { ResultsStore } from '../src/results/store.js';
 import { RECORD_FORMAT } from '../src/results/format.js';
 import { operatorLabel } from '../src/results/compare.js';
+import { TestOperators, stepLabel } from '../src/runner/operators.js';
+import { StandLog } from '../src/mcp/server.js';
+import { settleWrites } from '../src/util/fsx.js';
 import { checkAllowedHost } from '../src/agent/client.js';
 import { CONFIG, REPO } from './helpers.js';
 import { BODY_LIMIT, clip, maskedHeaders, startExchange } from '../src/util/httplog.js';
@@ -140,21 +143,34 @@ test('формат записей: сохранение ставит верси�
     write('results/run-0001/executions/L1-P01.json', { id: 'run1-L1-P01', events: [{ seq: 1, type: 'skills', text: 'установлен набор V2' }] });
     write('results/run-0002/run.json', { format: RECORD_FORMAT + 1, id: 2, settings: {}, lines: [] });
     write('results/run-0003/run.json', '{ оборван');
+    // Формат 1, 28.10.2026: снимок без полных хешей и настроек окружения, в истории оператора только прогоны.
+    write('results/run-0004/run.json', {
+      format: 1,
+      id: 4,
+      settings: { testOperator: { mode: 'continue', run: 1 } },
+      snapshot: { createdAt: '2026-10-28T09:00:00.000Z', files: [{ file: 'contracts/tools.json', hash: 'a91c' }] },
+      lines: [{ index: 1, senderId: 'lab-1', history: [{ run: 1, title: 'Проверка', type: 'checking', line: 1 }], items: [] }],
+    });
     write('sessions/m-0001.json', { id: 1, execution: { events: [{ seq: 1, type: 'skills', text: 'установлен набор V2' }] } });
     const skipped: string[] = [];
     const runs = await store.loadRuns((file, reason) => skipped.push(`${file}: ${reason}`));
-    assert.deepEqual(runs.map((r) => r.id), [1]);
-    const [old] = runs;
+    assert.deepEqual(runs.map((r) => r.id), [1, 4]);
+    const [old, v1] = runs;
     assert.deepEqual(old.settings.testOperator, { mode: 'new' });
     assert.equal(operatorLabel(old), 'набор Карты V2');
     assert.deepEqual(old.lines[0].history, []);
     assert.equal(old.lines[0].items[0].scores, null);
+    assert.equal(old.snapshot.settings, null);
     assert.ok(!('format' in old), 'версия — только в файле');
+    assert.deepEqual(v1.snapshot, { createdAt: '2026-10-28T09:00:00.000Z', files: [{ file: 'contracts/tools.json', hash: 'a91c', group: null, sha256: null }], settings: null });
+    assert.equal(operatorLabel(v1), 'после #1 проверка', 'шаг истории — прогон');
     assert.equal(skipped.length, 2, skipped.join('\n'));
     assert.ok(skipped[0].startsWith(`results/run-0002/run.json: формат ${RECORD_FORMAT + 1} новее поддерживаемого ${RECORD_FORMAT}`), skipped[0]);
     assert.ok(skipped[1].startsWith('results/run-0003/run.json: файл не читается'), skipped[1]);
     assert.equal((await store.loadExecution(1, 'L1-P01'))!.events[0].type, 'note', 'событие skills — заметка');
-    assert.equal((await store.loadSessions())[0].execution!.events[0].type, 'note');
+    const [session] = await store.loadSessions();
+    assert.equal(session.execution!.events[0].type, 'note');
+    assert.equal(session.history, null, 'история оператора до сессии неизвестна');
     // Сохранение ставит текущую версию первым полем; повторная загрузка даёт ту же запись.
     await store.saveRun(old);
     assert.match(fs.readFileSync(path.join(dir, 'results/run-0001/run.json'), 'utf8'), new RegExp(`^\\{\\s*"format": ${RECORD_FORMAT},`));
@@ -257,6 +273,7 @@ test('fake-agent: запрет «экспертизу не выставлять�
 test('продолжение на тестовом операторе: последний завершённый прогон настройки, тот же агент, свободный оператор, история', async () => {
   const reg = await loadRegistry(CONFIG);
   const env = loadEnv({}, REPO);
+  const checking = { kind: 'run', run: 1, title: 'Проверка', type: 'checking', line: 1 };
   const run = (id: number, over: Record<string, unknown> = {}) =>
     ({
       id,
@@ -265,7 +282,7 @@ test('продолжение на тестовом операторе: посл�
       type: 'training',
       status: 'completed',
       settings: { agent: { id: 'fake-agent' } },
-      lines: [{ index: 1, senderId: `s-${id}`, history: [{ run: 1, title: 'Проверка', type: 'checking', line: 1 }] }],
+      lines: [{ index: 1, senderId: `s-${id}`, startedAt: `2026-10-28T10:0${id}:00.000Z`, history: [checking] }],
       ...over,
     }) as any;
   const errors = (p: ReturnType<typeof resolveRun>) => p.issues.filter((i) => i.severity === 'error').map((i) => i.reason);
@@ -277,13 +294,132 @@ test('продолжение на тестовом операторе: посл�
   assert.equal(op.mode, 'continue');
   if (op.mode === 'continue') {
     assert.equal(op.source.id, 3);
-    assert.deepEqual(op.lines, [{ senderId: 's-3', history: [{ run: 1, title: 'Проверка', type: 'checking', line: 1 }, { run: 3, title: 'Обучение', type: 'training', line: 1 }] }]);
+    assert.deepEqual(op.lines, [{ senderId: 's-3', history: [checking, { kind: 'run', run: 3, title: 'Обучение', type: 'training', line: 1 }] }]);
   }
   assert.equal(resolveRun(reg, env, 'demo-check-trained', { continueFrom: 'new' }, [run(3)]).resolved!.operator.mode, 'new', 'при запуске можно выбрать нового');
   assert.match(errors(resolveRun(reg, env, 'demo-check', { continueFrom: 5 }, [run(5, { settings: { agent: { id: 'aef-claw' } } })]))[0], /работал с агентом «aef-claw»/);
   assert.match(errors(resolveRun(reg, env, 'demo-check', { continueFrom: 6 }, [run(6, { status: 'running' })]))[0], /не завершён/);
   const busy = resolveRun(reg, env, 'demo-check', { continueFrom: 7 }, [run(7), run(8, { status: 'queued', lines: [{ index: 1, senderId: 's-7', history: [] }] })]);
   assert.match(errors(busy)[0], /занят прогоном #8/);
+
+  // Продолжение от старого прогона: после него оператор прошёл обучение #8 — история и скиллы текущие, отката нет (ревью 28.10.2026).
+  const later = resolveRun(reg, env, 'demo-check', { continueFrom: 7 }, [
+    run(7),
+    run(8, { lines: [{ index: 1, senderId: 's-7', startedAt: '2026-10-28T10:09:00.000Z', history: [checking, { kind: 'run', run: 7, title: 'Обучение', type: 'training', line: 1 }] }] }),
+  ]);
+  assert.equal(later.ok, true, JSON.stringify(errors(later)));
+  const lop = later.resolved!.operator;
+  assert.deepEqual(lop.mode === 'continue' ? lop.lines[0].history.map(stepLabel) : null, ['#1 проверка', '#7 обучение', '#8 обучение']);
+  assert.ok(later.issues.some((i) => i.severity === 'warning' && /После прогона #7 его оператор прошёл #8 обучение: агент продолжит с текущими скиллами/.test(i.reason)));
+});
+
+test('тестовые операторы: резерв на весь прогон или сессию, журнал переживает удаление прогона и перезапуск', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-operators-'));
+  const stand = new StandLog();
+  try {
+    const store = new ResultsStore(dir);
+    await store.init();
+    const ops = new TestOperators(store, stand);
+    await ops.init([], []);
+    // Резерв — один синхронный шаг: второй запуск на занятом операторе получает 409, частичного резерва нет.
+    const a = ops.reserve(['s-1'], 'run', 'прогоном #1');
+    assert.throws(() => ops.reserve(['s-2', 's-1'], 'manual', 'ручной сессией m-0001'), (e: any) => e.status === 409 && /занят прогоном #1: дождитесь его завершения/.test(e.message));
+    assert.equal(ops.holder('s-2'), null, 'при отказе ничего не занято');
+    a.add('s-3');
+    assert.equal(ops.holder('s-3'), 'прогоном #1');
+    a.release();
+    assert.equal(ops.holder('s-1'), null);
+    ops.reserve(['s-1'], 'manual', 'ручной сессией m-0001').release();
+
+    // Журнал: шаги пишутся при старте и сохраняются; после перезапуска история та же, даже если прогон #2 удалён.
+    ops.record('s-1', { kind: 'run', run: 1, title: 'Проверка', type: 'checking', line: 1 });
+    ops.record('s-1', { kind: 'run', run: 2, title: 'Обучение', type: 'training', line: 1 });
+    ops.record('s-1', { kind: 'manual', session: 1, key: 'm-0001', title: 'Кейс' });
+    await settleWrites(dir);
+    const again = new TestOperators(store, stand);
+    await again.init([], []);
+    assert.deepEqual(again.history('s-1').map(stepLabel), ['#1 проверка', '#2 обучение', 'm-0001 ручная']);
+
+    // Без журнала история собирается из записей: удалённый #2 восстанавливается из истории, сохранённой в #3.
+    fs.rmSync(path.join(dir, 'operators.json'));
+    const line = (run: number, at: string, history: unknown[]) => ({ id: run, title: `П${run}`, type: 'checking', lines: [{ index: 1, senderId: 's-1', startedAt: at, history }] });
+    const runs = [
+      line(1, '2026-10-28T10:00:00.000Z', []),
+      line(3, '2026-10-28T10:20:00.000Z', [
+        { kind: 'run', run: 1, title: 'П1', type: 'checking', line: 1 },
+        { kind: 'run', run: 2, title: 'П2', type: 'training', line: 1 },
+      ]),
+    ] as any[];
+    const rebuilt = new TestOperators(store, stand);
+    await rebuilt.init(runs, []);
+    assert.deepEqual(rebuilt.history('s-1').map(stepLabel), ['#1 проверка', '#2 обучение', '#3 проверка']);
+    await settleWrites(dir);
+    assert.ok(fs.existsSync(path.join(dir, 'operators.json')), 'собранный журнал сохранён');
+
+    // Журнал более новой версии не перезаписывается: история ведётся в памяти, причина — в журнале стенда.
+    fs.writeFileSync(path.join(dir, 'operators.json'), JSON.stringify({ format: RECORD_FORMAT + 1, operators: {} }));
+    const newer = new TestOperators(store, stand);
+    await newer.init(runs, []);
+    newer.record('s-1', { kind: 'run', run: 4, title: 'П4', type: 'checking', line: 1 });
+    await settleWrites(dir);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'operators.json'), 'utf8')).format, RECORD_FORMAT + 1);
+    assert.ok(stand.entries.some((e) => e.kind === 'store.skipped' && /Журнал тестовых операторов operators\.json не загружен/.test(e.message)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('перечень входных данных: стартовый шаблон и заглушки по умолчанию останавливают запуск; в перечне — все зависимости и подстановки окружения', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-inputs-'));
+  try {
+    fs.cpSync(CONFIG, dir, { recursive: true });
+    // Модель оператора — из окружения: файл тот же, а модель другая.
+    const model = path.join(dir, 'models/fake-operator.yaml');
+    fs.writeFileSync(model, fs.readFileSync(model, 'utf8').replace(/^model: fake-operator$/m, 'model: ${env:FAKE_OPERATOR_MODEL:-fake-operator}'));
+    const env = loadEnv({ CLAWGYM_CONFIG: dir, FAKE_OPERATOR_MODEL: 'fake-operator-2', TURN_TIMEOUT_MS: '600000' }, REPO);
+    const p = resolveRun(await loadRegistry(dir), env, 'demo-check');
+    assert.equal(p.ok, true, JSON.stringify(p.issues.filter((i) => i.severity === 'error')));
+    const files = new Map(p.inputs.files.map((f) => [f.file, f.group]));
+    for (const [file, group] of [
+      ['runs/demo-check.yaml', 'run'],
+      ['baskets/second-line-check.yaml', 'basket'],
+      ['contracts/tools.json', 'contract'],
+      ['contracts/start-message.txt', 'contract'],
+      ['contracts/tool-defaults.yaml', 'contract'],
+      ['agents/fake-agent.yaml', 'agent'],
+      ['templates/aefclaw-a2a-message.json', 'agent'],
+      ['models/fake-operator.yaml', 'models'],
+      ['prompts/operator-v1.txt', 'prompts'],
+      ['prompts/operator-v1.schema.json', 'prompts'],
+    ]) {
+      assert.equal(files.get(file), group, file);
+    }
+    assert.deepEqual(p.involvedFiles, [...files.keys()].sort(), 'проверка ошибок — по тому же перечню');
+    const settings = Object.fromEntries(p.inputs.settings.map((s) => [s.key, s.value]));
+    assert.equal(settings['operator.model'], 'fake-operator-2');
+    assert.equal(settings.TURN_TIMEOUT_MS, '600000');
+    assert.match(settings['agent.url'], /^http:\/\/127\.0\.0\.1:8091\/a2a$/);
+
+    // Нет стартового шаблона — загрузчик пишет ошибку, и прогон с этим контрактом не запускается.
+    fs.rmSync(path.join(dir, 'contracts/start-message.txt'));
+    const noStart = resolveRun(await loadRegistry(dir), env, 'demo-check');
+    assert.equal(noStart.ok, false);
+    assert.ok(noStart.issues.some((i) => i.severity === 'error' && i.file === 'contracts/start-message.txt' && /Нет шаблона стартового сообщения/.test(i.reason)));
+    // Заглушка по умолчанию без ответа и нечитаемый файл ответа умолчаний — тоже.
+    fs.writeFileSync(path.join(dir, 'contracts/start-message.txt'), fs.readFileSync(path.join(CONFIG, 'contracts/start-message.txt')));
+    const defaults = path.join(dir, 'contracts/tool-defaults.yaml');
+    const text = fs.readFileSync(defaults, 'utf8');
+    fs.writeFileSync(defaults, text.replace('json: { assigned: true }', 'file: missing.json'));
+    const noData = resolveRun(await loadRegistry(dir), env, 'demo-check');
+    assert.ok(noData.issues.some((i) => i.severity === 'error' && i.file === 'contracts/tool-defaults.yaml' && /Файл ответа data\/missing\.json не прочитан/.test(i.reason)));
+    assert.equal(noData.ok, false);
+    fs.writeFileSync(defaults, text.replace("    - id: default-assigned\n      result:\n        json: { assigned: true }", '    - id: default-assigned'));
+    const noAnswer = resolveRun(await loadRegistry(dir), env, 'demo-check');
+    assert.ok(noAnswer.issues.some((i) => i.severity === 'error' && i.file === 'contracts/tool-defaults.yaml' && /Заглушка без ответа/.test(i.reason)));
+    assert.equal(noAnswer.ok, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('кейсы в подкаталогах cases/: ссылки по id, папка в списке, черновики на «_» пропускаются, повтор id — ошибка', async () => {

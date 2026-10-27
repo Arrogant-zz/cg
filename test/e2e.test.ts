@@ -7,6 +7,8 @@ import path from 'node:path';
 import { Execution } from '../src/execution/execution.js';
 import type { NoteEvent } from '../src/execution/events.js';
 import { settleWrites } from '../src/util/fsx.js';
+import { compareRuns } from '../src/results/compare.js';
+import { stepLabel } from '../src/runner/operators.js';
 import { startStand, until, CONFIG, REPO, type Stand } from './helpers.js';
 
 let s: Stand;
@@ -438,5 +440,104 @@ test('сбой итоговой записи прогона: привязки x-
   } finally {
     t.app.store.saveRun = save;
     await t.close();
+  }
+});
+
+test('тестовый оператор: занят на весь прогон и ручную сессию; история продолжения — по журналу оператора, а не по выбранному прогону', async () => {
+  const t = await startStand({ UNMATCHED_MODE: 'error' });
+  const run = async (config: string, continueFrom?: number) => {
+    const r = await t.api('POST', '/api/runs', { config, ...(continueFrom ? { overrides: { continueFrom } } : {}) });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    return t.waitRun(r.data.id);
+  };
+  try {
+    const a0 = await run('demo-check');
+    const sender = a0.lines[0].senderId;
+    // Два одновременных продолжения на одном операторе: второй запуск отклонён, а не идёт параллельно (ревью 28.10.2026).
+    const both = await Promise.all([1, 2].map(() => t.api('POST', '/api/runs', { config: 'demo-check', overrides: { continueFrom: a0.id } })));
+    assert.deepEqual(both.map((r) => r.status).sort(), [200, 422], JSON.stringify(both.map((r) => r.data)));
+    const refused = both.find((r) => r.status === 422)!.data;
+    assert.ok(refused.details.some((i: any) => new RegExp(`Оператор прогона #${a0.id} занят (запускаемым прогоном|прогоном #\\d+)`).test(i.reason)), JSON.stringify(refused));
+    const a1 = both.find((r) => r.status === 200)!.data;
+    assert.equal((await t.api('GET', '/api/runs')).data.runs.filter((r: any) => r.senders.includes(sender) && r.id !== a0.id).length, 1, 'на операторе один прогон');
+    // Пока прогон идёт, ручная сессия на его операторе тоже не открывается.
+    const manualBusy = await t.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent', sender: { mode: 'existing', id: sender } });
+    assert.equal(manualBusy.status, 409);
+    assert.match(manualBusy.data.error, new RegExp(`Тестовый оператор занят прогоном #${a1.id}: дождитесь его завершения`));
+    await t.waitRun(a1.id);
+
+    // Ручная сессия на существующем операторе — шаг его истории: в ней можно отправить /case-capture и /skill-curator.
+    const m = (await t.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent', sender: { mode: 'existing', id: sender } })).data;
+    const idle = await until(async () => {
+      const x = (await t.api('GET', `/api/manual/${m.id}`)).data;
+      for (const p of x.execution?.pending ?? []) await t.api('POST', `/api/manual/${m.id}/tool/${p.callId}`, p.kind === 'confirmation' ? { action: 'reject' } : { action: 'error', message: 'нет данных' });
+      return x.busy === null ? x : null;
+    }, 30000, 'ход агента в ручной сессии');
+    assert.deepEqual(idle.history.map(stepLabel), [`#${a0.id} проверка`, `#${a1.id} проверка`]);
+    assert.match(idle.prep[0].text, new RegExp(`скиллы после #${a0.id} проверка → #${a1.id} проверка`));
+    assert.equal((await t.api('POST', `/api/manual/${m.id}/finish`, {})).status, 200);
+
+    // Обучение и снова проверка от старого прогона #a0: агент продолжает текущие скиллы оператора — история это показывает.
+    const tr = await run('demo-train', a0.id);
+    const preview = (await t.api('GET', `/api/run-configs/demo-check/preview?continueFrom=${a0.id}`)).data;
+    assert.ok(preview.issues.some((i: any) => i.severity === 'warning' && new RegExp(`После прогона #${a0.id} его оператор прошёл #${a1.id} проверка, ${m.key} ручная, #${tr.id} обучение`).test(i.reason)), JSON.stringify(preview.issues));
+    assert.deepEqual(preview.resolved.testOperator.later, [`#${a1.id} проверка`, `${m.key} ручная`, `#${tr.id} обучение`]);
+    assert.deepEqual(preview.continueOptions.find((o: any) => o.id === a0.id).later, [`#${a1.id} проверка`, `${m.key} ручная`, `#${tr.id} обучение`]);
+    const x = await run('demo-check', a0.id);
+    assert.equal(x.lines[0].senderId, sender);
+    assert.deepEqual(x.lines[0].history.map(stepLabel), [`#${a0.id} проверка`, `#${a1.id} проверка`, `${m.key} ручная`, `#${tr.id} обучение`]);
+    assert.match(x.lines[0].prep.items[0].text, new RegExp(`скиллы — текущие, после #${a1.id} проверка → ${m.key} ручная → #${tr.id} обучение`));
+    // До и после обучения: различие — в тестовом операторе, а не «условия совпадают».
+    const cmp = (await t.api('GET', `/api/compare?a=${a1.id}&b=${x.id}`)).data;
+    const op = cmp.rows.find((r: any) => r.key === 'operator');
+    assert.equal(op.a, `после #${a0.id} проверка`);
+    assert.equal(op.b, `после #${a0.id} проверка → #${a1.id} проверка → ${m.key} ручная → #${tr.id} обучение`);
+    assert.equal(cmp.conclusion, 'Отличается только: тестовый оператор');
+    assert.equal(cmp.comparable, true);
+  } finally {
+    await t.close();
+  }
+});
+
+test('сравнение по снимку входных данных: другое стартовое сообщение или настройка стенда — условия различаются; запись без перечня сопоставимость не подтверждает', async () => {
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-cmp-'));
+  fs.cpSync(CONFIG, cfg, { recursive: true });
+  const t = await startStand({ CLAWGYM_CONFIG: cfg });
+  const run = async () => t.waitRun((await t.api('POST', '/api/runs', { config: 'demo-check' })).data.id);
+  try {
+    const a = await run();
+    fs.appendFileSync(path.join(cfg, 'contracts/start-message.txt'), '\nПриоритет обращения: высокий.');
+    await t.api('POST', '/api/config/reload');
+    const b = await run();
+    const file = (r: any, f: string) => r.snapshot.files.find((x: any) => x.file === f);
+    for (const f of ['contracts/start-message.txt', 'contracts/tool-defaults.yaml', 'templates/aefclaw-a2a-message.json', 'prompts/operator-v1.txt']) {
+      assert.match(file(a, f)?.sha256 ?? '', /^[0-9a-f]{64}$/, f);
+      assert.equal(file(a, f).hash, file(a, f).sha256.slice(0, 4), 'короткая метка — начало полного хеша');
+    }
+    assert.notEqual(file(a, 'contracts/start-message.txt').sha256, file(b, 'contracts/start-message.txt').sha256);
+    const ab = (await t.api('GET', `/api/compare?a=${a.id}&b=${b.id}`)).data;
+    assert.equal(ab.comparable, false);
+    assert.equal(ab.conclusion, 'Отличается только: контракт инструментов');
+    assert.deepEqual(ab.rows.find((r: any) => r.key === 'contract').details, ['contracts/start-message.txt']);
+
+    // Настройка стенда из окружения — тоже условие эксперимента.
+    const turn = t.app.env.turnTimeoutMs;
+    t.app.env.turnTimeoutMs = 600_000;
+    const c = await run().finally(() => (t.app.env.turnTimeoutMs = turn));
+    const bc = (await t.api('GET', `/api/compare?a=${b.id}&b=${c.id}`)).data;
+    assert.equal(bc.conclusion, 'Отличается только: настройки стенда');
+    assert.deepEqual(bc.rows.find((r: any) => r.key === 'stand').details, ['TURN_TIMEOUT_MS: 900000 → 600000']);
+    assert.equal((await t.api('GET', `/api/compare?a=${b.id}&b=${b.id}`)).data.conclusion, 'Условия совпадают');
+
+    // Запись до 28.10.2026 — без перечня входных данных: совпадение коротких меток сопоставимость не подтверждает.
+    const legacy = structuredClone(t.app.runs.get(b.id));
+    legacy.snapshot.settings = null;
+    const old = compareRuns(legacy, t.app.runs.get(b.id));
+    assert.equal(old.comparable, false);
+    assert.equal(old.conclusion, 'Сопоставимость не подтверждена');
+    assert.match(old.limitations[0], new RegExp(`В #${b.id} нет полного перечня входных данных`));
+  } finally {
+    await t.close();
+    fs.rmSync(cfg, { recursive: true, force: true });
   }
 });

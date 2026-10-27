@@ -5,6 +5,7 @@ import type { CaseDef, Issue, StubDef } from '../config/types.js';
 import { resolveEnvRefs } from '../config/loader.js';
 import { buildPlan, describePlan } from '../runner/plan.js';
 import { resolveRun, type RunOverrides } from '../runner/resolve.js';
+import { stepLabel, stepsAfter } from '../runner/operators.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { operatorLabel } from '../results/compare.js';
 import type { RunRecord } from '../runner/types.js';
@@ -214,7 +215,7 @@ export function directory(app: App) {
         urlResolved: url.missing.length ? null : url.value,
         missing: url.missing,
         headers: Object.entries(a.request.headers).map(([k, v]) => ({ name: k, value: /\$\{env:/.test(v) ? v : /authorization|key|token/i.test(k) ? '***' : v })),
-        body: a.request.bodySource ?? 'встроенный шаблон',
+        body: a.request.bodyFile?.file ?? 'встроенный шаблон',
         textPath: a.request.textPath ?? '{{text}} в шаблоне',
         taskIdHeader: a.request.taskIdHeader,
         senderIdHeader: a.request.senderIdHeader,
@@ -256,7 +257,7 @@ export function runConfigs(app: App) {
   return [...reg.runs.values()]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((r) => {
-      const p = resolveRun(reg, app.env, r.id, {}, app.runs.list());
+      const p = resolveRun(reg, app.env, r.id, {}, app.runs.list(), app.operators);
       const b = reg.baskets.get(r.basket);
       const last = app.runs.list().find((x) => x.configId === r.id) ?? null;
       return {
@@ -278,14 +279,16 @@ const FINISHED = new Set(['completed', 'stopped']);
 
 export function preview(app: App, id: string, overrides: RunOverrides) {
   const runs = app.runs.list();
-  const p = resolveRun(app.registry, app.env, id, overrides, runs);
+  const p = resolveRun(app.registry, app.env, id, overrides, runs, app.operators);
   const r = p.resolved;
   const cfg = app.registry.runs.get(id);
   const queued = runs.filter((x) => x.status === 'queued' || x.status === 'running');
+  // Через что оператор прошёл после прогона: продолжение возьмёт его текущие скиллы, а не те, что были сразу после прогона.
+  const later = (x: RunRecord) => stepsAfter(app.operators.history(x.lines[0]?.senderId ?? ''), x.id).map(stepLabel);
   // На чьём тестовом операторе можно продолжить: завершённые прогоны того же агента, где линии начинались.
   const continueOptions = runs
     .filter((x) => FINISHED.has(x.status) && x.settings.agent.id === cfg?.agent && x.lines.some((l) => l.senderId))
-    .map((x) => ({ id: x.id, title: x.title, type: x.type, configId: x.configId, finishedAt: x.finishedAt, lines: x.lines.length, testOperator: operatorLabel(x) }));
+    .map((x) => ({ id: x.id, title: x.title, type: x.type, configId: x.configId, finishedAt: x.finishedAt, lines: x.lines.length, testOperator: operatorLabel(x), later: later(x) }));
   return {
     ok: p.ok,
     issues: p.issues,
@@ -306,7 +309,15 @@ export function preview(app: App, id: string, overrides: RunOverrides) {
           agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, commands: r.agent.commands, build: r.agent.build, model: r.agent.model },
           testOperator:
             r.operator.mode === 'continue'
-              ? { mode: 'continue', run: r.operator.source.id, title: r.operator.source.title, type: r.operator.source.type, lines: r.operator.lines }
+              ? {
+                  mode: 'continue',
+                  run: r.operator.source.id,
+                  title: r.operator.source.title,
+                  type: r.operator.source.type,
+                  lines: r.operator.lines,
+                  history: (r.operator.lines[0]?.history ?? []).map(stepLabel),
+                  later: later(r.operator.source),
+                }
               : { mode: 'new' },
           operator: r.models.operator ? { id: r.models.operator.id, title: r.models.operator.title, provider: r.models.operator.provider } : null,
           judge: r.models.judge ? { id: r.models.judge.id, title: r.models.judge.title, provider: r.models.judge.provider } : null,

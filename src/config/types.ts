@@ -52,6 +52,10 @@ export interface ContractDef {
   startMessage: { file: string; text: string; hash: string };
   defaults: Record<string, StubDef[]>;
   defaultsSource?: Source;
+  /** Путь файла умолчаний, если он есть, даже нечитаемый: его ошибки должны остановить прогон. */
+  defaultsFile: string | null;
+  /** Файлы ответов data/…, на которые ссылаются заглушки по умолчанию. */
+  defaultsData: Source[];
 }
 
 // ---------- Кейс и заглушки ----------
@@ -198,7 +202,8 @@ export interface AgentDef {
     method: string;
     headers: Record<string, string>;
     body: unknown;
-    bodySource: string | null;
+    /** Файл шаблона тела (templates/…) с исходным текстом; null — тело задано в самом подключении. */
+    bodyFile: Source | null;
     textPath: string | null;
     taskIdHeader: string;
     senderIdHeader: string;

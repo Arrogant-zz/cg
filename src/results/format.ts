@@ -1,13 +1,13 @@
-// Версия формата записей в CLAWGYM_VAR: run.json, журналы кейсов, ручные сессии. Каталог живёт дольше кода (синхронизация
-// с S3), поэтому совместимость со старыми записями собрана здесь: остальной код видит только текущий вид.
+// Версия формата записей в CLAWGYM_VAR: run.json, журналы кейсов, ручные сессии, журнал тестовых операторов. Каталог живёт
+// дольше кода (синхронизация с S3), поэтому совместимость со старыми записями собрана здесь: остальной код видит только текущий вид.
 // Несовместимое изменение записи — новая версия RECORD_FORMAT и шаг миграции к ней в списках ниже.
 // Журналы HTTP-обменов — массивы без версии: их только показывают. Записи в памяти поля format не несут, его ставит сохранение.
-import type { RunRecord, ItemRecord } from '../runner/types.js';
+import type { RunRecord, ItemRecord, OperatorStep } from '../runner/types.js';
 import type { ManualRecord } from '../manual/manual.js';
 import type { ExecutionJSON } from '../execution/execution.js';
 import { errorMessage } from '../util/core.js';
 
-export const RECORD_FORMAT = 1;
+export const RECORD_FORMAT = 2;
 
 export type SavedExecution = ExecutionJSON & { item?: ItemRecord | null };
 
@@ -56,6 +56,35 @@ function sessionFrom0(s: any): void {
   if (s.execution) execFrom0(s.execution);
 }
 
-export const loadRunRecord = (raw: unknown) => load<RunRecord>(raw, [runFrom0]);
-export const loadExecutionRecord = (raw: unknown) => load<SavedExecution>(raw, [execFrom0]);
-export const loadSessionRecord = (raw: unknown) => load<ManualRecord>(raw, [sessionFrom0]);
+// ------------------------------------------------------------------ формат 1 → 2
+
+// Формат 1 — записи 28.10.2026 до перечня входных данных. В снимке нет полных хешей и настроек окружения: такие прогоны
+// сравниваются по коротким меткам основных файлов, и сопоставимость не подтверждается. История оператора — только прогоны.
+
+function runFrom1(r: any): void {
+  const snap = (r.snapshot ??= { createdAt: r.createdAt ?? '', files: [] });
+  snap.settings ??= null;
+  for (const f of (snap.files ??= [])) {
+    f.group ??= null;
+    f.sha256 ??= null;
+  }
+  for (const l of r.lines) for (const h of (l.history ??= [])) h.kind ??= 'run';
+}
+
+/** История оператора до сессии появилась в формате 2: у прежних сессий она неизвестна. */
+function sessionFrom1(s: any): void {
+  s.history ??= null;
+}
+
+const unchanged: Step = () => {};
+
+/** Журнал тестовых операторов (operators.json): x-a2a-sender-id → шаги истории. */
+export interface OperatorsRecord {
+  operators: Record<string, OperatorStep[]>;
+}
+
+export const loadRunRecord = (raw: unknown) => load<RunRecord>(raw, [runFrom0, runFrom1]);
+export const loadExecutionRecord = (raw: unknown) => load<SavedExecution>(raw, [execFrom0, unchanged]);
+export const loadSessionRecord = (raw: unknown) => load<ManualRecord>(raw, [sessionFrom0, sessionFrom1]);
+/** Журнал операторов появился в формате 2: прежних версий у него нет. */
+export const loadOperatorsRecord = (raw: unknown) => load<OperatorsRecord>(raw, [unchanged, unchanged]);

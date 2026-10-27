@@ -62,7 +62,7 @@ export async function render(ctx) {
 <div class="mn sec" style="gap: 6px">
 <div class="sec-h" style="padding-bottom: 10px"><h2 class="h2" id="cmp-h">Сопоставимость условий</h2><span class="pill ${c.comparable ? 'pass' : 'na'}">${c.comparable ? icon('check') : ''}${c.conclusion}</span></div>
 <div class="tw"><table class="tbl"><thead><tr><th>Настройка</th><th>#${c.a.id}</th><th>#${c.b.id}</th><th></th></tr></thead>
-<tbody>${c.rows.map((r) => html`<tr><td class="${r.focus ? 'm5' : 't2'}">${r.title}</td><td><span class="${r.key === 'basket' || r.key === 'contract' ? 'mono' : ''}">${r.a}</span></td><td><span class="${r.key === 'basket' || r.key === 'contract' ? 'mono' : ''}">${r.b}</span></td><td class="r">${r.same ? mk(true) : r.focus ? html`<span class="pill live">сравниваем это</span>` : html`<span class="pill fail">различается</span>`}</td></tr>`)}</tbody></table></div>
+<tbody>${c.rows.map((r) => html`<tr><td class="${r.focus ? 'm5' : 't2'}">${r.title}${r.details?.length ? html`<div class="cap mono">${r.details.join('; ')}</div>` : ''}</td><td><span class="${r.key === 'basket' || r.key === 'contract' ? 'mono' : ''}">${r.a}</span></td><td><span class="${r.key === 'basket' || r.key === 'contract' ? 'mono' : ''}">${r.b}</span></td><td class="r">${r.same ? mk(true) : r.focus ? html`<span class="pill live">сравниваем это</span>` : html`<span class="pill fail">различается</span>`}</td></tr>`)}</tbody></table></div>
 </div>
 <aside class="sd" style="gap: 20px">
 ${c.limitations.length ? html`<div class="soft p20 col" style="gap: 10px"><span class="row m5" style="gap: 8px">${icon('warn')}Ограничения</span>${c.limitations.map((l) => html`<span class="sm t2">${l}</span>`)}</div>` : ''}

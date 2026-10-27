@@ -12,7 +12,8 @@ import { createProvider, modelReadiness } from '../llm/provider.js';
 import { checkAllowedHost } from '../agent/client.js';
 import { resolveEnvRefs } from '../config/loader.js';
 import type { CommandName } from '../agent/commands.js';
-import type { PrepItem } from '../runner/types.js';
+import type { OperatorStep, PrepItem } from '../runner/types.js';
+import { manualStep, stepLabel, type OperatorHold } from '../runner/operators.js';
 import { sessionKey } from '../results/store.js';
 import { HttpError } from '../util/http.js';
 import { errorMessage, nowIso, randomHex, requestRef } from '../util/core.js';
@@ -38,6 +39,8 @@ export interface ManualRecord {
   agent: { id: string; title: string; build: string | null; model: string | null };
   senderId: string;
   senderMode: 'new' | 'existing';
+  /** Через что оператор прошёл до этой сессии, по журналу операторов; null — сессия до 28.10.2026. */
+  history: OperatorStep[] | null;
   prep: PrepItem[];
   busy: string | null;
   evaluation: (Evaluation & { stats: ExecStats }) | null;
@@ -48,6 +51,8 @@ interface Live {
   exec: Execution;
   channel: AgentChannel;
   owner: string;
+  /** Тестовый оператор занят сессией до её завершения: прогон или другая сессия его не возьмут. */
+  hold: OperatorHold;
 }
 
 export class ManualManager {
@@ -108,19 +113,22 @@ export class ManualManager {
     // Существующий оператор задаётся явно: пустой id — ошибка, а не тихая подмена новым оператором.
     const senderMode = req.sender?.mode === 'existing' ? 'existing' : 'new';
     const existingId = req.sender?.id?.trim() ?? '';
-    if (senderMode === 'existing') {
-      if (!existingId) throw new HttpError(400, 'Укажите x-a2a-sender-id существующего тестового оператора');
-      // Один диалог на оператора: он не должен быть занят прогоном или другой ручной сессией.
-      const busyRun = app.runs.list().find((r) => (r.status === 'queued' || r.status === 'running') && r.lines.some((l) => l.senderId === existingId));
-      if (busyRun) throw new HttpError(409, `Тестовый оператор занят прогоном #${busyRun.id}: дождитесь его завершения`);
-      const busySession = this.list().find((m) => m.status === 'active' && m.senderId === existingId);
-      if (busySession) throw new HttpError(409, `Тестовый оператор занят ручной сессией ${busySession.key}: завершите её`);
-    }
-
-    const id = await app.store.nextNumber('session');
+    if (senderMode === 'existing' && !existingId) throw new HttpError(400, 'Укажите x-a2a-sender-id существующего тестового оператора');
+    // Один диалог на оператора: резерв до первого await, как у прогона, — занятый прогоном или другой сессией оператор даёт 409.
+    const hold = app.operators.reserve(senderMode === 'existing' ? [existingId] : [], 'manual', 'открываемой ручной сессией');
+    const id = await app.store.nextNumber('session').catch((e) => {
+      hold.release();
+      throw e;
+    });
     const owner = `manual-${id}`;
-    if (!app.sessions.tryAcquire(owner)) throw new HttpError(409, `Все сессии агента заняты: ${app.sessions.used} из ${app.sessions.capacity}`);
+    if (!app.sessions.tryAcquire(owner)) {
+      hold.release();
+      throw new HttpError(409, `Все сессии агента заняты: ${app.sessions.used} из ${app.sessions.capacity}`);
+    }
+    hold.label = `ручной сессией ${sessionKey(id)}`;
     const senderId = senderMode === 'existing' ? existingId : `${app.env.senderPrefix}manual-${id}-${randomHex(3)}`;
+    if (senderMode === 'new') hold.add(senderId);
+    const history = app.operators.history(senderId);
     const caseNumber = `CG-M-${String(id).padStart(2, '0')}`;
     const exec = new Execution({
       id: sessionKey(id),
@@ -149,21 +157,25 @@ export class ManualManager {
       agent: { id: agent.id, title: agent.title, build: agent.build, model: agent.model },
       senderId,
       senderMode,
+      history,
       prep: [],
       busy: 'подготовка',
       evaluation: null,
       execution: null,
     };
     this.sessions.set(id, rec);
-    const live: Live = { exec, channel, owner };
+    const live: Live = { exec, channel, owner, hold };
     this.live.set(id, live);
+    // Сессия — шаг истории оператора: в ней можно отправить /case-capture и /skill-curator, а значит, изменить его скиллы.
+    app.operators.record(senderId, manualStep(id, rec.key, c.title));
     exec.onChange(() => this.schedule(id));
     this.schedule(id, true);
 
     // Скиллы — у тестового оператора в агенте: ClawGym их не устанавливает. Обязательный /reset и стартовое сообщение — в фоне.
+    const known = history.length ? `скиллы после ${history.map(stepLabel).join(' → ')}` : 'скиллы, накопленные им раньше; его прогонов ClawGym не знает';
     rec.prep.push({
       ok: true,
-      text: senderMode === 'new' ? 'Новый тестовый оператор: стартовые скиллы сборки агента' : 'Существующий тестовый оператор: скиллы, накопленные им раньше',
+      text: senderMode === 'new' ? 'Новый тестовый оператор: стартовые скиллы сборки агента' : `Существующий тестовый оператор: ${known}`,
       note: `x-a2a-sender-id = ${senderId}`,
       ts: nowIso(),
     });
@@ -325,6 +337,7 @@ export class ManualManager {
     await this.app.store.saveSessionHttp(id, l.exec.http);
     this.app.bindings.unbindAll(l.exec);
     this.app.sessions.release(l.owner);
+    l.hold.release();
     this.live.delete(id);
     this.schedule(id, true);
     return rec;

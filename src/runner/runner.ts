@@ -9,15 +9,16 @@ import { evaluate, execStats } from '../execution/evaluate.js';
 import type { CommandEvent, StatusEvent } from '../execution/events.js';
 import { LlmOperator } from '../operator/operator.js';
 import { LlmJudge } from '../judge/judge.js';
-import { ANSWER_JUDGE_PROMPT_VERSION, ANSWER_JUDGE_SYSTEM, JUDGE_PROMPT_VERSION, JUDGE_SYSTEM, OPERATOR_PROMPT_VERSION, OPERATOR_SYSTEM } from '../operator/prompts.js';
+import { ANSWER_JUDGE_PROMPT_VERSION, JUDGE_PROMPT_VERSION, OPERATOR_PROMPT_VERSION } from '../operator/prompts.js';
 import { itemScores, scoringOf } from '../metrics/scoring.js';
 import { createProvider } from '../llm/provider.js';
 import { resolveRun, type ResolvedItem, type ResolvedRun, type RunOverrides } from './resolve.js';
-import type { CuratorPassRecord, ItemRecord, LineRecord, RunRecord } from './types.js';
+import { runStep, stepLabel, stepsAfter, type OperatorHold } from './operators.js';
+import type { CuratorPassRecord, ItemRecord, LineRecord, RunRecord, SnapshotFile } from './types.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { runKey } from '../results/store.js';
 import { HttpError } from '../util/http.js';
-import { errorMessage, nowIso, randomHex, requestRef } from '../util/core.js';
+import { errorMessage, nowIso, randomHex, requestRef, sha256, shortHash } from '../util/core.js';
 import { logger } from '../util/log.js';
 
 const log = logger('runner');
@@ -28,16 +29,11 @@ interface Live {
   execs: Map<string, Execution>;
   /** Прогон взят из очереди в работу. */
   started: boolean;
+  /** Тестовые операторы прогона заняты от запуска до конца: другой прогон или ручная сессия их не возьмут. */
+  hold: OperatorHold;
 }
 
 export const execName = (line: number, pos: number) => `L${line}-P${String(pos).padStart(2, '0')}`;
-
-/** Секреты в копии файла подключения для снимка: значения, заданные не ссылкой на окружение, скрываются. */
-export function redactSecrets(text: string): string {
-  return text.replace(/^(\s*["']?(?:authorization|proxy-authorization|x-api-key|api-key|apikey|apiKey|token|password)["']?\s*:\s*)(.+)$/gim, (m, k: string, v: string) =>
-    v.includes('${env:') ? m : `${k}"***"`,
-  );
-}
 
 export class RunManager {
   runs = new Map<number, RunRecord>();
@@ -108,87 +104,79 @@ export class RunManager {
   /** Запуск: проверка настроек, снимок, постановка в очередь (RUN-01, RUN-02). */
   async create(configId: string, overrides: RunOverrides = {}): Promise<RunRecord> {
     const app = this.app;
-    const preview = resolveRun(app.registry, app.env, configId, overrides, this.list());
+    const preview = resolveRun(app.registry, app.env, configId, overrides, this.list(), app.operators);
     if (!preview.ok || !preview.resolved) {
       throw new HttpError(422, 'Прогон не запустится: ошибка в настройках. Агенту не отправлено ни одного запроса', preview.issues.filter((i) => i.severity === 'error'));
     }
     const r = preview.resolved;
-    // Один диалог на оператора: продолжать нельзя, пока на нём идёт ручная сессия.
+    // Один диалог на оператора. Резерв — до первого await: из двух одновременных запусков на одном операторе второй получает 409,
+    // а не идёт параллельно. Ручная сессия держит оператора так же (замечание ревью от 28.10.2026).
     const op = r.operator;
-    const manual = op.mode === 'continue' ? app.manual.list().find((m) => m.status === 'active' && op.lines.some((l) => l.senderId === m.senderId)) : null;
-    if (manual) throw new HttpError(409, `Тестовый оператор занят ручной сессией ${manual.key}: завершите её`);
-    const id = await app.store.nextNumber('run');
-    const createdAt = nowIso();
+    const hold = app.operators.reserve(op.mode === 'continue' ? op.lines.map((l) => l.senderId) : [], 'run', 'запускаемым прогоном');
+    let queued = false;
+    try {
+      const id = await app.store.nextNumber('run');
+      hold.label = `прогоном #${id}`;
+      const createdAt = nowIso();
 
-    // Снимок: копии файлов, участвующих в прогоне; правка исходников потом не меняет результат.
-    const snapFiles: { file: string; hash: string }[] = [];
-    const texts = new Map<string, string>();
-    const contract = r.contract;
-    const sources = [
-      r.config.source,
-      r.basket.source,
-      r.agent.source,
-      ...(contract ? [contract.source] : []),
-      ...(contract?.defaultsSource ? [contract.defaultsSource] : []),
-      ...r.items.flatMap((i) => [i.solution?.source, i.caseDef?.source, ...(i.caseDef?.dataFiles ?? [])]),
-      ...[r.models.operator, r.models.judge].map((m) => m?.source),
-      ...r.metrics.map((m) => m.source),
-    ].filter(Boolean) as { file: string; hash: string; text: string }[];
-    for (const s of sources) if (!texts.has(s.file)) texts.set(s.file, s.file.startsWith('agents/') || s.file.startsWith('models/') ? redactSecrets(s.text) : s.text);
-    if (contract) texts.set(contract.startMessage.file, contract.startMessage.text);
-    if (r.agent.request.bodySource) texts.set(r.agent.request.bodySource, JSON.stringify(r.agent.request.body, null, 2));
-    texts.set(`prompts/${OPERATOR_PROMPT_VERSION}.txt`, OPERATOR_SYSTEM);
-    texts.set(`prompts/${JUDGE_PROMPT_VERSION}.txt`, JUDGE_SYSTEM);
-    texts.set(`prompts/${ANSWER_JUDGE_PROMPT_VERSION}.txt`, ANSWER_JUDGE_SYSTEM);
-    for (const [file, text] of texts) {
-      await app.store.saveText(id, `snapshot/${file}`, text);
-      snapFiles.push({ file, hash: sources.find((s) => s.file === file)?.hash ?? '' });
+      // Снимок: копии входных данных по перечню, с которым прогон прошёл проверку; правка исходников потом не меняет результат.
+      // Полный SHA-256 — для сравнения прогонов, короткая метка — для интерфейса.
+      const snapFiles: SnapshotFile[] = [];
+      for (const f of preview.inputs.files) {
+        await app.store.saveText(id, `snapshot/${f.file}`, f.text);
+        snapFiles.push({ file: f.file, group: f.group, hash: shortHash(f.text), sha256: sha256(f.text) });
+      }
+      const contract = r.contract;
+
+      const lines: LineRecord[] = [];
+      for (let li = 1; li <= r.repetitions; li++) lines.push(this.newLine(li, r));
+      const run: RunRecord = {
+        id,
+        key: runKey(id),
+        configId: r.config.id,
+        configFile: r.config.source.file,
+        configHash: r.config.source.hash,
+        title: r.config.title,
+        type: r.basket.type,
+        status: 'queued',
+        error: null,
+        createdAt,
+        startAt: r.startAt,
+        startedAt: null,
+        finishedAt: null,
+        overrides: { ...overrides },
+        settings: {
+          basket: { id: r.basket.id, title: r.basket.title, file: r.basket.source.file, hash: r.basket.source.hash, type: r.basket.type, curator: r.basket.curator, checking: r.basket.checking, items: r.items.filter((i) => i.kind === 'solution').length },
+          agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, hash: r.agent.source.hash, build: r.agent.build, model: r.agent.model, learningKit: r.agent.learningKit },
+          testOperator: op.mode === 'continue' ? { mode: 'continue', run: op.source.id, title: op.source.title, type: op.source.type, configId: op.source.configId } : { mode: 'new' },
+          operator: r.models.operator ? { id: r.models.operator.id, title: r.models.operator.title, provider: r.models.operator.provider, model: r.models.operator.model, file: r.models.operator.source.file, hash: r.models.operator.source.hash } : null,
+          judge: r.models.judge ? { id: r.models.judge.id, title: r.models.judge.title, provider: r.models.judge.provider, model: r.models.judge.model, file: r.models.judge.source.file, hash: r.models.judge.source.hash } : null,
+          metrics: r.metrics.map((m) => ({ id: m.id, title: m.title, builtin: m.builtin, version: m.version, params: m.params })),
+          limits: r.limits,
+          repetitions: r.repetitions,
+          prompts: { operator: OPERATOR_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION, answerJudge: ANSWER_JUDGE_PROMPT_VERSION },
+          contract: contract ? { file: contract.source.file, hash: contract.source.hash, version: contract.version, conditional: contract.conditional } : { file: '', hash: '', version: '', conditional: true },
+        },
+        snapshot: { createdAt, files: snapFiles, settings: preview.inputs.settings },
+        plan: preview.plan,
+        planText: preview.planText,
+        metricsAvailability: preview.metrics,
+        warnings: preview.issues.filter((i) => i.severity === 'warning'),
+        lines,
+        summary: null,
+      };
+      this.runs.set(id, run);
+      this.live.set(id, { abort: new AbortController(), resolved: r, execs: new Map(), started: false, hold });
+      queued = true;
+      await app.store.saveRun(run);
+      this.publish(run);
+      log.info(`Прогон #${id} (${r.config.id}) поставлен в очередь`);
+      setImmediate(() => this.tick());
+      return run;
+    } finally {
+      // Запуск сорвался до очереди — операторы снова свободны. Прогон в очереди отпускает их сам, когда закончится.
+      if (!queued) hold.release();
     }
-
-    const lines: LineRecord[] = [];
-    for (let li = 1; li <= r.repetitions; li++) lines.push(this.newLine(li, r));
-    const run: RunRecord = {
-      id,
-      key: runKey(id),
-      configId: r.config.id,
-      configFile: r.config.source.file,
-      configHash: r.config.source.hash,
-      title: r.config.title,
-      type: r.basket.type,
-      status: 'queued',
-      error: null,
-      createdAt,
-      startAt: r.startAt,
-      startedAt: null,
-      finishedAt: null,
-      overrides: { ...overrides },
-      settings: {
-        basket: { id: r.basket.id, title: r.basket.title, file: r.basket.source.file, hash: r.basket.source.hash, type: r.basket.type, curator: r.basket.curator, checking: r.basket.checking, items: r.items.filter((i) => i.kind === 'solution').length },
-        agent: { id: r.agent.id, title: r.agent.title, file: r.agent.source.file, hash: r.agent.source.hash, build: r.agent.build, model: r.agent.model, learningKit: r.agent.learningKit },
-        testOperator: op.mode === 'continue' ? { mode: 'continue', run: op.source.id, title: op.source.title, type: op.source.type, configId: op.source.configId } : { mode: 'new' },
-        operator: r.models.operator ? { id: r.models.operator.id, title: r.models.operator.title, provider: r.models.operator.provider, model: r.models.operator.model, file: r.models.operator.source.file, hash: r.models.operator.source.hash } : null,
-        judge: r.models.judge ? { id: r.models.judge.id, title: r.models.judge.title, provider: r.models.judge.provider, model: r.models.judge.model, file: r.models.judge.source.file, hash: r.models.judge.source.hash } : null,
-        metrics: r.metrics.map((m) => ({ id: m.id, title: m.title, builtin: m.builtin, version: m.version, params: m.params })),
-        limits: r.limits,
-        repetitions: r.repetitions,
-        prompts: { operator: OPERATOR_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION, answerJudge: ANSWER_JUDGE_PROMPT_VERSION },
-        contract: contract ? { file: contract.source.file, hash: contract.source.hash, version: contract.version, conditional: contract.conditional } : { file: '', hash: '', version: '', conditional: true },
-      },
-      snapshot: { createdAt, files: snapFiles },
-      plan: preview.plan,
-      planText: preview.planText,
-      metricsAvailability: preview.metrics,
-      warnings: preview.issues.filter((i) => i.severity === 'warning'),
-      lines,
-      summary: null,
-    };
-    this.runs.set(id, run);
-    this.live.set(id, { abort: new AbortController(), resolved: r, execs: new Map(), started: false });
-    await app.store.saveRun(run);
-    this.publish(run);
-    log.info(`Прогон #${id} (${r.config.id}) поставлен в очередь`);
-    setImmediate(() => this.tick());
-    return run;
   }
 
   private newLine(index: number, r: ResolvedRun): LineRecord {
@@ -244,6 +232,7 @@ export class RunManager {
       run.finishedAt = nowIso();
       for (const l of run.lines) l.status = 'stopped';
       live?.abort.abort(new Error('Прогон остановлен'));
+      live?.hold.release();
       this.live.delete(id);
       await this.app.store.saveRun(run);
       this.publish(run);
@@ -288,8 +277,8 @@ export class RunManager {
   }
 
   private async execute(run: RunRecord, live: Live): Promise<void> {
-    await Promise.all(run.lines.map((l) => this.runLine(run, l, live)));
     try {
+      await Promise.all(run.lines.map((l) => this.runLine(run, l, live)));
       const aborted = live.abort.signal.aborted;
       run.finishedAt = nowIso();
       if (aborted) run.status = 'stopped';
@@ -301,9 +290,10 @@ export class RunManager {
       run.summary = computeRunMetrics(run);
       await this.app.store.saveRun(run);
     } finally {
-      // Линии закончились: привязки x-task-id и живая запись снимаются, даже если упали метрики или запись run.json.
-      // Иначе прогон нельзя удалить, а поздние вызовы агента попадают в законченные кейсы.
+      // Линии закончились: привязки x-task-id, резерв операторов и живая запись снимаются, даже если упали метрики или запись run.json.
+      // Иначе прогон нельзя удалить, его операторы остаются занятыми, а поздние вызовы агента попадают в законченные кейсы.
       for (const e of live.execs.values()) this.app.bindings.unbindAll(e);
+      live.hold.release();
       this.live.delete(run.id);
     }
     this.publish(run);
@@ -329,7 +319,12 @@ export class RunManager {
       }
       line.status = 'running';
       line.startedAt = nowIso();
-      line.senderId ||= `${app.env.senderPrefix}${r.basket.id}-r${run.id}-${line.index}-${randomHex(3)}`;
+      if (!line.senderId) {
+        line.senderId = `${app.env.senderPrefix}${r.basket.id}-r${run.id}-${line.index}-${randomHex(3)}`;
+        live.hold.add(line.senderId);
+      }
+      // Оператор начал этот прогон: шаг в журнале операторов сразу, до первого запроса агенту.
+      app.operators.record(line.senderId, runStep(run, line.index));
       this.operatorPrep(run, line);
 
       const channel = new AgentChannel(r.agent, app.env, app.locks, app.unfinished);
@@ -409,17 +404,23 @@ export class RunManager {
     return [...line.items].reverse().find((i) => i.kind === 'case' && i.outcome)?.pos ?? 0;
   }
 
-  /** Тестовый оператор линии: новый — стартовые скиллы сборки агента, продолжение — скиллы после его прошлых прогонов. Файлы скиллов ClawGym не видит. */
+  /** Тестовый оператор линии: новый — стартовые скиллы сборки агента, продолжение — текущие скиллы после всей его истории. Файлы скиллов ClawGym не видит. */
   private operatorPrep(run: RunRecord, line: LineRecord): void {
     const ts = nowIso();
-    const last = line.history[line.history.length - 1];
-    const earlier = line.history.slice(0, -1).map((h) => `#${h.run}`);
+    const src = run.settings.testOperator;
+    const later = src.mode === 'continue' ? stepsAfter(line.history, src.run) : [];
+    const path = line.history.map(stepLabel).join(' → ');
     line.prep = {
       status: 'ok',
       durationMs: 0,
       items: [
-        last
-          ? { ok: true, text: `Продолжение на тестовом операторе прогона #${last.run} «${last.title}»: скиллы — после этого прогона`, note: earlier.length ? `раньше оператор прошёл ${earlier.join(', ')}` : '', ts }
+        src.mode === 'continue'
+          ? {
+              ok: true,
+              text: `Продолжение на тестовом операторе прогона #${src.run} «${src.title}»: скиллы — ${later.length ? `текущие, после ${later.map(stepLabel).join(' → ')}` : 'после этого прогона'}`,
+              note: line.history.length > 1 ? `история оператора: ${path}` : '',
+              ts,
+            }
           : { ok: true, text: 'Новый тестовый оператор: стартовые скиллы сборки агента', note: '', ts },
         { ok: true, text: `x-a2a-sender-id = ${line.senderId}`, note: 'на этом операторе можно продолжить следующий прогон', ts },
       ],

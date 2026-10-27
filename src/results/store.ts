@@ -2,10 +2,10 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDir, listDirs, readJsonIf, safeJoin, settleWrites, walkFiles, writeJsonAtomic, writeText } from '../util/fsx.js';
-import { errorMessage, randomHex } from '../util/core.js';
+import { errorMessage, isPlainObject, randomHex } from '../util/core.js';
 import { KeyedMutex } from '../util/sync.js';
-import { RECORD_FORMAT, loadExecutionRecord, loadRunRecord, loadSessionRecord, type Loaded, type SavedExecution } from './format.js';
-import type { RunRecord } from '../runner/types.js';
+import { RECORD_FORMAT, loadExecutionRecord, loadOperatorsRecord, loadRunRecord, loadSessionRecord, type Loaded, type SavedExecution } from './format.js';
+import type { OperatorStep, RunRecord } from '../runner/types.js';
 import type { ManualRecord } from '../manual/manual.js';
 
 export const runKey = (id: number) => `run-${String(id).padStart(4, '0')}`;
@@ -149,6 +149,22 @@ export class ResultsStore {
 
   async saveSession(id: number, data: ManualRecord): Promise<void> {
     await writeJsonAtomic(path.join(this.sessionsDir, `${sessionKey(id)}.json`), { format: RECORD_FORMAT, ...data });
+  }
+
+  /** Журнал тестовых операторов: x-a2a-sender-id → через что оператор прошёл. Нет файла — undefined. */
+  async loadOperators(onSkip?: OnSkip): Promise<Record<string, OperatorStep[]> | undefined> {
+    const file = path.join(this.dataDir, 'operators.json');
+    const r = await this.readRecord(file, loadOperatorsRecord, onSkip);
+    if (!r) return undefined;
+    if (!isPlainObject(r.operators) || !Object.values(r.operators).every(Array.isArray)) {
+      onSkip?.(path.relative(this.dataDir, file), 'нет списка операторов с шагами истории');
+      return undefined;
+    }
+    return r.operators;
+  }
+
+  async saveOperators(operators: Record<string, OperatorStep[]>): Promise<void> {
+    await writeJsonAtomic(path.join(this.dataDir, 'operators.json'), { format: RECORD_FORMAT, operators });
   }
 
   async loadSessions(onSkip?: OnSkip): Promise<ManualRecord[]> {

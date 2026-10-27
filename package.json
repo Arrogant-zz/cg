@@ -22,6 +22,7 @@
     "import-tools": "node dist/src/cli.js import-tools",
     "demo": "node dist/dev/demo.js",
     "test": "npm run build && node --test dist/test/*.test.js",
+    "test:stress": "npm run build && node --test --test-concurrency=1 dist/test/stress/*.test.js",
     "clean": "rm -rf dist"
   },
   "dependencies": {

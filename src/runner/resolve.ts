@@ -19,7 +19,9 @@ import { checkAllowedHost } from '../agent/client.js';
 import { modelReadiness } from '../llm/provider.js';
 import { plural } from '../util/core.js';
 import { buildPlan, describePlan, type PlanStep } from './plan.js';
-import type { OperatorStep, RunRecord } from './types.js';
+import { runInputs, type RunInputs } from './inputs.js';
+import { operatorsFromRecords, runStep, stepLabel, stepsAfter, type OperatorState } from './operators.js';
+import type { LineRecord, OperatorStep, RunRecord } from './types.js';
 
 export interface ResolvedItem {
   index: number;
@@ -48,7 +50,10 @@ export interface ResolvedRun {
   /** Контракт инструментов на момент запуска: перечитывание настроек не меняет идущий прогон. Без контракта прогон не запускается. */
   contract: ContractDef | null;
   models: { operator: ModelDef | null; judge: ModelDef | null };
-  /** Тестовый оператор: новый — стартовые скиллы сборки агента; продолжение — скиллы, полученные в прошлом прогоне. */
+  /**
+   * Тестовый оператор: новый — стартовые скиллы сборки агента; продолжение — оператор выбранного прогона с текущими скиллами.
+   * history — всё, через что оператор прошёл, по журналу операторов, в том числе после выбранного прогона.
+   */
   operator: { mode: 'new' } | { mode: 'continue'; source: RunRecord; lines: { senderId: string; history: OperatorStep[] }[] };
   metrics: MetricDef[];
   limits: Limits;
@@ -63,6 +68,8 @@ export interface RunPreview {
   plan: PlanStep[];
   planText: string[];
   metrics: MetricAvailability[];
+  /** Входные данные прогона: по этому же перечню проверяются ошибки файлов, собирается снимок и сравниваются прогоны. */
+  inputs: RunInputs;
   involvedFiles: string[];
 }
 
@@ -73,27 +80,28 @@ export interface RunOverrides {
 
 const FINISHED = new Set(['completed', 'stopped']);
 
-export function resolveRun(reg: Registry, env: Env, runId: string, overrides: RunOverrides = {}, runs: RunRecord[] = []): RunPreview {
+/** operators — резервы и журнал тестовых операторов; без него история и занятость берутся из записей runs. */
+export function resolveRun(
+  reg: Registry,
+  env: Env,
+  runId: string,
+  overrides: RunOverrides = {},
+  runs: RunRecord[] = [],
+  operators: OperatorState = operatorsFromRecords(runs),
+): RunPreview {
   const issues: Issue[] = [];
   const cfg = reg.runs.get(runId);
-  const empty: RunPreview = { ok: false, issues, resolved: null, plan: [], planText: [], metrics: [], involvedFiles: [] };
+  const empty: RunPreview = { ok: false, issues, resolved: null, plan: [], planText: [], metrics: [], inputs: { files: [], settings: [] }, involvedFiles: [] };
   if (!cfg) {
     issues.push({ severity: 'error', file: `runs/${runId}.yaml`, reason: `Настройка прогона «${runId}» не найдена или не загрузилась`, action: 'Проверьте файл в runs/' });
     return empty;
   }
   const err = (file: string, reason: string, field?: string, action?: string) => issues.push({ severity: 'error', file, reason, field, action });
   const warn = (file: string, reason: string, field?: string) => issues.push({ severity: 'warning', file, reason, field });
-  const files = new Set<string>([cfg.source.file]);
-  if (reg.contract) files.add(reg.contract.source.file);
   if (!reg.contract) err('contracts/tools.json', 'Контракт инструментов не загружен — агенту нечего отдать как MCP-сервер');
 
   const basket = reg.baskets.get(cfg.basket) ?? null;
   const agent = reg.agents.get(cfg.agent) ?? null;
-  if (basket) files.add(basket.source.file);
-  if (agent) {
-    files.add(agent.source.file);
-    if (agent.request.bodySource) files.add(agent.request.bodySource);
-  }
 
   // Элементы корзины с решениями и кейсами.
   const items: ResolvedItem[] = [];
@@ -106,11 +114,6 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
     pos++;
     const solution = reg.solutions.get(it.solution) ?? null;
     const caseDef = solution ? reg.cases.get(solution.case) ?? null : null;
-    if (solution) files.add(solution.source.file);
-    if (caseDef) {
-      files.add(caseDef.source.file);
-      for (const d of caseDef.dataFiles) files.add(d.file);
-    }
     items.push({
       index: it.index,
       kind: 'solution',
@@ -125,7 +128,6 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
   // Модели оператора и оценки (MOD-01). Модель агента задана его сборкой: ClawGym её не переключает.
   const pick = (role: 'operator' | 'judge') => (cfg.models[role] ? reg.models.get(cfg.models[role]!) ?? null : null);
   const models = { operator: pick('operator'), judge: pick('judge') };
-  for (const m of Object.values(models)) if (m) files.add(m.source.file);
   if (!cfg.models.operator) err(cfg.source.file, 'Не выбрана модель LLM-оператора: автоматическое решение кейсов невозможно', 'models.operator');
   for (const role of ['operator', 'judge'] as const) {
     const m = models[role];
@@ -158,6 +160,7 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
 
   // Тестовый оператор (решение владельца от 27.10.2026). Скиллы живут в агенте у оператора (x-a2a-sender-id) и меняются только
   // сборкой или обучением. Новый оператор начинает со стартовых скиллов сборки; продолжение получает то, чему оператор научился раньше.
+  // Прогон выбирает оператора, а не его прошлое состояние: отката скиллов нет (замечание ревью от 28.10.2026).
   let operator: ResolvedRun['operator'] = { mode: 'new' };
   const want = overrides.continueFrom ?? (cfg.continueFrom ? 'config' : 'new');
   if (want !== 'new') {
@@ -170,16 +173,24 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
       else err(cfg.source.file, `Прогон #${want} для продолжения не найден`, 'continueFrom');
     } else {
       const lines = source.lines.slice(0, cfg.repetitions);
-      const busy = runs.find((x) => (x.status === 'queued' || x.status === 'running') && x.lines.some((l) => lines.some((s) => s.senderId && s.senderId === l.senderId)));
+      const busy = lines.map((l) => (l.senderId ? operators.holder(l.senderId) : null)).find(Boolean);
       if (!FINISHED.has(source.status)) err(cfg.source.file, `Прогон #${source.id} не завершён: продолжить можно только завершённый или остановленный`, 'continueFrom');
       else if (agent && source.settings.agent.id !== agent.id) err(cfg.source.file, `Оператор прогона #${source.id} работал с агентом «${source.settings.agent.id}»: его скиллы остались там`, 'continueFrom');
       else if (source.lines.length < cfg.repetitions) err(cfg.source.file, `В прогоне #${source.id} ${source.lines.length} ${plural(source.lines.length, 'линия', 'линии', 'линий')}, а повторений ${cfg.repetitions}: каждой линии нужен свой оператор`, 'repetitions');
       else if (lines.some((l) => !l.senderId)) err(cfg.source.file, `Линия прогона #${source.id} не начиналась — у неё нет тестового оператора`, 'continueFrom');
-      else if (busy) err(cfg.source.file, `Оператор прогона #${source.id} занят прогоном #${busy.id}`, 'continueFrom', 'Дождитесь его завершения');
+      else if (busy) err(cfg.source.file, `Оператор прогона #${source.id} занят ${busy}`, 'continueFrom', 'Дождитесь завершения или выберите другого оператора');
       else {
-        if (source.status === 'stopped') warn(cfg.source.file, `Прогон #${source.id} остановлен: скиллы оператора — на момент остановки`, 'continueFrom');
-        const step = (index: number): OperatorStep => ({ run: source.id, title: source.title, type: source.type, line: index });
-        operator = { mode: 'continue', source, lines: lines.map((l) => ({ senderId: l.senderId, history: [...l.history, step(l.index)] })) };
+        // Журнал не знает оператора, если var восстановлен без operators.json и без прогонов, где тот начинал: история — как в выбранном прогоне.
+        const known = (l: LineRecord): OperatorStep[] => {
+          const h = operators.history(l.senderId);
+          return h.length ? h : [...l.history, ...(l.startedAt ? [runStep(source, l.index)] : [])];
+        };
+        const opLines = lines.map((l) => ({ senderId: l.senderId, history: known(l) }));
+        const later = [...new Set(opLines.flatMap((l) => stepsAfter(l.history, source.id).map(stepLabel)))];
+        if (later.length) {
+          warn(cfg.source.file, `После прогона #${source.id} его оператор прошёл ${later.join(', ')}: агент продолжит с текущими скиллами оператора, а не с теми, что были сразу после #${source.id}`, 'continueFrom');
+        } else if (source.status === 'stopped') warn(cfg.source.file, `Прогон #${source.id} остановлен: скиллы оператора — на момент остановки`, 'continueFrom');
+        operator = { mode: 'continue', source, lines: opLines };
       }
     }
   }
@@ -187,7 +198,6 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
   // Метрики и доступность их источников (MET-02).
   const all = [...reg.metrics.values()];
   const metrics = cfg.metrics.includes('*') ? all : cfg.metrics.map((id) => reg.metrics.get(id)).filter((m): m is MetricDef => !!m);
-  for (const m of metrics) files.add(m.source.file);
   const availability = metrics.map((m) => availabilityOf(m, { basket, agent, models }));
 
   // Кейсы и решения корзины.
@@ -198,7 +208,10 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
     if (!it.caseDef.reference.criteria.length && cfg.models.judge) warn(it.caseDef.source.file, 'У кейса нет критериев ответа — LLM-оценка пропускается', 'reference.criteria');
   }
 
-  // Ошибки самих файлов, участвующих в прогоне.
+  // Ошибки самих файлов, участвующих в прогоне, — по тому же перечню, что снимок и сравнение: стартовый шаблон,
+  // заглушки по умолчанию и их файлы ответов тоже останавливают запуск (замечание ревью от 28.10.2026).
+  const inputs = runInputs({ config: cfg, basket, items, agent, contract: reg.contract, models, metrics }, env);
+  const files = new Set(inputs.files.map((f) => f.file));
   for (const i of reg.issues) if (files.has(i.file) && !issues.some((x) => x.file === i.file && x.reason === i.reason && x.field === i.field)) issues.push(i);
 
   const plan = basket ? buildPlan(basket) : [];
@@ -219,7 +232,7 @@ export function resolveRun(reg: Registry, env: Env, runId: string, overrides: Ru
           startAt: cfg.startAt,
         }
       : null;
-  return { ok, issues, resolved, plan, planText: basket ? describePlan(basket, plan) : [], metrics: availability, involvedFiles: [...files].sort() };
+  return { ok, issues, resolved, plan, planText: basket ? describePlan(basket, plan) : [], metrics: availability, inputs, involvedFiles: [...files].sort() };
 }
 
 function availabilityOf(
