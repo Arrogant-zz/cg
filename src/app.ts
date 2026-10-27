@@ -26,6 +26,14 @@ export interface AgentHealth {
   at: string;
 }
 
+const ICONS: Record<string, string> = {
+  '/favicon.ico': 'assets/favicon.ico',
+  '/favicon.svg': 'assets/clawgym-icon.svg',
+  '/favicon-32.png': 'assets/favicon-32.png',
+  '/apple-touch-icon.png': 'assets/apple-touch-icon.png',
+  '/apple-touch-icon-precomposed.png': 'assets/apple-touch-icon.png',
+};
+
 export class App {
   registry!: Registry;
   store: ResultsStore;
@@ -111,9 +119,9 @@ export class App {
       if (await routes.handle(req, res)) return;
       if (req.method === 'GET') {
         if (url.pathname.startsWith('/static/') && serveStatic(this.env.webDir, url.pathname.slice('/static/'.length), res)) return;
-        if (url.pathname === '/favicon.ico' || url.pathname === '/favicon.svg') {
-          if (serveStatic(this.env.webDir, 'assets/clawgym-icon.svg', res, 'max-age=86400')) return;
-        }
+        // Иконки по корневым адресам: Safari и iOS запрашивают /favicon.ico и /apple-touch-icon.png сами.
+        const icon = ICONS[url.pathname];
+        if (icon && serveStatic(this.env.webDir, icon, res, 'max-age=86400')) return;
         if (!url.pathname.startsWith('/api/') && serveStatic(this.env.webDir, 'index.html', res)) return;
       }
       res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'Не найдено' }));

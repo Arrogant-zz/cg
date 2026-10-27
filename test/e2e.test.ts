@@ -202,3 +202,15 @@ test('удаление: завершённый прогон и закрытая 
   assert.ok(next.data.id > run.id);
   await s.waitRun(next.data.id);
 });
+
+test('иконка вкладки: ICO и PNG для Safari, SVG для остальных браузеров', async () => {
+  const page = await (await fetch(s.base + '/')).text();
+  for (const href of ['/favicon.ico', '/favicon.svg', '/apple-touch-icon.png']) assert.ok(page.includes(`href="${href}"`), href);
+  const ico = await fetch(s.base + '/favicon.ico');
+  assert.equal(ico.headers.get('content-type'), 'image/x-icon');
+  assert.deepEqual([...new Uint8Array(await ico.arrayBuffer()).slice(0, 4)], [0, 0, 1, 0], 'настоящий ICO, а не SVG');
+  const png = await fetch(s.base + '/apple-touch-icon.png');
+  assert.equal(png.headers.get('content-type'), 'image/png');
+  assert.deepEqual([...new Uint8Array(await png.arrayBuffer()).slice(1, 4)], [0x50, 0x4e, 0x47]);
+  assert.equal((await fetch(s.base + '/favicon.svg')).headers.get('content-type'), 'image/svg+xml');
+});
