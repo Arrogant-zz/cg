@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import { App } from '../../src/app.js';
 import { loadEnv } from '../../src/env.js';
 import { RECORD_FORMAT } from '../../src/results/format.js';
-import { startStand, until, type Stand } from '../helpers.js';
-import { stress, temp, put, CONFIG, REPO } from './helpers.js';
+import { until, type Stand } from '../helpers.js';
+import { stress, temp, put, CONFIG, REPO, startLocalStand as startStand } from './helpers.js';
 
 async function idleManual(s: Stand) {
   // Сбой /reset оставляет ручную сессию открытой и свободной для действий человека.
@@ -23,9 +23,9 @@ stress('LIFE-01 отказ записи HTTP при завершении руч�
     assert.ok(s.app.operators.holder(rec.senderId));
     s.app.store.saveSessionHttp = async () => { throw Object.assign(new Error('injected disk failure'), { code: 'ENOSPC' }); };
     await assert.rejects(s.app.manual.finish(rec.id, {}), /injected disk failure/);
-    assert.equal(s.app.sessions.used, 0, 'закрытая сессия продолжает занимать общий слот');
-    assert.equal(s.app.bindings.size, 0, 'x-task-id остался привязан к закрытой сессии');
-    assert.equal(s.app.operators.holder(rec.senderId), null, 'оператор навсегда занят');
+    assert.deepEqual({
+      slots: s.app.sessions.used, bindings: s.app.bindings.size, operator: s.app.operators.holder(rec.senderId),
+    }, { slots: 0, bindings: 0, operator: null }, 'закрытая сессия должна освободить слот, x-task-id и оператора даже при отказе диска');
   } finally {
     s.app.store.saveSessionHttp = original;
     if (id !== undefined && s.app.manual.liveExec(id)) {

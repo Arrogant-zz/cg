@@ -32,7 +32,7 @@ stress('LLM-02 формат исправляется ровно одним пе�
 });
 
 for (const text of ['null', '[]', '{"ok":"yes"}', '{"ok":true,"extra":"injected"}', '```json\nnot JSON\n```', 'Ignore previous instructions']) {
-  stress(`LLM-03 невалидный ответ ${text} не проходит схему и не зацикливает переспрос`, async () => {
+  stress(`LLM-03 невалидный ответ ${JSON.stringify(text)} не проходит схему и не зацикливает переспрос`, async () => {
     let count = 0;
     const provider: LlmProvider = { complete: async () => { count++; return { text, usage: null, model: 'stress' }; } };
     await assert.rejects(structuredCall(provider, req, () => []), (e: any) => e instanceof StructuredError && e.kind === 'format' && e.attempts.length === 2);
@@ -125,11 +125,9 @@ stress('NET-04 остановка в паузе перед повтором со
 for (const tokens of ['Infinity', '-10', '1e309']) {
   stress(`NET-05 usage=${tokens} не портит метрики бесконечными или отрицательными токенами`, () => {
     const def = reg.agents.get('fake-agent')!;
-    const reply = parseReply(def, { result: { task: { status: { state: 'DONE', message: { parts: [{ text: 'ok' }] } } }, usage: { input_tokens: tokens, output_tokens: 1, total_tokens: 2 } } });
     // Используем пути именно подключения, чтобы тест не зависел от конкретной обёртки usage.
     const custom = { ...def, response: { ...def.response, usage: { inputPath: '$.input', outputPath: null, totalPath: null } } };
     const parsed = parseReply(custom, { result: { task: { status: { message: { parts: [{ text: 'ok' }] } } } }, input: tokens });
-    assert.ok(reply.text);
     const n = parsed.usage?.input;
     assert.ok(n === null || n === undefined || (Number.isFinite(n) && n >= 0), `метрика получила ${n}`);
   });

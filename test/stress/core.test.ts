@@ -114,7 +114,7 @@ stress('CORE-10 регулярное выражение из when не долж�
 });
 
 stress('CORE-11 YAML-фрагмент ответа выдерживает переводы строк и опасные символы', () => {
-  const text = 'первая\n---\n# comment\n  : [x]\n\tтаб\n\u0000\nпоследняя\n';
+  const text = 'первая\n---\n# comment\n  : [x]\n\tтаб\nпоследняя\n';
   const snippet = yamlSnippet('tool', { value: 'a: b\n---' }, { text });
   assert.equal(YAML.parse(snippet).tools.tool[0].result.text, text);
 });

@@ -7,10 +7,19 @@ import http from 'node:http';
 import { loadRegistry } from '../../src/config/loader.js';
 import { loadEnv } from '../../src/env.js';
 import { Execution, type ExecutionInit } from '../../src/execution/execution.js';
-import { CONFIG, REPO } from '../helpers.js';
+import { CONFIG, REPO, startStand } from '../helpers.js';
 
 export { CONFIG, REPO };
 export const stress = (name: string, fn: (t: TestContext) => unknown | Promise<unknown>) => test(name, { timeout: 8000 }, async (t) => { await fn(t); });
+
+/** Даже если у разработчика настроено подключение к стенду, стресс-тесты используют loopback. */
+export const startLocalStand = (extra: Record<string, string> = {}) => startStand({
+  ...extra,
+  AEF_CLAW_URL: 'http://127.0.0.1:1/a2a', AEF_CLAW_HEALTH_URL: 'http://127.0.0.1:1/health',
+  AGENT_ALLOWED_HOSTS: 'localhost,127.0.0.1,::1',
+  MCP_PORT: '', MCP_PATH: '/mcp', MCP_TASK_ID_HEADER: 'x-task-id', MCP_RESPONSE_MODE: 'json',
+  CLAWGYM_HOME: '', CLAWGYM_DATA: '', REQUEST_REF_SECRET: 'synthetic-stress-secret',
+});
 
 export function temp(t: TestContext): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-stress-'));

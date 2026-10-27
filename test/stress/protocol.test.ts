@@ -1,7 +1,7 @@
 import { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startStand, type Stand } from '../helpers.js';
-import { stress, request, execution } from './helpers.js';
+import type { Stand } from '../helpers.js';
+import { stress, request, execution, startLocalStand as startStand } from './helpers.js';
 
 let s: Stand;
 before(async () => { s = await startStand(); }, { timeout: 10000 });
@@ -12,6 +12,7 @@ const rpc = (body: unknown, headers: Record<string, string> = {}) => request(s.b
 for (const value of [null, [], [null], [null, { jsonrpc: '2.0', id: 'valid', method: 'ping' }]]) {
   stress(`RPC-01 невалидный пакет ${JSON.stringify(value)} возвращает JSON-RPC ошибку`, async () => {
     const r = await rpc(value);
+    assert.equal((await request(s.base, '/health', undefined, {}, 'GET')).status, 200);
     assert.equal(r.status, 200, `обработчик выбросил исключение: HTTP ${r.status}`);
     const responses = Array.isArray(r.data) ? r.data : [r.data];
     assert.ok(responses.some((x: any) => x?.error?.code === -32600), r.text || 'пустой ответ');
@@ -91,8 +92,8 @@ stress('RPC-10 initialize → DELETE удаляет ровно созданну�
 for (const url of ['/api/cases/%', '/api/runs/%C0%AF', '/api/cases/%E0%A4%A']) {
   stress(`HTTP-01 битый URL ${url} даёт 400, сервер остаётся доступен`, async () => {
     const r = await request(s.base, url, undefined, {}, 'GET');
-    assert.equal(r.status, 400, `некорректный URL классифицирован как HTTP ${r.status}`);
     assert.equal((await request(s.base, '/health', undefined, {}, 'GET')).status, 200);
+    assert.equal(r.status, 400, `некорректный URL классифицирован как HTTP ${r.status}`);
   });
 }
 
