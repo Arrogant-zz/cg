@@ -1,12 +1,13 @@
 // fake-gigachat: GigaChat API v1 и v2 для офлайн-тестов, по OpenAPI developers.sber.ru (октябрь 2026).
 // По HTTPS требует клиентский сертификат, подписанный переданным CA. Запрос сверяется со схемой: нарушение — HTTP 422, как у GigaChat.
 // Модель с суффиксом -blacklist или -length имитирует срабатывание фильтра или обрезку ответа.
+// Заголовок X-Fake-Fail: operator | judge — HTTP 503 для этой роли; format — ответ не JSON (headers в models/*.yaml).
 import crypto from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import type { TLSSocket } from 'node:tls';
-import { fakeAnswer } from '../fake-llm/brain.js';
+import { fakeAnswer, fakeRole } from './brain.js';
 
 export interface FakeGigaChatRequest {
   path: string;
@@ -114,7 +115,9 @@ export async function startFakeGigaChat(opts: { port?: number; host?: string; tl
     if (problem) return send(422, { status: 422, message: problem });
     const system = textOf(body.messages.find((m: any) => m.role === 'system')?.content);
     const user = textOf(body.messages.find((m: any) => m.role === 'user')?.content);
-    const content = fakeAnswer(system, user);
+    const fail = String(req.headers['x-fake-fail'] ?? '');
+    if (fail && fail === fakeRole(system)) return send(503, { status: 503, message: 'fake-gigachat: модель недоступна' });
+    const content = fail === 'format' ? 'Не JSON, а рассуждение' : fakeAnswer(system, user);
     const input = Math.ceil((system.length + user.length) / 4);
     const output = Math.ceil(content.length / 4);
     const created = Math.floor(Date.now() / 1000);

@@ -1,6 +1,6 @@
 # Форматы файлов настроек
 
-Дата: 26 октября 2026 года. Задача CFG-01 из `gap.md`. Форматы — предложение реализации: владелец задал только состав сущностей и их связи.
+Дата: 27 октября 2026 года. Задача CFG-01 из `gap.md`. Форматы — предложение реализации: владелец задал только состав сущностей и их связи.
 
 Файлы пишутся в YAML; `contracts/tools.json` и шаблоны тела — в JSON. ClawGym проверяет их по схемам из `src/config/schemas.ts`. Неизвестное поле даёт предупреждение и игнорируется, чтобы файлы для следующих версий продолжали загружаться. Ошибка указывает файл, строку, поле, причину и действие. Файлы с именем на `_` не загружаются.
 
@@ -8,58 +8,59 @@
 
 ## Кейс — `cases/<id>.yaml`
 
-Ситуация, стартовые данные, заглушки и общий эталон. Поведение оператора в кейсе не хранится.
+Ситуация, факты, заглушки инструментов и общий эталон. Поведение оператора в кейсе не хранится. Пример — `cases/spasibo-bonus-missing.yaml`; инструменты — из `tools/list` стенда оркестратора.
 
 ```yaml
-id: card-blocked-wrong-pin            # совпадает с именем файла, иначе предупреждение
-title: Карта заблокирована после неверных PIN
-topic: Карты / Блокировка             # точная тематика: идёт в стартовое сообщение и /case-capture
-tags: [Карты, PIN]
+id: spasibo-bonus-missing             # совпадает с именем файла, иначе предупреждение
+title: Не начислены бонусы СберСпасибо
+topic: СберСпасибо / Начисление бонусов   # тематика: идёт в /case-capture
+tags: [СберСпасибо, Бонусы]
 situation: >                          # для людей и оператора; агенту не передаётся
-  Клиент трижды ввёл неверный PIN…
-start:                                # поля шаблона contracts/start-message.txt: {{start.*}}
-  channel: чат
-  client: { id: CL-TEST-0017, name: Тестовый Клиент А-17 }
-  card: "****4417"
+  Клиент 12 октября купил товар у партнёра и не получил бонусы…
+start: {}                             # необязательно: поля {{start.*}} для шаблона старта
 facts:                                # факты, на вопросы о которых оператор может отвечать
-  - PIN-код не менялся больше года.
+  - Партнёр подтверждает покупки в течение 30 дней.
 state:                                # начальное состояние выполнения: {{state.*}}, меняется effect
-  card: blocked
+  case: open
 tools:                                # заглушки по имени инструмента
-  get_card_status:
-    - id: blocked-pin                 # имя видно в журнале; по умолчанию <tool>#<n>
-      when: { card: "****4417" }      # подмножество аргументов
+  get_static_attributes_assigned:     # ответы этих заглушек подставляются и в стартовое сообщение: {{tools.<имя>}}
+    - id: static                      # имя видно в журнале; по умолчанию <tool>#<n>
       result:
-        json: { status: "{{state.card}}", reason: pin_attempts }
-  unblock_card:
-    - id: ok
-      sequence:                       # ответы на последовательные вызовы, последний повторяется
-        - result: { json: { status: active } }
-          effect: { card: active }    # изменение состояния этого выполнения
-        - error: { message: already_active, code: CARD_ALREADY_ACTIVE }
-  close_case:
-    - delayMs: 1200
-      result: { file: cases/closed.json }   # файл из data/
+        json: { classifier: { categoryName: СберСпасибо / Начисление бонусов } }
+  get_spasibo_history_info:
+    - id: history
+      when: { dateFrom: "2026-10-01" }   # подмножество аргументов
+      result:
+        json: { operations: [{ date: "2026-10-12", bonus: 249, status: PENDING_PARTNER_CONFIRMATION }] }
+  get_close_with_answer:
+    - id: closed
+      delayMs: 600
+      result: { json: { status: CLOSED } }
+      effect: { case: closed }        # изменение состояния этого выполнения
+  create_expertise:
+    - sequence:                       # ответы на последовательные вызовы, последний повторяется
+        - result: { file: expertise/created.json }   # файл из data/
+        - error: { message: already_exists, code: EXPERTISE_EXISTS }
 reference:                            # общий эталон; агенту не передаётся
-  procedure: [Проверить статус карты, Проверить последние операции, …]
-  answer: Карта разблокирована, клиенту рекомендовано сменить PIN.
+  procedure: [Запросить основную информацию Спасибо, Проверить историю операций СберСпасибо, …]
+  answer: Бонусы ожидают подтверждения партнёром и будут начислены после него.
   criteria:                           # для LLM-оценки
-    - id: change-pin
-      text: Советует сменить PIN
-      lesson: L-cards-005             # урок, к которому относится критерий
-      hint: сменить PIN               # подсказка только для dev/fake-llm (models: devHints)
+    - id: pending
+      text: Сообщает, что бонусы ожидают подтверждения покупки партнёром
+      lesson: L-spasibo-005           # урок, к которому относится критерий
+      hint: ожидают подтверждения     # подсказка только для dev/fake-gigachat (models: devHints)
   actions:                            # для автоматических проверок
     required:
-      - tool: get_recent_operations
-        before: unblock_card          # порядок
-        lesson: L-cards-004
-        args: { card: "****4417" }    # необязательные условия на аргументы
+      - tool: get_spasibo_history_info
+        before: get_close_with_answer # порядок
+        lesson: L-spasibo-004
+        args: { dateFrom: "2026-10-01" }   # необязательные условия на аргументы
     forbidden:
-      - tool: reissue_card
-    final: close_case                 # итоговое действие должно быть выполнено
+      - tool: create_expertise
+    final: get_close_with_answer      # итоговое действие должно быть выполнено
   lessons:                            # каталог известных уроков кейса (MET-04)
-    - id: L-cards-004
-      rule: Перед разблокировкой посмотреть последние операции по карте.
+    - id: L-spasibo-004
+      rule: Перед ответом проверить историю операций СберСпасибо за период покупки.
 ```
 
 **Условия в `when`:**
@@ -71,7 +72,7 @@ reference:                            # общий эталон; агенту н
 | `{ in: [a, b] }` | Одно из значений |
 | `{ exists: true }` | Аргумент задан |
 | `{ not: x }` | Не равно |
-| `client.id` | Вложенный аргумент |
+| `request.channelCode` | Вложенный аргумент |
 
 Из подходящих заглушек выбирается та, у которой больше условий. Если в кейсе подходящей заглушки нет, поиск продолжается в `contracts/tool-defaults.yaml`.
 
@@ -85,15 +86,16 @@ reference:                            # общий эталон; агенту н
 | `{{start.*}}` | Стартовые данные |
 | `{{args.*}}` | Аргументы вызова |
 | `{{state.*}}` | Состояние выполнения |
-| `{{execution.caseNumber}}`, `{{execution.requestRef}}` | Номер обращения и `request_ref` выполнения |
+| `{{execution.taskId}}` | x-task-id выполнения; в оркестраторе он же `request_ref` |
+| `{{execution.caseNumber}}`, `{{execution.requestRef}}` | Номер обращения и `request_ref` по INTEGRATION.md |
 | `{{now}}` | Текущее время |
 
 ## Решение — `solutions/<кейс>/<имя>.yaml`
 
-Сценарий LLM-оператора для кейса. Идентификатор по умолчанию — путь без `solutions/` и расширения, например `card-blocked-wrong-pin/explain-now`.
+Сценарий LLM-оператора для кейса. Идентификатор по умолчанию — путь без `solutions/` и расширения, например `spasibo-bonus-missing/explain-now`.
 
 ```yaml
-case: card-blocked-wrong-pin
+case: spasibo-bonus-missing
 title: «Объясняет сразу»
 goal: усвоит ли агент правило, если его сразу объяснили.
 operator:
@@ -108,8 +110,8 @@ limits: { maxTurns: 20 }              # переопределение лими�
 ## Корзина — `baskets/<id>.yaml`
 
 ```yaml
-id: cards-train
-title: Обучение · блокировки и перевыпуск карт
+id: second-line-train
+title: Обучение · СберСпасибо и оспаривание операций
 type: training                        # training | checking; смешивать нельзя
 curator:                              # только training; без блока curator не запускается
   every: 2                            # каждые N завершённых решений; 0 — без периодических
@@ -118,7 +120,7 @@ curator:                              # только training; без блока
 checking:                             # только checking
   confirmations: approve              # approve — без вмешательства оператора; operator — решает LLM
 items:                                # фиксированный порядок; решение может повторяться
-  - solution: card-blocked-wrong-pin/explain-now
+  - solution: spasibo-bonus-missing/explain-now
     limits: { maxTurns: 12 }          # параметры конкретного элемента
   - curator: true                     # явный шаг curator (только training)
 ```
@@ -128,15 +130,15 @@ items:                                # фиксированный порядо�
 ## Настройка прогона — `runs/<id>.yaml`
 
 ```yaml
-id: demo-cards-train
-title: Обучение · карты · fake-agent
-basket: cards-train                   # тип прогона берётся из корзины
+id: demo-train
+title: Обучение · вторая линия · fake-agent
+basket: second-line-train             # тип прогона берётся из корзины
 agent: fake-agent
 models:
   agent: fake-agent-a                 # только если подключение переключает модель запросом
   operator: fake-operator             # обязательно
   judge: fake-judge                   # без неё ответ «не оценён»
-skillset: { id: cards, version: V1 }  # version: latest — последняя готовая; build — стартовые скиллы сборки; none — без набора
+skillset: { id: second-line, version: V1 }  # version: latest — последняя готовая; build — стартовые скиллы сборки; none — без набора
 metrics: all                          # или список идентификаторов из metrics/
 limits: { maxTurns: 20, maxDurationSec: 900, maxOperatorCalls: 30 }
 repetitions: 1                        # независимые линии со своими сессиями и копиями
@@ -145,36 +147,38 @@ startAt: 2026-10-27T01:00:00+03:00    # необязательное время 
 
 ## Агент — `agents/<id>.yaml`
 
+Реальное подключение — `agents/aef-claw.yaml`, тестовое — `agents/fake-agent.yaml` с тем же форматом запроса и ответа.
+
 ```yaml
-id: pagurus-stand
-title: Pagurus · стенд
+id: aef-claw
+title: AEFClaw
 request:
-  url: ${env:AGENT_URL}
+  url: ${env:AEF_CLAW_URL:-http://127.0.0.1:18789/a2a}
   method: POST
-  headers: { Authorization: Bearer ${env:PAGURUS_STAND_TOKEN} }
-  body: templates/a2a-message.json    # файл или объект; {{text}}, {{taskId}}, {{senderId}}, {{messageId}}
-  textPath: $.params.message.parts[0].text   # вместо {{text}} в шаблоне
+  headers: { a2a-version: "1.0" }     # токен шлюза, если нужен: Authorization: ${env:AEF_CLAW_AUTHORIZATION}
+  body: templates/aefclaw-a2a-message.json   # файл или объект; {{text}}, {{taskId}}, {{senderId}}, {{messageId}}
+  textPath: $.params.message.parts[0].text   # необязательно: вместо {{text}} в шаблоне
   taskIdHeader: x-task-id
-  senderIdHeader: x-a2a-sender-id
+  senderIdHeader: X-A2A-Sender-Id
   taskIdScope: execution              # execution | message
   timeoutMs: 900000
 response:
   mode: sync                          # реализован только sync
-  replyPath: $.result.parts[*].text
-  statusPath: $.result.status.state
-  errorPath: $.error.message
-  usage: { inputPath: …, outputPath: …, totalPath: … }
+  replyPath: $.result.task.status.message.parts[*].text
+  statusPath: $.result.task.status.state
+  errorPath: $.error.message          # JSON-RPC error
+  usage: { inputPath: …, outputPath: …, totalPath: … }   # у AEFClaw путь неизвестен — «нет данных»
 commands:                             # по умолчанию — тексты из INTEGRATION.md
   reset: /reset
-  capture: /case-capture request_ref={{requestRef}} category={{topic}}   # {{taskId}} — x-task-id стартового сообщения
+  capture: /case-capture request_ref={{taskId}} category={{topic}}   # {{taskId}} — x-task-id стартового сообщения; {{requestRef}} — HMAC по INTEGRATION.md
   curator: /skill-curator
-mcp: { contract: contracts/tools.json, protocolVersion: 2025-06-18, taskIdFrom: [header, meta, argument] }
+mcp: { contract: contracts/tools.json, protocolVersion: 2025-06-18, taskIdFrom: [header] }   # header | meta | argument
 model: { switch: none, fixed: main }  # none — задана развёртыванием; request — значение по model.path
 sessions: { max: 3 }
 skills:
   installer: none                     # none | directory (root, skillsDir, pendingDir) | http (baseUrl, headers)
-  note: Установка набора в AEFClaw не подтверждена
-healthUrl: …                          # без него доступность «не проверяется»
+  note: API установки набора у AEFClaw нет
+healthUrl: ${env:AEF_CLAW_HEALTH_URL:-http://127.0.0.1:18789/readyz}   # без него доступность «не проверяется»
 build: метка сборки
 learningKit: версия комплекта обучения
 ```
@@ -183,34 +187,28 @@ learningKit: версия комплекта обучения
 
 ## Модель — `models/<id>.yaml`
 
+Решение владельца от 27 октября 2026 года: модели оператора и оценки — только GigaChat; провайдеры OpenAI и Anthropic убраны. Тестовые `fake-operator` и `fake-judge` — тот же GigaChat API на `dev/fake-gigachat`.
+
 ```yaml
-id: op-a
+id: op-gigachat
 roles: [operator]                     # agent | operator | judge
-provider: openai-compatible           # openai-compatible | gigachat-v1 | gigachat-v2 | anthropic | deployment | agent-request
-baseUrl: ${env:LLM_BASE_URL}
-path: /chat/completions               # необязательно: путь метода, если шлюз отличается от стандартного
-apiKey: ${env:LLM_API_KEY}
-model: ${env:LLM_OPERATOR_MODEL}
-headers: {}
-tls:                                  # необязательно: клиентский сертификат (mTLS)
-  cert: ${env:LLM_CERT_FILE}          # клиентский сертификат, PEM
-  key: ${env:LLM_KEY_FILE}            # закрытый ключ, PEM
+provider: gigachat-v1                 # gigachat-v1 | gigachat-v2 | deployment | agent-request
+baseUrl: ${env:GIGACHAT_BASE_URL}
+model: ${env:GIGACHAT_OPERATOR_MODEL:-GigaChat-2-Max}
 params:
-  temperature: 0.3                    # не передаётся в Anthropic Messages API
+  temperature: 0.3                    # GigaChat принимает только больше 0
   maxTokens: 4000
   timeoutMs: 120000
   retries: 2                          # повторы при 429, 5xx и сетевых сбоях
-  responseFormat: json_schema         # json_schema | json_object | none
-  effort: medium                      # только anthropic
-  fallbacks: default                  # только anthropic; по умолчанию включён для claude-opus-5-5 и др.
-  devHints: false                     # только для dev/fake-llm
+  responseFormat: json_schema         # json_schema | none
+  devHints: false                     # только для dev/fake-gigachat
 ```
 
 Для роли `agent` используются провайдеры `deployment` (модель задана развёртыванием) и `agent-request` (значение `model` уходит в запрос агенту). Ответы оператора и судьи проверяются по JSON-схеме; при ошибке формата модель переспрашивается один раз.
 
 ### GigaChat — `gigachat-v1` и `gigachat-v2`
 
-Формат — по OpenAPI-спецификации GigaChat API на developers.sber.ru, прочитанной 26 октября 2026 года. С настоящим GigaChat не проверялся. Пример — `models/op-gigachat.yaml` (v1) и `models/judge-gigachat.yaml` (v2).
+Формат — по OpenAPI-спецификации GigaChat API на developers.sber.ru, прочитанной 26 октября 2026 года. С настоящим GigaChat не проверялся. Пример — `models/op-gigachat.yaml` (v1) и `models/judge-gigachat.yaml` (v2). Остальные поля модели: `path` — путь метода, если шлюз отличается; `apiKey` — токен в `Authorization`; `headers`.
 
 ```yaml
 id: judge-gigachat
@@ -252,17 +250,17 @@ params:
 ## Набор скиллов — `skillsets/<id>.yaml`
 
 ```yaml
-id: cards
-title: Карты · блокировки и перевыпуск
+id: second-line
+title: Вторая линия · СберСпасибо, карты, уведомления
 compatibility: { agent: fake-agent, learningKit: learning-scripts 2026.10 }
 versions:
   - id: V1
-    path: cards/V1                    # каталог skillsets/cards/V1 с файлами skills/learned/**
-    createdAt: 2026-10-21
+    path: second-line/V1              # каталог skillsets/second-line/V1 с файлами skills/learned/**
+    createdAt: 2026-10-27
     source: { kind: import, note: исходная версия }
 ```
 
-Файлы версии лежат с путями workspace: `skillsets/cards/V1/skills/learned/<скилл>/SKILL.md`. Контрольная сумма версии — sha256 строк «путь:sha256» по всем файлам.
+Файлы версии лежат с путями workspace: `skillsets/second-line/V1/skills/learned/<скилл>/SKILL.md`. Контрольная сумма версии — sha256 строк «путь:sha256» по всем файлам.
 
 Версии, полученные обучением, ClawGym сохраняет в `$CLAWGYM_DATA/skillsets/<набор>/V<n>/`: `version.json` (источник, прогон, линия, статус) и `files/`. Версии не перезаписываются.
 
@@ -302,7 +300,9 @@ metrics:
 ## Контракт — `contracts/`
 
 - `tools.json`:
-  - `tools[]` — `name`, `description`, `inputSchema`, `requiresConfirmation`, `kind`, `enabled`;
+  - `tools[]` — поля MCP как в `tools/list` оркестратора: `name`, `title`, `description`, `inputSchema`, `annotations` (`outputSchema`, `_meta` — если есть); агенту они отдаются без изменений;
+  - пометки ClawGym в том же объекте, агенту не отдаются: `requiresConfirmation`, `kind` (`info` | `action`), `enabled`;
+  - список снимается со стенда командой `import-tools`: поля MCP обновляются, пометки ClawGym сохраняются (README, раздел CLI);
   - `result.mode` — `text` | `structured` | `both`;
   - `errors` — тексты для агента с `{{tool}}`;
   - `conditional: true` — контракт ещё не сверен с оркестратором.

@@ -26,6 +26,8 @@ export interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Определение для tools/list: поля MCP из контракта как есть (title, annotations и др.), без полей ClawGym. */
+  listed: Record<string, unknown>;
   requiresConfirmation: boolean;
   kind: 'info' | 'action';
   /** false — инструмента нет в tools/list, вызов получает ошибку «не найден»; заглушки кейсов остаются доступны шаблону стартового сообщения. */
@@ -87,9 +89,19 @@ export interface ActionRequirement {
 export interface Criterion {
   id: string;
   text: string;
-  /** Подсказка только для fake-llm при офлайн-разработке; настоящему судье не передаётся. */
+  /** Подсказка только для dev/fake-gigachat при офлайн-разработке; настоящему судье не передаётся. */
   hint?: string;
   lesson?: string;
+}
+
+/** Классы финального действия (M1 по документу аналитика от 22.10.2026): перечень зафиксирован. */
+export const FINAL_CLASSES = ['close_answer', 'expertise', 'request_info', 'operator_instruction'] as const;
+export type FinalClass = (typeof FINAL_CLASSES)[number];
+
+/** Инструмент эталона для F1_tools; count — сколько вызовов нужно по эталонному сценарию. */
+export interface RefTool {
+  tool: string;
+  count: number;
 }
 
 export interface CaseDef {
@@ -105,6 +117,12 @@ export interface CaseDef {
   reference: {
     procedure: string[];
     answer: string;
+    /** Эталонный итоговый текст для A_judge: ответ клиенту, описание экспертизы или инструкция оператору. Пусто — берётся answer. */
+    finalText: string;
+    /** Класс финального действия; null — выводится из actions.final по соответствию в метрике final-action. */
+    finalClass: FinalClass | null;
+    /** Минимально достаточный набор инструментов для F1_tools; null — эталон не задан. */
+    tools: RefTool[] | null;
     criteria: Criterion[];
     required: ActionRequirement[];
     forbidden: ActionRequirement[];
@@ -223,7 +241,7 @@ export interface ModelTls {
   ca: string | null;
 }
 
-export type LlmProviderName = 'openai-compatible' | 'anthropic' | 'gigachat-v1' | 'gigachat-v2';
+export type LlmProviderName = 'gigachat-v1' | 'gigachat-v2';
 
 export interface ModelDef {
   id: string;
@@ -242,10 +260,8 @@ export interface ModelDef {
     maxTokens?: number;
     timeoutMs?: number;
     retries?: number;
-    responseFormat?: 'json_schema' | 'json_object' | 'none';
-    effort?: string;
-    fallbacks?: 'default' | 'off';
-    /** Только для fake-llm: в контекст попадают подсказки критериев (hint). */
+    responseFormat?: 'json_schema' | 'none';
+    /** Только для dev/fake-gigachat: в контекст попадают подсказки критериев (hint). */
     devHints?: boolean;
   };
   description: string;
@@ -296,6 +312,10 @@ export const BUILTIN_METRICS = [
   'tokens',
   'skill-changes',
   'operator-errors',
+  'final-action',
+  'tools-f1',
+  'answer-match',
+  'case-score',
 ] as const;
 export type BuiltinMetric = (typeof BUILTIN_METRICS)[number];
 

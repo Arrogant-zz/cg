@@ -1,0 +1,13 @@
+id: second-line
+title: Вторая линия · СберСпасибо, карты, уведомления
+description: Прикладные скиллы демо на инструментах стенда оркестратора. Комплект обучения (/case-capture, /skill-curator) и общие правила — часть версии агента.
+compatibility:
+  agent: fake-agent
+  learningKit: learning-scripts 2026.10
+versions:
+  - id: V1
+    path: second-line/V1
+    createdAt: 2026-10-27
+    source:
+      kind: import
+      note: синтетическая исходная версия для стенда

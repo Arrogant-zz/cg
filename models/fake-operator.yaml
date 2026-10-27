@@ -1,12 +1,13 @@
+# Детерминированная заглушка LLM-оператора: dev/fake-gigachat в формате GigaChat API v1, по http без сертификата.
 id: fake-operator
 title: fake-operator
 roles: [operator]
-provider: openai-compatible
-baseUrl: ${env:FAKE_LLM_URL:-http://127.0.0.1:8092/v1}
+provider: gigachat-v1
+baseUrl: ${env:FAKE_GIGACHAT_URL:-http://127.0.0.1:8092}
 model: fake-operator
 params:
   temperature: 0.3
   timeoutMs: 30000
   retries: 1
   devHints: true
-description: Детерминированная заглушка LLM-оператора из dev/fake-llm — только для офлайн-разработки.
+description: Детерминированная заглушка LLM-оператора из dev/fake-gigachat — только для офлайн-разработки.

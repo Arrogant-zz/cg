@@ -9,7 +9,8 @@ import { evaluate, execStats } from '../execution/evaluate.js';
 import type { CommandEvent, StatusEvent } from '../execution/events.js';
 import { LlmOperator } from '../operator/operator.js';
 import { LlmJudge } from '../judge/judge.js';
-import { JUDGE_PROMPT_VERSION, JUDGE_SYSTEM, OPERATOR_PROMPT_VERSION, OPERATOR_SYSTEM } from '../operator/prompts.js';
+import { ANSWER_JUDGE_PROMPT_VERSION, ANSWER_JUDGE_SYSTEM, JUDGE_PROMPT_VERSION, JUDGE_SYSTEM, OPERATOR_PROMPT_VERSION, OPERATOR_SYSTEM } from '../operator/prompts.js';
+import { itemScores, scoringOf } from '../metrics/scoring.js';
 import { createProvider } from '../llm/provider.js';
 import { createInstaller, type Installer, type WsFile } from '../skillsets/installer.js';
 import { registerVersion } from '../skillsets/store.js';
@@ -117,6 +118,7 @@ export class RunManager {
     if (r.agent.request.bodySource) texts.set(r.agent.request.bodySource, JSON.stringify(r.agent.request.body, null, 2));
     texts.set(`prompts/${OPERATOR_PROMPT_VERSION}.txt`, OPERATOR_SYSTEM);
     texts.set(`prompts/${JUDGE_PROMPT_VERSION}.txt`, JUDGE_SYSTEM);
+    texts.set(`prompts/${ANSWER_JUDGE_PROMPT_VERSION}.txt`, ANSWER_JUDGE_SYSTEM);
     if (r.skillset && r.skillset !== 'build') {
       texts.set(
         'skillset.json',
@@ -153,10 +155,10 @@ export class RunManager {
         operator: r.models.operator ? { id: r.models.operator.id, title: r.models.operator.title, provider: r.models.operator.provider, model: r.models.operator.model, file: r.models.operator.source.file, hash: r.models.operator.source.hash } : null,
         judge: r.models.judge ? { id: r.models.judge.id, title: r.models.judge.title, provider: r.models.judge.provider, model: r.models.judge.model, file: r.models.judge.source.file, hash: r.models.judge.source.hash } : null,
         skillset: ss === 'build' ? 'build' : ss ? { id: ss.set.id, title: ss.set.title, version: ss.version.id, requested: ss.requested, checksum: ss.version.checksum, files: ss.version.files.length } : null,
-        metrics: r.metrics.map((m) => ({ id: m.id, title: m.title, builtin: m.builtin, version: m.version })),
+        metrics: r.metrics.map((m) => ({ id: m.id, title: m.title, builtin: m.builtin, version: m.version, params: m.params })),
         limits: r.limits,
         repetitions: r.repetitions,
-        prompts: { operator: OPERATOR_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION },
+        prompts: { operator: OPERATOR_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION, answerJudge: ANSWER_JUDGE_PROMPT_VERSION },
         contract: reg.contract ? { file: reg.contract.source.file, hash: reg.contract.source.hash, version: reg.contract.version, conditional: reg.contract.conditional } : { file: '', hash: '', version: '', conditional: true },
       },
       snapshot: { createdAt, files: snapFiles },
@@ -220,6 +222,7 @@ export class RunManager {
       steps: { reset: null, dialog: null, checks: null, judge: null, capture: null, curatorPass: null },
       checks: null,
       answerFailed: [],
+      scores: null,
       stats: null,
       repeated: [],
       limits: i.limits,
@@ -501,13 +504,14 @@ export class RunManager {
 
     line.current = { index: item.index, execName: name, phase: 'оценка' };
     this.scheduleSave(run);
-    const ev = await evaluate(exec, outcome.resultSeq, deps.judge, deps.signal);
+    const ev = await evaluate(exec, outcome.resultSeq, deps.judge, deps.signal, scoringOf(run.settings.metrics));
     rec.outcome = ev.outcome;
     rec.reason = ev.reason;
     rec.checks = ev.checks;
     rec.steps.checks = ev.checks ? { passed: ev.checks.filter((c) => c.passed).length, total: ev.checks.length } : null;
     rec.steps.judge = ev.judge ? { status: ev.judge.status, passed: ev.judge.passed, total: ev.judge.total } : null;
     rec.answerFailed = ev.judge?.failed ?? [];
+    rec.scores = ev.scores ? itemScores(ev.scores) : null;
     rec.stats = execStats(exec);
     rec.repeated = rec.stats.lessons.filter((l) => deps.prior.has(l));
     for (const l of rec.stats.lessons) deps.prior.add(l);

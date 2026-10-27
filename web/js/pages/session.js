@@ -1,5 +1,5 @@
 // Ручная сессия: чат с заглушками, ответ вместо инструмента, подтверждения, команды, разметка (MAN-02–04, CASE-03).
-import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural, removeSession } from '../lib.js';
+import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural, removeSession, fmtShare, finalVerdict } from '../lib.js';
 
 export const title = (ctx) => `Ручной кейс ${ctx.params[0]}`;
 
@@ -99,6 +99,10 @@ ${evaln
     ? html`<div class="log"><span>Итог</span><span>${evaln.outcome === 'passed' ? html`<span class="pill pass">Пройден</span>` : evaln.outcome === 'failed' ? html`<span class="pill fail">Не пройден</span>` : html`<span class="pill na">Не оценено</span>`}</span></div>
 ${evaln.checks ? checksBlock(evaln.checks) : ''}
 ${evaln.judge ? html`<div class="log"><span>Ответ · LLM-оценка</span><span class="t2">${evaln.judge.status === 'ok' ? `${evaln.judge.passed} из ${evaln.judge.total}` : evaln.judge.error ?? 'не оценён'}</span></div>` : ''}
+${evaln.scores
+    ? html`<div class="log"><span>Финальное действие · M1</span><span class="row" style="gap: 6px; justify-content: flex-end">${finalVerdict(evaln.scores.final)}</span></div>
+<div class="log"><span>case_score · M2</span><span class="num t2">${fmtShare(evaln.scores.caseScore)} · F1 ${fmtShare(evaln.scores.tools.f1)} · A ${evaln.scores.answer.status === 'ok' ? fmtShare(evaln.scores.answer.score) : evaln.scores.answer.status === 'failed' ? 'сбой' : '—'}</span></div>`
+    : ''}
 <span class="cap">${evaln.reason}</span>`
     : s.status === 'active'
       ? html`<label class="field"><span class="lbl">LLM-оценка ответа при завершении</span><select class="input" id="fin-judge"><option value="">без LLM-оценки</option>${judges.map((j) => html`<option value="${j.id}" ${j.readiness ? 'disabled' : ''}>${j.title}${j.readiness ? ` · ${j.readiness}` : ''}</option>`)}</select></label>

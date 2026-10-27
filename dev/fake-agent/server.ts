@@ -1,5 +1,5 @@
-// HTTP fake-agent: A2A-подобный REST (условный формат из agents/fake-agent.yaml) и
-// предложенный API workspace для установки наборов скиллов (docs/CONTRACTS.md).
+// HTTP fake-agent: A2A SendMessage в формате AEFClaw (templates/aefclaw-a2a-message.json, ответ result.task)
+// и предложенный API workspace для установки наборов скиллов (docs/CONTRACTS.md).
 import http from 'node:http';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -51,7 +51,7 @@ export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: htt
     const url = new URL(req.url ?? '/', 'http://localhost');
     try {
       if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { status: 'ok', sessions: agents.size });
-      if (req.method === 'POST' && url.pathname === '/a2a/message') {
+      if (req.method === 'POST' && url.pathname === '/a2a') {
         const sender = String(req.headers['x-a2a-sender-id'] ?? '');
         const taskId = String(req.headers['x-task-id'] ?? '');
         if (!sender || !taskId) return json(res, 400, { error: { message: 'Нужны заголовки x-a2a-sender-id и x-task-id' } });
@@ -68,14 +68,17 @@ export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: htt
           jsonrpc: '2.0',
           id: b?.id ?? null,
           result: {
-            kind: 'message',
-            role: 'agent',
-            messageId: `fa-${Date.now()}`,
-            parts: [{ kind: 'text', text: reply }],
-            metadata: {
-              status: 'completed',
-              model: b?.params?.metadata?.model ?? 'fake-agent',
-              usage: { input_tokens: Math.ceil(text.length / 4) + 600, output_tokens: Math.ceil(reply.length / 4) },
+            task: {
+              id: `fa-task-${Date.now()}`,
+              contextId: b?.params?.message?.contextId ?? taskId,
+              status: {
+                state: 'TASK_STATE_COMPLETED',
+                message: { messageId: `fa-${Date.now()}`, role: 'ROLE_AGENT', parts: [{ mediaType: 'text/plain', text: reply }] },
+              },
+              metadata: {
+                model: b?.params?.metadata?.model ?? 'fake-agent',
+                usage: { input_tokens: Math.ceil(text.length / 4) + 600, output_tokens: Math.ceil(reply.length / 4) },
+              },
             },
           },
         });

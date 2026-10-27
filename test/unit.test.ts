@@ -94,13 +94,13 @@ test('белый список хостов агента', () => {
 
 test('битая ссылка в корзине: ошибка с файлом и полем, прогон не запускается', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-cfg-'));
-  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates', 'data']) {
+  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates']) {
     fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
   }
   fs.mkdirSync(path.join(home, 'baskets'));
   fs.mkdirSync(path.join(home, 'runs'));
-  fs.writeFileSync(path.join(home, 'baskets/broken.yaml'), 'id: broken\ntitle: Битая\ntype: training\nitems:\n  - solution: card-blocked-wrong-pin/explain-now\n  - solution: transfer-delay/explain-on-ask\n');
-  fs.writeFileSync(path.join(home, 'runs/broken.yaml'), 'id: broken\nbasket: broken\nagent: fake-agent\nmodels: { agent: fake-agent-a, operator: fake-operator, judge: fake-judge }\nskillset: { id: cards, version: V1 }\n');
+  fs.writeFileSync(path.join(home, 'baskets/broken.yaml'), 'id: broken\ntitle: Битая\ntype: training\nitems:\n  - solution: spasibo-bonus-missing/explain-now\n  - solution: transfer-delay/explain-on-ask\n');
+  fs.writeFileSync(path.join(home, 'runs/broken.yaml'), 'id: broken\nbasket: broken\nagent: fake-agent\nmodels: { agent: fake-agent-a, operator: fake-operator, judge: fake-judge }\nskillset: { id: second-line, version: V1 }\n');
   try {
     const reg = await loadRegistry(home, path.join(home, 'var'));
     const issue = reg.issues.find((i) => i.file === 'baskets/broken.yaml' && i.severity === 'error');

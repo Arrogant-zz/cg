@@ -142,3 +142,9 @@ dialog.confirm::backdrop{background:rgba(23,28,25,.32)}
 .li-row{display:flex;align-items:flex-start;gap:4px}
 .li-row .li{flex:1;min-width:0}
 .li-row .btn.ib{margin-top:10px;flex:none}
+
+/* Матрица ошибок M1: строки — эталонный класс, столбцы — класс агента. */
+.tbl.cm th.n,.tbl.cm td.n{padding:10px 12px;text-align:center;font-variant-numeric:tabular-nums}
+.tbl.cm td.hit{background:#E6F2EA;color:#17603F;font-weight:600}
+.tbl.cm td.miss{background:#FCEAE8;color:#A51C14;font-weight:600}
+.tbl.cm td.zero{color:#A6ADA7}

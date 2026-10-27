@@ -59,3 +59,20 @@ export const JUDGE_SCHEMA = {
   required: ['criteria', 'summary'],
   additionalProperties: false,
 } as const;
+
+// A_judge по документу аналитика: сравнение итогового текста с эталонным, несколько независимых прогонов, вердикт да/нет.
+export const ANSWER_JUDGE_PROMPT_VERSION = 'answer-judge-v1';
+
+export const ANSWER_JUDGE_SYSTEM = `Ты — отдельная модель оценки стенда ClawGym (подсказка ${ANSWER_JUDGE_PROMPT_VERSION}). Сравни итоговый текст агента Pagurus с эталонным итоговым текстом кейса. Итоговый текст — ответ клиенту, описание экспертизы, запрос информации у клиента или инструкция оператору; вид указан в полях kind (текст агента) и referenceKind (эталон).
+
+match=true, если текст агента по смыслу соответствует эталону: то же решение, те же ключевые факты, сроки и следующие шаги, нет противоречий эталону и обещаний, которых в эталоне нет. Формулировки, порядок, длина и стиль могут отличаться.
+match=false, если упущена суть или ключевой факт, есть противоречие или лишнее обещание, вид текста другой или текста нет.
+
+Ты — один из нескольких независимых прогонов оценки. В reason коротко объясни решение: что совпало или чего не хватает. Ответ — только JSON-объект по схеме.`;
+
+export const ANSWER_JUDGE_SCHEMA = {
+  type: 'object',
+  properties: { match: { type: 'boolean' }, reason: { type: 'string' } },
+  required: ['match', 'reason'],
+  additionalProperties: false,
+} as const;

@@ -1,7 +1,7 @@
 {
-  "version": "synthetic-2026-10-25",
+  "version": "orchestrator-photo-2026-10-27",
   "conditional": true,
-  "note": "Синтетический контракт для стенда и fake-agent. Имена, описания и схемы инструментов, обёртку результата и тексты ошибок нужно заменить на снятые с кода Java-оркестратора (plan.md, этап 0; docs/CONTRACTS.md).",
+  "note": "Инструменты — ответ tools/list стенда оркестратора, расшифрованный с фото 27.10.2026: возможны опечатки. Точный список снимите командой import-tools (README). Обёртка результата, тексты ошибок и requiresConfirmation (подтверждение — у активных действий) — условные.",
   "result": {
     "mode": "text"
   },
@@ -16,241 +16,1228 @@
   "startMessage": "contracts/start-message.txt",
   "tools": [
     {
-      "name": "get_card_status",
-      "description": "Статус карты клиента: активна, заблокирована, причина блокировки.",
+      "name": "auto_call_opportunity_check",
+      "title": "auto_call_opportunity_check",
+      "description": "Подтверждение возможности автозвонка",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "card": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "caseId": {
+                "type": "string"
+              },
+              "clientSegment": {
+                "type": "string"
+              },
+              "solutionType": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "caseId",
+              "clientSegment",
+              "solutionType"
+            ],
+            "description": "Параметры подтверждения возможности автозвонка"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "cancel_expertise",
+      "title": "cancel_expertise",
+      "description": "Отмена экспертизы",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "comment": {
+                "type": "string"
+              },
+              "expertiseId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "comment",
+              "expertiseId"
+            ],
+            "description": "Параметры отмены экспертизы"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "change_stage",
+      "title": "change_stage",
+      "description": "Передача кейса на другой этап",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "comment": {
+                "type": "string",
+                "description": "Комментарий при переводе кейса на другой этап (Пример: Передано на следующий этап)"
+              },
+              "keepOnSelf": {
+                "type": "boolean",
+                "description": "Признак 'оставить на себе'"
+              },
+              "stageId": {
+                "type": "string",
+                "description": "Id нового этапа"
+              }
+            },
+            "required": [
+              "comment",
+              "keepOnSelf",
+              "stageId"
+            ],
+            "description": "Параметры передачи кейса на другой этап"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "check_assigned_case",
+      "title": "check_assigned_case",
+      "description": "Проверить наличие кейса и назначить его в SC.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_close_with_answer",
+      "title": "get_close_with_answer",
+      "description": "Отправка ответа и закрытие кейса",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "autoCallData": {
+                "type": "object",
+                "properties": {
+                  "autoResponse": {
+                    "type": "boolean"
+                  },
+                  "clientSegment": {
+                    "type": "string"
+                  },
+                  "reasonsNotToCall": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "solutionType": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "autoResponse",
+                  "clientSegment",
+                  "reasonsNotToCall",
+                  "solutionType"
+                ],
+                "description": "Данные авто звонка"
+              },
+              "extendedAnswer": {
+                "type": "string",
+                "description": "Расширенный ответ"
+              },
+              "ombudsmanAttributes": {
+                "type": "object",
+                "properties": {
+                  "decision": {
+                    "type": "string"
+                  },
+                  "revisionReason": {
+                    "type": "string"
+                  },
+                  "revisionReasonDescription": {
+                    "type": "string"
+                  },
+                  "sum": {
+                    "type": "string"
+                  },
+                  "theme": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "revisionReason",
+                  "revisionReasonDescription",
+                  "sum",
+                  "theme"
+                ],
+                "description": "Атрибуты омбедсмана"
+              },
+              "shortAnswer": {
+                "type": "string",
+                "description": "Короткий ответ"
+              }
+            },
+            "required": [
+              "extendedAnswer",
+              "shortAnswer"
+            ],
+            "description": "Параметры отправки ответа и закрытии кейса"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "get_channels_answer",
+      "title": "get_channels_answer",
+      "description": "Получение каналов предоставления ответа",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_cases_assigned",
+      "title": "get_cases_assigned",
+      "description": "Получение кейса для сотрудника",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "isCallActive": {
+            "type": "boolean",
+            "description": "Признак активного вызова (true/false)"
+          }
+        },
+        "required": [
+          "isCallActive"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_cases_history",
+      "title": "get_cases_history",
+      "description": "Получение истории решения кейса",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Количество запрашиваемых элементов на странице истории решения кейса"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Номер страницы истории решения кейса"
+          }
+        },
+        "required": [
+          "size",
+          "page"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_channel_cases",
+      "title": "get_channel_cases",
+      "description": "Получение каналов уведомлений по кейсу",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_client_universal_info",
+      "title": "get_client_universal_info",
+      "description": "Получение информации по клиенту для SC",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_details_static_attributes_expertise",
+      "title": "get_details_static_attributes_expertise",
+      "description": "Получение детальных данных по экспертизе",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expertiseId": {
             "type": "string",
-            "description": "Маскированный номер карты"
+            "description": "Идентификатор экспертизы (UUID)"
           }
         },
         "required": [
-          "card"
-        ],
-        "additionalProperties": false
+          "expertiseId"
+        ]
       },
-      "requiresConfirmation": false,
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "kind": "info"
     },
     {
-      "name": "get_client_profile",
-      "description": "Профиль клиента: имя, адрес доставки, контакты.",
+      "name": "get_dynamic_attributes",
+      "title": "get_dynamic_attributes",
+      "description": "Получение динамических атрибутов кейса",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "client_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "client_id"
-        ],
-        "additionalProperties": false
+        "properties": {},
+        "required": []
       },
-      "requiresConfirmation": false,
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "kind": "info"
     },
     {
-      "name": "get_recent_operations",
-      "description": "Последние операции по карте с признаками подозрительности.",
+      "name": "get_stages_expertise",
+      "title": "get_stages_expertise",
+      "description": "Получение этапов для создания экспертизы",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "card": {
-            "type": "string"
+          "pageNumber": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Номер страницы нумерация от 0 (пагинация)"
           }
         },
         "required": [
-          "card"
-        ],
-        "additionalProperties": false
+          "pageNumber"
+        ]
       },
-      "requiresConfirmation": false,
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "kind": "info"
     },
     {
-      "name": "get_operation_details",
-      "description": "Подробности операции: сумма, магазин, связанные операции.",
+      "name": "get_interactions",
+      "title": "get_interactions",
+      "description": "Получение взаимодействия клиента по идентификатору взаимодействия",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "operation_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "operation_id"
-        ],
-        "additionalProperties": false
+        "properties": {},
+        "required": []
       },
-      "requiresConfirmation": false,
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "kind": "info"
     },
     {
-      "name": "get_merchant_info",
-      "description": "Сведения о магазине по идентификатору.",
+      "name": "get_stages_for_change",
+      "title": "get_stages_for_change",
+      "description": "Получение этапов для кейса в работе",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "merchant_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "merchant_id"
-        ],
-        "additionalProperties": false
+        "properties": {},
+        "required": []
       },
-      "requiresConfirmation": false,
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "kind": "info"
     },
     {
-      "name": "get_client_limits",
-      "description": "Лимиты клиента по операциям.",
+      "name": "get_static_attributes_assigned",
+      "title": "get_static_attributes_assigned",
+      "description": "Получение статических атрибутов кейса",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "client_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "client_id"
-        ],
-        "additionalProperties": false
+        "properties": {},
+        "required": []
       },
-      "requiresConfirmation": false,
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "kind": "info"
     },
     {
-      "name": "unblock_card",
-      "description": "Разблокировать карту. Требует подтверждения оператора.",
+      "name": "get_templates_answer",
+      "title": "get_templates_answer",
+      "description": "Получение шаблонов ответа",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "card": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "card"
-        ],
-        "additionalProperties": false
-      },
-      "requiresConfirmation": true,
-      "kind": "action"
-    },
-    {
-      "name": "reissue_card",
-      "description": "Перевыпустить карту. Требует подтверждения оператора.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "card": {
-            "type": "string"
+          "solutionType": {
+            "type": "string",
+            "description": "Тип решения (Возможные значения: [POSITIVE, NEGATIVE, NEUTRAL])"
           },
-          "address": {
-            "type": "string"
+          "searchPhrase": {
+            "type": "string",
+            "description": "Фраза для поиска"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Номер страницы"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Количество элементов на странице"
           }
         },
         "required": [
-          "card"
-        ],
-        "additionalProperties": false
+          "solutionType",
+          "searchPhrase",
+          "page",
+          "size"
+        ]
       },
-      "requiresConfirmation": true,
-      "kind": "action"
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
     },
     {
-      "name": "refund_operation",
-      "description": "Оформить возврат по операции. Требует подтверждения оператора.",
+      "name": "postpone_expertises",
+      "title": "postpone_expertises",
+      "description": "Отложить кейс до выполнения экспертиз на кейсе",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "cases_postpone",
+      "title": "cases_postpone",
+      "description": "Отложить кейс",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "operation_id": {
-            "type": "string"
-          },
-          "amount": {
-            "type": "number"
+          "request": {
+            "type": "object",
+            "properties": {
+              "comment": {
+                "type": "string",
+                "description": "Коментарий"
+              },
+              "postponeDateTime": {
+                "type": "string",
+                "description": "До какого времени отложить кейс (Дата в формате 2026-04-28T18:34:21Z)"
+              }
+            },
+            "required": [
+              "comment",
+              "postponeDateTime"
+            ],
+            "description": "Данные для откладывания кейса"
           }
         },
         "required": [
-          "operation_id"
-        ],
-        "additionalProperties": false
+          "request"
+        ]
       },
-      "requiresConfirmation": true,
-      "kind": "action"
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
     },
     {
-      "name": "close_case",
-      "description": "Закрыть обращение. Требует подтверждения оператора.",
+      "name": "card_info",
+      "title": "card_info",
+      "description": "Запрос дополнительной информации по карте",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "case_id": {
-            "type": "string"
-          },
-          "resolution": {
-            "type": "string"
+          "cardId": {
+            "type": "string",
+            "description": "Идентификатор карты"
           }
         },
         "required": [
-          "case_id"
-        ],
-        "additionalProperties": false
+          "cardId"
+        ]
       },
-      "requiresConfirmation": true,
-      "kind": "action"
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
     },
     {
-      "name": "postpone_case",
-      "description": "Отложить обращение до даты. Требует подтверждения оператора.",
+      "name": "get_connectors",
+      "title": "get_connectors",
+      "description": "Получение устройств клиента",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_event_log",
+      "title": "get_event_log",
+      "description": "Получение событий клиента в СБОЛ",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "case_id": {
-            "type": "string"
+          "dateFrom": {
+            "type": "string",
+            "description": "Начало периода выборки (В формате 2026-06-17T21:15:11.000+0300)"
           },
-          "until": {
-            "type": "string"
+          "dateTo": {
+            "type": "string",
+            "description": "Конец периода выборки (В формате 2026-06-17T21:15:11.000+0300)"
           }
         },
         "required": [
-          "case_id"
-        ],
-        "additionalProperties": false
+          "dateFrom",
+          "dateTo"
+        ]
       },
-      "requiresConfirmation": true,
-      "kind": "action"
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_sbol_profile",
+      "title": "get_sbol_profile",
+      "description": "Получение профилей СБОЛ клиента",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_smsbank_notifications",
+      "title": "get_smsbank_notifications",
+      "description": "Получение уведомлений клиента",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fromDate": {
+            "type": "string",
+            "description": "Начало периода выборки (В формате 2026-06-17T21:15:11.000Z)"
+          },
+          "toDate": {
+            "type": "string",
+            "description": "Конец периода выборки (В формате 2026-06-17T21:15:11.000Z)"
+          }
+        },
+        "required": [
+          "fromDate",
+          "toDate"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_card_history",
+      "title": "get_card_history",
+      "description": "Получение истории операций по карте за указанный период",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fromDate": {
+            "type": "string",
+            "description": "Начало периода выборки (В формате 2026-06-17T21:15:11)"
+          },
+          "toDate": {
+            "type": "string",
+            "description": "Конец периода выборки (В формате 2026-06-17T21:15:11)"
+          },
+          "id": {
+            "type": "string",
+            "description": "Идентификатор карты"
+          }
+        },
+        "required": [
+          "fromDate",
+          "toDate",
+          "id"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_client_cards",
+      "title": "get_client_cards",
+      "description": "Получение информации о картах клиента",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_sbol_operations_history",
+      "title": "get_sbol_operations_history",
+      "description": "Получение истории операций профиля СБОЛ клиента за выбранный период",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dateFrom": {
+            "type": "string",
+            "description": "Начало периода выборки (В формате 2026-06-25T00:00:00.000+0300)"
+          },
+          "dateTo": {
+            "type": "string",
+            "description": "Конец периода выборки (В формате 2026-07-09T23:59:59.000+0300)"
+          }
+        },
+        "required": [
+          "dateFrom",
+          "dateTo"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_spasibo_fraud",
+      "title": "get_spasibo_fraud",
+      "description": "Проверка, является ли клиент мошенником (фродером) в программе лояльности СберСпасибо",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_spasibo_general_info",
+      "title": "get_spasibo_general_info",
+      "description": "Запрос основной информации Спасибо по клиенту: статус участия в программе СберСпасибо, выбранные в текущем месяце категории СберСпасибо, текущий бонусный баланс клиента и установленные лимиты на начисление бонусов за последние 4 месяца",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_spasibo_history_info",
+      "title": "get_spasibo_history_info",
+      "description": "Получение детализированной истории операций СберСпасибо за указанный период",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dateFrom": {
+            "type": "string",
+            "description": "Начало периода выборки (В формате yyyy-MM-dd)"
+          },
+          "dateTo": {
+            "type": "string",
+            "description": "Конец периода выборки (В формате yyyy-MM-dd)"
+          }
+        },
+        "required": [
+          "dateFrom",
+          "dateTo"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "get_spasibo_previous_rewards",
+      "title": "get_spasibo_previous_rewards",
+      "description": "Получение выбранных клиентом категорий СберСпасибо в предыдущих(архивных) периодах - за предыдущие 3 месяца",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
+    },
+    {
+      "name": "add_note_in_case",
+      "title": "add_note_in_case",
+      "description": "Добавление заметки на кейсе",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "comment": {
+                "type": "string",
+                "description": "Комментарий заметки"
+              }
+            },
+            "required": [
+              "comment"
+            ],
+            "description": "Параметры добавления заметки на кейсе"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "change_channels",
+      "title": "change_channels",
+      "description": "Изменение канала предоставления ответа",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$defs": {
+              "ChannelCode": {
+                "type": "string",
+                "enum": [
+                  "SMS",
+                  "CALL",
+                  "EMAIL"
+                ]
+              }
+            },
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "CREATE",
+                  "UPDATE",
+                  "DELETE"
+                ],
+                "description": "Действие над контактами"
+              },
+              "channelCode": {
+                "$ref": "#/$defs/ChannelCode",
+                "description": "Код канала"
+              },
+              "contact": {
+                "type": "string",
+                "description": "Контакт для взаимодействия. Принимается маскированный или последние 4 цифры номера телефона. Хэшированный не принимается"
+              },
+              "previousChannelCode": {
+                "$ref": "#/$defs/ChannelCode",
+                "description": "Предыдущий код канала, который требуется сменить. Для action=CREATE/DELETE не заполняется, для action=UPDATE обязательно для заполнения"
+              },
+              "previousContact": {
+                "type": "string",
+                "description": "Предыдущий контакт, который требуется сменить. Либо маскированный контакт, либо последние 4 цифры номера телефона. Хэшированный не принимается. Для action=CREATE/DELETE не заполняется, для action=UPDATE обязательно для заполнения"
+              }
+            },
+            "required": [
+              "action",
+              "channelCode",
+              "contact",
+              "previousChannelCode",
+              "previousContact"
+            ],
+            "description": "Параметры изменения канала предоставления ответа"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "change_client_in_case",
+      "title": "change_client_in_case",
+      "description": "Смена клиента в кейсе",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "birthDate": {
+                "type": "string",
+                "description": "Дата рождения Формат YYYY-MM-DD (непустое)"
+              },
+              "clientName": {
+                "type": "object",
+                "properties": {
+                  "firstName": {
+                    "type": "string",
+                    "description": "Имя клиента"
+                  },
+                  "lastName": {
+                    "type": "string",
+                    "description": "Фамилия клиента"
+                  },
+                  "middleName": {
+                    "type": "string",
+                    "description": "Отчество клиента (непустое)"
+                  }
+                },
+                "required": [
+                  "firstName",
+                  "lastName"
+                ],
+                "description": "ФИО клиента"
+              },
+              "identityCard": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string",
+                    "description": "Номер ДУЛ, документа удостоверяющего личность"
+                  },
+                  "series": {
+                    "type": "string",
+                    "description": "Серия ДУЛ, документа удостоверяющего личность (непустое)"
+                  },
+                  "type": {
+                    "type": "integer",
+                    "format": "int32",
+                    "description": "Тип ДУЛ, документа удостоверяющего личность.Числовое значение маппится на основе справочника:1 - Паспорт гражданина СССР,\n2 - Загранпаспорт гражданина СССР,\n3 - Свидетельство о рождении,\n4 - Удостоверение личности офицера,\n5 - Справка об освобождении из места лишения свободы,\n6 - Паспорт Минморфлота,\n7 - Военный билет военнослужащего,\n8 - Временное удостоверение, выданное взамен военного билета,\n9 - Дипломатический паспорт гражданина РФ,\n10 - Паспорт иностранного гражданина,\n11 - Свид-во о рассмотрении ходатайства о признании лица беженцем на территории РФ,\n12 - Вид на жительство в Российской Федерации лица без гражданства,\n13 - Удостоверение беженца,\n14 - Временное удостоверение личности гражданина Российской Федерации,\n15 - Разрешение на временное проживание в Российской Федерации (для иностранных граждан),\n16 - Свидетельство о предоставлении временного убежища на территории РФ,\n17 - Паспорт гражданина Российской Федерации,\n18 - Загранпаспорт гражданина РФ,\n19 - Свидетельство о рождении, выданное уполномоченным органом иностранного государства,\n20 - Удостоверение личности военнослужащего Российской Федерации,\n21 - Удостоверение личности моряка,\n22 - Военный билет офицера запаса,\n23 - Документ ин. гос-ва, признаваемый в соответствии с международным договором РФ,\n24 - Иные документы, признанные в соответствии с международными договорами РФ (для лиц без гражданства),\n25 - Удостоверение вынужденного переселенца,\n26 - Миграционная карта,\n27 - Иные документы, подтверждающие личность иностранных граждан, их право на пребывание в Российской Федерации,\n28 - Иные документы,\n29 - ИНН,\n30 - Водительское удостоверение,\n31 - Страховое свидетельство государственного пенсионного страхования (СНИЛС),\n32 - Карточка обязательного медицинского страхования (ОМС),\n33 - Свидетельство о смерти,\n34 - Свидетельство о рождении иностранного гражданина,\n35 - Дипломатический паспорт иностранного гражданина,\n36 - Карта социального страхования,\n37 - Решение суда,\n38 - Свидетельство о браке,\n39 - Трудовой договор,\n40 - Свидетельство о регистрации ИП,\n41 - Срочный трудовой договор,\n42 - Справка инвалида по зрению,\n43 - Страховой номер индивидуального лицевого счета застрахованного лица (СНИЛС),\n44 - Разрешение на временное проживание (для лиц без гражданства),\n45 - Свидетельство о регистрации транспортного средства в органах МВД РФ,\n46 - Охотничий билет,\n47 - Разрешение на хранение и ношение охотничьего оружия,\n48 - Свидетельство о государственной регистрации юридического лица (о внесении записи) в ЕГРЮЛ,\n49 - Свидетельство о государственной регистрации юридического лица до 1 июля 2002 года,\n50 - Свидетельство о государственной регистрации физического лица в качестве ИП (о внесении записи) в ЕГРИП,\n51 - Свидетельство о государственной регистрации фÐ¸зического лица в качестве ИП до 1 января 2004 года,\n52 - Свидетельство о постановке на налоговый учет,\n53 - Лицензия,\n54 - Иной документ о постановке на налоговый учет,\n55 - Иной документ о государственной регистрации,\n56 - Свидетельство о праве на наследство по завещанию,\n57 - Свидетельство о праве на наследство по закону,\n58 - Постановление нотариуса, ведущего наследственное дело владельца счёта, о возмещении расходов, вызванных смертью владельца счёта,\n59 - Свидетельство о праве собственности на долю в имуществе,\n60 - Соглашение о разделе наследственного имущества,\n61 - Решение суда, свидетельствующее о смерти,\n62 - Свидетельство, выданное нотариусом исполнителю завещания,\n63 - Запрос нотариуса в банк о вкладах (счетах) и другом имуществе наследодателя, сформированный в электронном виде,\n64 - Реестр ОПФР на возврат излишне перечисленных сумм на счёт получателя в связи с его смертью,\n65 - Иные документы, свидетельствующие о смерти,\n66 - Свидетельство о временной регистрации,\n67 - Пенсионное удостоверение,\n68 - Свидетельство о расторжении брака,\n69 - Виза,\n70 - Удостоверение переселенца,\n71 - Иные документы признаваемые в качестве ДУЛ в соответствии с законодательством РФ (для граждан РФ),\n72 - Справка о рассмотрении заявления о предоставлении временного убежища на территории Российской Федерации,\n73 - Налоговый сертификат,\n74 - Письмо подтверждение,\n75 - Вид на жительство в Российской Федерации иностранного гражданина,\n76 - Карта жителей республики Татарстан,\n77 - Служебный паспорт гражданина РФ,\n78 - Иной документ, подтверждающий право пребывания на территории Российской Федерации,\n79 - Паспорт транспортного средства (ПТС),\n80 - Вид на жительство в иностранном государстве,\n81 - Справка об инвалидности,\n82 - Свидетельство об аккредитации филиалов, представительств иностранных ЮЛ,\n83 - Служебный паспорт иностранного гражданина,\n84 - ID-карта (Идентификационная карта, удостоверение личности в виде пластиковой карты),\n85 - Временное удостоверение личности лица без гражданства,\n86 - Патент,\n87 - Разрешение на работу,\n88 - Иной документ, подтверждающий право пребывания на территории Российской Федерации\n"
+                  }
+                },
+                "required": [
+                  "number",
+                  "type"
+                ],
+                "description": "ДУЛ, документ удостоверяющий личность"
+              }
+            },
+            "required": [
+              "clientName",
+              "identityCard"
+            ],
+            "description": "Параметры поиска клиента (ФИО, ДУЛ, дата рожденÐ¸я)"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "change_notifications_channel_for_case",
+      "title": "change_notifications_channel_for_case",
+      "description": "Изменение каналов уведомлений",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$defs": {
+              "ChangeChannelCode": {
+                "type": "string",
+                "enum": [
+                  "SMS",
+                  "EMAIL"
+                ]
+              }
+            },
+            "type": "object",
+            "properties": {
+              "channelCode": {
+                "$ref": "#/$defs/ChangeChannelCode",
+                "description": "Код канала уведомления"
+              },
+              "commandType": {
+                "type": "string",
+                "enum": [
+                  "CREATE",
+                  "UPDATE",
+                  "DELETE"
+                ],
+                "description": "Команда на изменение форм взаимодействий"
+              },
+              "contact": {
+                "type": "string",
+                "description": "Контактная информация для отправки уведомления. Принимается маскированный или последние 4 цифры номера телефона. Хэшированный не принимается"
+              },
+              "previousChannelCode": {
+                "$ref": "#/$defs/ChangeChannelCode",
+                "description": "Предыдущий код канала уведомления, который требуется сменить. Для commandType=CREATE/DELETE не заполняется, для commandType=UPDATE обязательно для заполнения"
+              },
+              "previousContact": {
+                "type": "string",
+                "description": "Предыдущая контактная информация для отправки уведомления, которую требуется сменить. Либо маскированный контакт, либо последние 4 цифры номера телефона. Хэшированный не принимается. Для commandType=CREATE/DELETE не заполняется, для commandType=UPDATE обязательно для заполнения"
+              }
+            },
+            "required": [
+              "channelCode",
+              "commandType",
+              "contact",
+              "previousChannelCode",
+              "previousContact"
+            ],
+            "description": "Параметры изменения канала уведомлений"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "change_stage_case",
+      "title": "change_stage_case",
+      "description": "Передача кейса на другой этап",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "comment": {
+                "type": "string",
+                "description": "Комментарий при переводе кейса на другой этап"
+              },
+              "keepOnSelf": {
+                "type": "boolean",
+                "description": "Признак 'оставить на себе'"
+              },
+              "stageName": {
+                "type": "string",
+                "description": "Наименование этапа"
+              }
+            },
+            "required": [
+              "comment",
+              "keepOnSelf",
+              "stageName"
+            ],
+            "description": "Параметры передачи кейса на другой этап"
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
     },
     {
       "name": "create_expertise",
-      "description": "Завести экспертизу — запрос в другое подразделение. Требует подтверждения оператора.",
+      "title": "create_expertise",
+      "description": "Выставление экспертизы",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "case_id": {
-            "type": "string"
-          },
-          "department": {
-            "type": "string"
-          },
-          "question": {
-            "type": "string"
+          "request": {
+            "type": "object",
+            "properties": {
+              "expertiseDescription": {
+                "type": "string",
+                "description": "Текст запроса экспертизы"
+              },
+              "stageCode": {
+                "type": "string",
+                "description": "Код этапа (запрашивается из инструмента get_stages_expertise из поля code)"
+              },
+              "stageName": {
+                "type": "string",
+                "description": "Наименование этапа"
+              }
+            },
+            "required": [
+              "expertiseDescription",
+              "stageCode",
+              "stageName"
+            ],
+            "description": "Параметры выставления экспертизы"
           }
         },
         "required": [
-          "case_id",
-          "department",
-          "question"
-        ],
-        "additionalProperties": false
+          "request"
+        ]
       },
-      "requiresConfirmation": true,
-      "kind": "action"
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "action",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "get_unified_list",
+      "title": "get_unified_list",
+      "description": "Получение истории обращений клиента",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "annotations": {
+        "title": "",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "kind": "info"
     }
   ]
 }

@@ -10,7 +10,14 @@
 
 Требования и задачи — в документах проекта AEFClaw: `gap.md` (задачи первой автоматической версии), `plan.md`, `plan_start.md`. Интерфейс сделан по канвасу «ClawGym — дизайн интерфейса» и стилю `ui/style-guide.md`.
 
-**Статус на 26 октября 2026 года.** Реализация проверена только офлайн, на `dev/fake-agent` и `dev/fake-llm`: сквозные и модульные тесты, ручной проход интерфейса в браузере. На стенде с настоящим Pagurus стенд не запускался. Форматы обмена с агентом и MCP-контракт условные: их нужно снять с кода оркестратора — что именно, см. [docs/CONTRACTS.md](docs/CONTRACTS.md). Что доделать во внутреннем контуре, по шагам и с критериями приёмки, — [CLI_plan.md](CLI_plan.md).
+**Статус на 27 октября 2026 года.** Реализация проверена только офлайн, на `dev/fake-agent` и `dev/fake-gigachat`: сквозные и модульные тесты, ручной проход интерфейса в браузере. С настоящими AEFClaw и GigaChat не запускалась.
+
+Что уже взято со стенда оркестратора:
+- инструменты MCP — `tools/list`, расшифрованный с фото, возможны опечатки; точный список снимается командой `import-tools`;
+- формат запроса к AEFClaw — `templates/aefclaw-a2a-message.json` и `agents/aef-claw.yaml`;
+- формат стартового сообщения — `contracts/start-message.txt`.
+
+Обёртка результата инструментов, тексты ошибок и список инструментов с подтверждением пока условные: [docs/CONTRACTS.md](docs/CONTRACTS.md). Что доделать во внутреннем контуре — [CLI_plan.md](CLI_plan.md).
 
 ## Быстрый старт
 
@@ -24,7 +31,7 @@ npm ci
 npm run build
 ```
 
-Локальный стенд одной командой: ClawGym на `:8080`, fake-agent на `:8091`, fake-llm на `:8092`.
+Локальный стенд одной командой: ClawGym на `:8080`, fake-agent на `:8091`, fake-gigachat на `:8092`. Fake-agent говорит на том же A2A, что AEFClaw, и вызывает инструменты стенда оркестратора; fake-gigachat играет LLM-оператора и судью в формате GigaChat API.
 
 ```bash
 npm run demo
@@ -32,13 +39,15 @@ npm run demo
 
 Откройте http://127.0.0.1:8080 и проверьте путь из примера:
 
-1. «Запуск прогона» → «Обучение · карты · fake-agent» → «Запустить прогон». Прогон обучает рабочую копию набора `cards` V1, и в конце появляется версия V2.
-2. Запустите «Проверка · карты · V1» и «Проверка · карты · последняя версия»: это одна проверяющая корзина на V1 и на V2.
+1. «Запуск прогона» → «Обучение · вторая линия · fake-agent» → «Запустить прогон». Прогон обучает рабочую копию набора `second-line` V1 на кейсах СберСпасибо и оспаривания операции, и в конце появляется версия V2.
+2. Запустите «Проверка · вторая линия · V1» и «Проверка · вторая линия · последняя версия»: это одна проверяющая корзина на V1 и на V2.
 3. «Сравнение» покажет, что условия различаются только версией скиллов и какие кейсы стали лучше.
-4. «Ручной режим» → кейс `card-double-charge`. Для `get_merchant_info` заглушки нет: ответьте вместо инструмента (Cmd/Ctrl+Enter), затем решите подтверждение возврата. Реплика уходит по Enter, Shift+Enter переносит строку.
+4. «Ручной режим» → кейс `notifications-channel-change`. Для `get_smsbank_notifications` заглушки нет: ответьте вместо инструмента (Cmd/Ctrl+Enter), затем решите подтверждение `change_notifications_channel_for_case`. Реплика уходит по Enter, Shift+Enter переносит строку.
+
+Если раньше демо уже запускалось, удалите `var/`: прежние прогоны относятся к старому набору `cards`.
 5. Во вкладке «HTTP-обмены» сессии или кейса видны все запросы к агенту и запросы агента к MCP — см. «Журнал HTTP-обменов».
 
-Тесты работают офлайн: сборка, сквозные сценарии на fake-agent и fake-llm, модульные тесты. Тесты GigaChat создают временные сертификаты через `openssl`; без него они пропускаются.
+Тесты работают офлайн: сборка, сквозные сценарии на fake-agent и fake-gigachat, модульные тесты. Тесты GigaChat создают временные сертификаты через `openssl`; без него они пропускаются.
 
 ```bash
 npm test
@@ -52,36 +61,34 @@ npm run validate
 
 ## Подключение к стенду
 
-1. Снимите контракты с кода оркестратора и замените условные файлы. Список — [docs/CONTRACTS.md](docs/CONTRACTS.md): `contracts/tools.json`, `contracts/start-message.txt`, `templates/a2a-message.json`, пути разбора ответа в `agents/pagurus-stand.yaml`.
+1. Снимите точный список инструментов с MCP оркестратора — команда `import-tools` (раздел CLI). Остальные условные пункты — [docs/CONTRACTS.md](docs/CONTRACTS.md).
 2. Направьте MCP агента в AEFClaw на `http://<хост ClawGym>:8080/mcp`. Если MCP нужно вынести на отдельный порт, задайте `MCP_PORT`: там будут доступны только MCP и `/health`.
 3. Задайте переменные окружения подключения и моделей. Секреты задаются только окружением; в файлах настроек — ссылки вида `${env:NAME}`.
 
 | Переменная | Назначение |
 | --- | --- |
-| `AGENT_URL` | REST-адрес Pagurus на стенде, используется в `agents/pagurus-stand.yaml` |
-| `PAGURUS_STAND_TOKEN` | Токен для заголовка `Authorization` того же подключения |
+| `AEF_CLAW_URL` | Полный адрес A2A агента AEFClaw (`agents/aef-claw.yaml`), по умолчанию `http://127.0.0.1:18789/a2a` |
+| `AEF_CLAW_HEALTH_URL` | Проверка доступности агента, по умолчанию `http://127.0.0.1:18789/readyz` |
+| `AEF_CLAW_AUTHORIZATION` | Токен шлюза, если он нужен: раскомментируйте `Authorization` в `agents/aef-claw.yaml` |
 | `AGENT_ALLOWED_HOSTS` | Белый список хостов агента через запятую, например `stand.local,.stand.local`. Адрес вне списка отклоняется: стенд нельзя направить на ПРОМ |
-| `LLM_BASE_URL`, `LLM_API_KEY` | OpenAI-совместимый шлюз для LLM-оператора и судьи (`models/op-a.yaml`, `models/judge-a.yaml`) |
-| `LLM_OPERATOR_MODEL`, `LLM_JUDGE_MODEL` | Имена моделей оператора и судьи в шлюзе |
-| `ANTHROPIC_API_KEY` | Для моделей `provider: anthropic` (`models/op-claude.yaml`, `models/judge-claude.yaml`), если такой доступ есть |
 | `GIGACHAT_BASE_URL` | Корень GigaChat API без версии для `models/op-gigachat.yaml` (v1) и `models/judge-gigachat.yaml` (v2): `https://gigachat.devices.sberbank.ru/api` или http-адрес внутри Istio |
 | `GIGACHAT_CERT_FILE`, `GIGACHAT_KEY_FILE` | Клиентский сертификат и ключ GigaChat (PEM) для mTLS. Необязательны: внутри Istio задайте только http-адрес, сертификат подставит сетка |
 | `GIGACHAT_KEY_PASSPHRASE`, `GIGACHAT_CA_FILE` | Пароль ключа и корневой сертификат сервера — если нужны |
 | `GIGACHAT_OPERATOR_MODEL`, `GIGACHAT_JUDGE_MODEL` | Имена моделей; по умолчанию `GigaChat-2-Max` |
 | `AGENT_MCP_TIMEOUT_MS` | Таймаут MCP-вызова, настроенный в агенте. По нему считаются обратный отсчёт и срок решения оператора; по умолчанию 600000 |
 
-4. Запустите `runs/stand-cards-check.yaml`. Сейчас он работает со стартовыми скиллами сборки: установка выбранного набора в AEFClaw не подтверждена.
+4. Запустите `runs/stand-check.yaml`: AEFClaw, оператор и оценка на GigaChat. Он работает со стартовыми скиллами сборки: API установки набора у AEFClaw нет.
 
 ## Сборка образа
 
 Dockerfile по решению владельца делает владелец. Что нужно знать для образа:
 
-- Сборка: `npm ci`, затем `npm run build`, затем `npm prune --omit=dev`. Пакет `@anthropic-ai/sdk` необязательный: без него не работают только модели `provider: anthropic`, поэтому в закрытом контуре допустимо `npm ci --omit=optional`.
+- Сборка: `npm ci`, затем `npm run build`, затем `npm prune --omit=dev`. Зависимостей во время работы две: `ajv` и `yaml`.
 - В `package-lock.json` указан `registry.npmjs.org`: npm подменит его на реестр из `.npmrc` контура.
 - Запуск: `node dist/src/main.js`. В образе нужны каталоги `dist/`, `node_modules/`, `web/` и файлы настроек.
 - Порт `PORT` (по умолчанию 8080): интерфейс, API, SSE и MCP. Если задан `MCP_PORT`, MCP доступен ещё и на нём.
 - Проверка живости: `GET /health`.
-- Настройки (`CLAWGYM_HOME`) удобно монтировать отдельным томом: `contracts/ cases/ solutions/ baskets/ runs/ agents/ models/ skillsets/ metrics/ templates/ data/`.
+- Настройки (`CLAWGYM_HOME`) удобно монтировать отдельным томом: `contracts/ cases/ solutions/ baskets/ runs/ agents/ models/ skillsets/ metrics/ templates/` и `data/`, если заглушки ссылаются на файлы.
 - Результаты (`CLAWGYM_DATA`, по умолчанию `$CLAWGYM_HOME/var`) должны лежать на постоянном томе: там прогоны, ручные сессии, полученные версии скиллов и секрет для `request_ref`.
 - Внешние CDN и шрифты не нужны: шрифты IBM Plex лежат в `web/fonts` (лицензия SIL OFL 1.1).
 
@@ -114,7 +121,7 @@ Dockerfile по решению владельца делает владелец.
 | Каталог | Что лежит |
 | --- | --- |
 | `contracts/` | `tools.json` — MCP-инструменты, обёртка результата и тексты ошибок; `start-message.txt` — шаблон стартового сообщения; `tool-defaults.yaml` — ответы по умолчанию |
-| `cases/` | Кейс: ситуация, стартовые данные, факты, заглушки, общий эталон, каталог уроков |
+| `cases/` | Кейс: ситуация, факты, заглушки инструментов (из них же собирается стартовое сообщение), общий эталон, каталог уроков |
 | `solutions/<кейс>/` | Решение: ссылка на кейс, цель и инструкция LLM-оператору |
 | `baskets/` | Корзина: тип `training` или `checking`, фиксированный порядок решений, настройки curator |
 | `runs/` | Настройка прогона: корзина, агент, модели агента, оператора и оценки, версия скиллов, метрики, лимиты, повторения |
@@ -122,21 +129,40 @@ Dockerfile по решению владельца делает владелец.
 | `models/` | Модели по ролям: агент, оператор, оценка |
 | `skillsets/` | Наборы прикладных скиллов и их исходные версии; версии, полученные обучением, лежат в `$CLAWGYM_DATA/skillsets` |
 | `metrics/` | Выбор и параметры встроенных расчётов |
-| `templates/`, `data/` | Шаблон тела запроса агенту; JSON-ответы заглушек (`result.file`) |
+| `templates/`, `data/` | Шаблон тела запроса агенту (`aefclaw-a2a-message.json`); JSON-ответы заглушек (`result.file`), если они вынесены в файлы |
 
 После правки файлов нажмите «Проверить файлы снова» в интерфейсе или вызовите `POST /api/config/reload`. Запущенный прогон работает со снимком настроек, сохранённым при старте.
 
 ## CLI
 
 ```bash
-node dist/src/cli.js preview demo-cards-train
+node dist/src/cli.js preview demo-train
 ```
 
 ```bash
-node dist/src/cli.js run demo-cards-check-v1 --skillset-version V2
+node dist/src/cli.js run demo-check-v1 --skillset-version V2
 ```
 
 `run` поднимает сервис (MCP нужен агенту), выполняет прогон без интерфейса и печатает итоги.
+
+### Инструменты со стенда оркестратора
+
+`import-tools` снимает `tools/list` с MCP оркестратора и записывает `contracts/tools.json`:
+- поля MCP (`name`, `title`, `description`, `inputSchema`, `annotations`) — из ответа как есть;
+- пометки ClawGym (`requiresConfirmation`, `kind`, `enabled`) переносятся из текущего контракта;
+- новые инструменты — информационные и без подтверждения, команда их перечисляет.
+
+```bash
+npm run import-tools -- --url http://<оркестратор>/mcp --header "x-task-id: clawgym-import"
+```
+
+Можно передать сохранённый ответ `tools/list`, например вывод `curl`:
+
+```bash
+npm run import-tools -- --file tools-list.json
+```
+
+С ключом `--check` команда ничего не пишет, а сверяет контракт с оркестратором: печатает добавленные, убранные и изменённые инструменты и завершается с кодом 1 при расхождении. Это проверка `drift-check` перед прогоном.
 
 ## HTTP API
 
@@ -211,12 +237,12 @@ node dist/src/cli.js run demo-cards-check-v1 --skillset-version V2
 | `src/mcp/` | MCP по Streamable HTTP, привязка вызовов по `x-task-id`, журнал стенда |
 | `src/agent/` | REST-клиент агента, служебные команды и разбор строк результата по `INTEGRATION.md` |
 | `src/execution/` | Выполнение кейса: журнал событий, удержание вызовов, автоматический диалог, оценка |
-| `src/operator/`, `src/judge/`, `src/llm/` | LLM-оператор, отдельная оценка, провайдеры (OpenAI-совместимый, GigaChat v1 и v2 с клиентским сертификатом, Anthropic) и проверка структурированного ответа |
+| `src/operator/`, `src/judge/`, `src/llm/` | LLM-оператор, отдельная оценка, провайдеры GigaChat v1 и v2 (клиентский сертификат или http внутри Istio) и проверка структурированного ответа |
 | `src/runner/` | Разрешение настроек прогона, план команд, очередь, линии повторений, curator, версии |
 | `src/skillsets/` | Версии наборов и адаптеры установки: `none`, `directory`, `http` |
 | `src/metrics/`, `src/results/` | Встроенные метрики, хранение результатов, сравнение |
 | `src/manual/` | Ручной режим |
 | `web/` | Интерфейс без сборки: `clawgym.css` из дизайна, страницы в `web/js/pages/` |
-| `dev/` | `fake-agent`, `fake-llm`, `fake-gigachat` (GigaChat v1 и v2 по mTLS для тестов) и `demo` для офлайн-разработки |
+| `dev/` | `fake-agent` (A2A как у AEFClaw, вызывает инструменты стенда), `fake-gigachat` (оператор и судья в формате GigaChat v1 и v2, по http или mTLS) и `demo` для офлайн-разработки |
 
 Правила, которые реализация приняла сверх решений владельца, перечислены в [docs/CONTRACTS.md](docs/CONTRACTS.md#правила-принятые-реализацией): это предложения, их нужно подтвердить.

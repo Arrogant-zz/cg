@@ -1,9 +1,9 @@
-Новое обращение {{execution.caseNumber}}.
-Тематика: {{case.topic}}
-request_ref: {{execution.requestRef}}
-Канал: {{start.channel}}
-Клиент: {{start.client.name}}
-ID клиента: {{start.client.id}}
-Карта: {{start.card}}
-Операция: {{start.operation}}
-Сообщение клиента: {{start.description}}
+Новое обращение второй линии. Данные обращения, клиента и атрибуты кейса — ниже.
+```
+    Тематика: {{tools.get_static_attributes_assigned.classifier.categoryName}}
+    request_ref: {{execution.taskId}}
+```.
+Результат вызова инструмента «Получение кейса для сотрудника»{{tools.get_cases_assigned}}.
+Результат вызова инструмента «Получение статических атрибутов кейса»{{tools.get_static_attributes_assigned}}.
+Результат вызова инструмента «Получение информации по клиенту для SC»{{tools.get_client_universal_info}}.
+Результат вызова инструмента «Получение динамических атрибутов кейса»{{tools.get_dynamic_attributes}}

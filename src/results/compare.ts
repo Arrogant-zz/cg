@@ -1,7 +1,7 @@
 // Сравнение двух прогонов (RES-02): сопоставимость условий, метрики A → B, различия по кейсам.
 import type { ItemRecord, RunRecord } from '../runner/types.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
-import { plural } from '../util/core.js';
+import { plural, stableStringify } from '../util/core.js';
 
 export interface CompareRow {
   key: string;
@@ -46,9 +46,9 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
     {
       key: 'prompts',
       title: 'Подсказки оператора и судьи',
-      a: `${a.settings.prompts.operator} · ${a.settings.prompts.judge}`,
-      b: `${b.settings.prompts.operator} · ${b.settings.prompts.judge}`,
-      same: a.settings.prompts.operator === b.settings.prompts.operator && a.settings.prompts.judge === b.settings.prompts.judge,
+      a: promptsLabel(a),
+      b: promptsLabel(b),
+      same: promptsLabel(a) === promptsLabel(b),
     },
     { key: 'metrics', title: 'Определения метрик', a: metricsLabel(a), b: metricsLabel(b), same: metricsKey(a) === metricsKey(b) },
     { key: 'contract', title: 'Контракт инструментов', a: `${a.settings.contract.version} @${a.settings.contract.hash}`, b: `${b.settings.contract.version} @${b.settings.contract.hash}`, same: a.settings.contract.hash === b.settings.contract.hash },
@@ -118,8 +118,13 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
   };
 }
 
+// Параметры входят в определение: другие веса M2 или правило дубликатов F1 — другая метрика.
 function metricsKey(r: RunRecord): string {
-  return r.settings.metrics.map((m) => `${m.id}:${m.builtin}:${m.version}`).join(',');
+  return r.settings.metrics.map((m) => `${m.id}:${m.builtin}:${m.version}:${stableStringify(m.params ?? {})}`).join(',');
+}
+function promptsLabel(r: RunRecord): string {
+  const p = r.settings.prompts;
+  return [p.operator, p.judge, p.answerJudge].filter(Boolean).join(' · ');
 }
 function metricsLabel(r: RunRecord): string {
   const n = r.settings.metrics.length;

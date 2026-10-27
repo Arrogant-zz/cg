@@ -211,7 +211,7 @@ export class McpServer {
         const c = this.getContract();
         if (!c) return fail(-32603, 'Контракт инструментов не загружен');
         // Выключенные инструменты (enabled: false) агенту не предъявляются.
-        return ok({ tools: c.tools.filter((t) => t.enabled).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
+        return ok({ tools: c.tools.filter((t) => t.enabled).map((t) => t.listed) });
       }
       case 'tools/call': {
         const c = this.getContract();

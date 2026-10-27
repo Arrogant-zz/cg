@@ -1,11 +1,11 @@
-// Офлайн-стенд для тестов: ClawGym + fake-agent + fake-llm на свободных портах, данные во временном каталоге.
+// Офлайн-стенд для тестов: ClawGym + fake-agent + fake-gigachat на свободных портах, данные во временном каталоге.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadEnv } from '../src/env.js';
 import { App } from '../src/app.js';
 import { startFakeAgent } from '../dev/fake-agent/server.js';
-import { startFakeLlm } from '../dev/fake-llm/server.js';
+import { startFakeGigaChat } from '../dev/fake-gigachat/server.js';
 
 export const HOME = path.resolve(process.cwd());
 
@@ -22,14 +22,14 @@ export interface Stand {
 
 export async function startStand(extraEnv: Record<string, string> = {}): Promise<Stand> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-test-'));
-  const llm = await startFakeLlm(0);
+  const llm = await startFakeGigaChat();
   const raw: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: '0',
     HOST: '127.0.0.1',
     CLAWGYM_HOME: HOME,
     CLAWGYM_DATA: dataDir,
-    FAKE_LLM_URL: llm.url,
+    FAKE_GIGACHAT_URL: llm.url,
     LOG_LEVEL: 'warn',
     AGENT_MCP_TIMEOUT_MS: '60000',
     OPERATOR_DECISION_MARGIN_MS: '5000',
@@ -44,14 +44,14 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
     port: 0,
     mcpUrl: `${base}/mcp`,
     workspaces: path.join(dataDir, 'fake-workspaces'),
-    buildSkills: path.join(HOME, 'skillsets/cards/V1'),
+    buildSkills: path.join(HOME, 'skillsets/second-line/V1'),
     failOn: extraEnv.FAKE_AGENT_FAIL_ON ?? null,
   });
   raw.FAKE_AGENT_URL = agent.url;
   await app.checkHealth();
   const agentRequests: { sender: string; text: string }[] = [];
   agent.server.prependListener('request', (req) => {
-    if (req.url === '/a2a/message') {
+    if (req.url === '/a2a') {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
@@ -89,7 +89,7 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
       await app.close();
       await new Promise<void>((r) => agent.server.close(() => r()));
       agent.server.closeAllConnections?.();
-      await new Promise<void>((r) => llm.server.close(() => r()));
+      await llm.close();
       fs.rmSync(dataDir, { recursive: true, force: true });
     },
   };

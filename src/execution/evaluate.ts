@@ -1,10 +1,11 @@
 // Оценка выполнения после завершения кейса (SOL-06, MET-05) и сводка исходных событий для метрик.
 import type { Execution } from './execution.js';
-import type { CheckItem, ChecksEvent, DecisionEvent, JudgeEvent, MessageEvent, ToolCallEvent } from './events.js';
+import type { CheckItem, ChecksEvent, DecisionEvent, JudgeEvent, MessageEvent, ScoresEvent, ToolCallEvent } from './events.js';
 import { LIMIT_STATUSES, TECH_STATUSES } from './events.js';
 import { runActionChecks } from '../checks/actions.js';
-import type { LlmJudge } from '../judge/judge.js';
-import { StructuredError } from '../llm/structured.js';
+import { frozenResult, type LlmJudge } from '../judge/judge.js';
+import { StructuredError, sumUsage } from '../llm/structured.js';
+import { DEFAULT_SCORING, caseScore, finalAction, toolsF1, type AnswerMatch, type CaseScores, type FinalAction, type Scoring } from '../metrics/scoring.js';
 import { errorMessage } from '../util/core.js';
 
 export type Outcome = 'passed' | 'failed' | 'not_evaluated' | 'technical';
@@ -14,11 +15,13 @@ export interface Evaluation {
   reason: string;
   checks: CheckItem[] | null;
   judge: { status: 'ok' | 'failed' | 'skipped'; passed: number; total: number; failed: string[]; error?: string } | null;
+  /** Метрики аналитика; технический сбой не оценивается. */
+  scores: CaseScores | null;
 }
 
-export async function evaluate(exec: Execution, resultSeq: number, judge: LlmJudge | null, signal?: AbortSignal): Promise<Evaluation> {
+export async function evaluate(exec: Execution, resultSeq: number, judge: LlmJudge | null, signal?: AbortSignal, scoring: Scoring = DEFAULT_SCORING): Promise<Evaluation> {
   if (TECH_STATUSES.has(exec.status)) {
-    return { outcome: 'technical', reason: exec.reason || exec.status, checks: null, judge: null };
+    return { outcome: 'technical', reason: exec.reason || exec.status, checks: null, judge: null, scores: null };
   }
   const calls = exec.toolCalls().filter((c) => c.seq <= resultSeq);
   const checks = runActionChecks(exec.caseDef, calls);
@@ -64,7 +67,42 @@ export async function evaluate(exec: Execution, resultSeq: number, judge: LlmJud
     reason = j.status === 'failed' ? `сбой судьи: ${j.error}` : `ответ не оценён: ${j.error}`;
   }
   if (LIMIT_STATUSES.has(exec.status) && outcome === 'passed') reason += ' (завершён по лимиту)';
-  return { outcome, reason, checks, judge: j };
+
+  // Метрики аналитика не меняют итог кейса: это отдельные M1 и M2.
+  const final = finalAction(exec.caseDef, exec.status, calls, frozenResult(exec, resultSeq).finalReply, scoring);
+  const tools = toolsF1(exec.caseDef.reference.tools, calls, scoring.tools);
+  const answer = await answerMatch(exec, final, judge, scoring, signal);
+  const scores: CaseScores = { final, tools, answer, caseScore: caseScore(tools.f1, answer.score, scoring.weights), weights: scoring.weights };
+  exec.add<ScoresEvent>({ type: 'scores', hidden: true, ...scores });
+  return { outcome, reason, checks, judge: j, scores };
+}
+
+/** A_judge: runs независимых прогонов судьи, среднее вердиктов. Сбой любого прогона — оценки нет: градация держится на полном числе прогонов. */
+async function answerMatch(exec: Execution, final: FinalAction, judge: LlmJudge | null, s: Scoring, signal?: AbortSignal): Promise<AnswerMatch> {
+  const reference = (exec.caseDef.reference.finalText || exec.caseDef.reference.answer).trim();
+  const base: AnswerMatch = { status: 'skipped', score: null, runs: [], model: judge?.model.id ?? null, reference, durationMs: null, usage: null, reason: '' };
+  if (!s.answer.enabled) return { ...base, reason: 'в прогоне не выбраны метрики answer-match и case-score' };
+  if (final.incomplete) return { ...base, reason: 'агент не завершил кейс' };
+  if (!reference) return { ...base, reason: 'у кейса нет эталонного текста (reference.finalText или answer)' };
+  if (!final.text) return { ...base, status: 'ok', score: 0, reason: `итоговый текст пуст (${final.textFrom}): 0 без вызова судьи` };
+  if (!judge) return { ...base, reason: 'модель оценки не выбрана' };
+  const runs: AnswerMatch['runs'] = [];
+  let usage: AnswerMatch['usage'] = null;
+  let durationMs = 0;
+  for (let n = 1; n <= s.answer.runs; n++) {
+    try {
+      const r = await judge.matchText(exec, final, reference, n, s.answer.runs, signal);
+      runs.push({ n, match: r.value.match, reason: r.value.reason, durationMs: r.durationMs });
+      usage = sumUsage([usage, r.usage]);
+      durationMs += r.durationMs;
+    } catch (e) {
+      const msg = e instanceof StructuredError ? e.message : errorMessage(e);
+      const dur = e instanceof StructuredError ? e.attempts.reduce((a, x) => a + x.durationMs, 0) : null;
+      runs.push({ n, match: null, reason: '', durationMs: dur, error: msg });
+      return { ...base, status: 'failed', runs, durationMs: durationMs + (dur ?? 0), usage, reason: `сбой судьи в прогоне ${n} из ${s.answer.runs}: ${msg}` };
+    }
+  }
+  return { ...base, status: 'ok', score: runs.filter((r) => r.match).length / runs.length, runs, durationMs, usage };
 }
 
 export interface ExecStats {
@@ -93,6 +131,7 @@ export function execStats(exec: Execution): ExecStats {
   const decisions = ev.filter((e): e is DecisionEvent => e.type === 'operator_decision');
   const calls = ev.filter((e): e is ToolCallEvent => e.type === 'tool_call');
   const judge = ev.filter((e): e is JudgeEvent => e.type === 'judge');
+  const answerJudge = ev.filter((e): e is ScoresEvent => e.type === 'scores').map((e) => e.answer);
   const agentMsgs = ev.filter((e): e is MessageEvent => e.type === 'agent_message');
 
   // Поправки — по разметке реплик и отклонений; один урок в кейсе считается один раз (MET-03).
@@ -116,7 +155,7 @@ export function execStats(exec: Execution): ExecStats {
   const agentTime = agentMsgs.reduce((s, m) => s + (m.durationMs ?? 0), 0);
   const commands = ev.filter((e) => e.type === 'command').reduce((s, e: any) => s + (e.durationMs ?? 0), 0);
   const opTime = decisions.reduce((s, d) => s + (d.durationMs ?? 0), 0);
-  const judgeTime = judge.reduce((s, j) => s + (j.durationMs ?? 0), 0);
+  const judgeTime = [...judge, ...answerJudge].reduce((s, j) => s + (j.durationMs ?? 0), 0);
 
   let agentTok = null as ExecStats['tokens']['agent'];
   for (const m of agentMsgs) {
@@ -135,7 +174,7 @@ export function execStats(exec: Execution): ExecStats {
     turns: exec.turns,
     durationMs: Math.max(0, end - start),
     time: { agent: Math.max(0, agentTime - confWait), operator: opTime, judge: judgeTime, commands },
-    tokens: { agent: agentTok, operator: sumLlm(decisions), judge: sumLlm(judge) },
+    tokens: { agent: agentTok, operator: sumLlm(decisions), judge: sumLlm([...judge, ...answerJudge]) },
     corrections: lessonSet.size + unknown,
     lessons: [...lessonSet],
     repeated: [...repeated],

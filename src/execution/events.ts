@@ -1,5 +1,6 @@
 // События журнала выполнения кейса (RES-01). Роли и источники сообщений разделены;
 // hidden — сведения, которых агент не видел: решения оператора, разметка, оценка.
+import type { CaseScores } from '../metrics/scoring.js';
 
 export type EventType =
   | 'command'
@@ -11,6 +12,7 @@ export type EventType =
   | 'tool_call'
   | 'judge'
   | 'checks'
+  | 'scores'
   | 'status'
   | 'note'
   | 'mode_violation'
@@ -133,6 +135,12 @@ export interface ChecksEvent extends BaseEvent {
   items: CheckItem[];
 }
 
+/** Метрики аналитика по кейсу: класс финального действия, F1 по инструментам, A_judge и case_score. */
+export interface ScoresEvent extends BaseEvent, CaseScores {
+  type: 'scores';
+  hidden: true;
+}
+
 export interface StatusEvent extends BaseEvent {
   type: 'status';
   status: string;
@@ -145,7 +153,7 @@ export interface NoteEvent extends BaseEvent {
   data?: unknown;
 }
 
-export type ExecEvent = ToolCallEvent | MessageEvent | CommandEvent | DecisionEvent | JudgeEvent | ChecksEvent | StatusEvent | NoteEvent;
+export type ExecEvent = ToolCallEvent | MessageEvent | CommandEvent | DecisionEvent | JudgeEvent | ChecksEvent | ScoresEvent | StatusEvent | NoteEvent;
 
 /** Технические статусы: не неуспех агента (фиолетовые в интерфейсе). */
 export const TECH_STATUSES = new Set([

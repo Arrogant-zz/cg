@@ -1,5 +1,6 @@
 // JSON Schema файлов настроек. Неизвестные поля дают предупреждение, а не ошибку:
 // файлы, написанные для следующих версий, продолжают загружаться.
+import { FINAL_CLASSES } from './types.js';
 
 const str = { type: 'string' } as const;
 const strArr = { type: 'array', items: { type: 'string' } } as const;
@@ -66,7 +67,7 @@ const action = {
 
 export const caseSchema = {
   type: 'object',
-  required: ['id', 'title', 'topic', 'start'],
+  required: ['id', 'title', 'topic'],
   properties: {
     id,
     title: str,
@@ -82,6 +83,12 @@ export const caseSchema = {
       properties: {
         procedure: strArr,
         answer: str,
+        finalText: str,
+        finalClass: { enum: [...FINAL_CLASSES] },
+        tools: {
+          type: 'array',
+          items: { anyOf: [str, { type: 'object', required: ['tool'], properties: { tool: str, count: { type: 'integer', minimum: 1 } }, additionalProperties: false }] },
+        },
         criteria: {
           type: 'array',
           items: {
@@ -263,7 +270,7 @@ export const modelSchema = {
     id,
     title: str,
     roles: { type: 'array', minItems: 1, items: { enum: ['agent', 'operator', 'judge'] } },
-    provider: { enum: ['openai-compatible', 'anthropic', 'gigachat-v1', 'gigachat-v2', 'deployment', 'agent-request'] },
+    provider: { enum: ['gigachat-v1', 'gigachat-v2', 'deployment', 'agent-request'] },
     baseUrl: str,
     path: { type: 'string', pattern: '^/' },
     apiKey: str,
@@ -282,9 +289,7 @@ export const modelSchema = {
         maxTokens: { type: 'integer', minimum: 64 },
         timeoutMs: { type: 'integer', minimum: 1000 },
         retries: { type: 'integer', minimum: 0, maximum: 10 },
-        responseFormat: { enum: ['json_schema', 'json_object', 'none'] },
-        effort: { enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
-        fallbacks: { enum: ['default', 'off'] },
+        responseFormat: { enum: ['json_schema', 'none'] },
         devHints: { type: 'boolean' },
       },
       additionalProperties: false,
@@ -344,6 +349,27 @@ const metric = {
   },
   additionalProperties: false,
 } as const;
+
+// Параметры метрик аналитика (27.10.2026): проверяются при загрузке, ошибка видна до запуска прогона.
+const classTools = { type: 'array', items: { anyOf: [str, { type: 'object', required: ['tool'], properties: { tool: str, args: { type: 'object' } }, additionalProperties: false }] } } as const;
+const perClass = (schema: object) => ({ type: 'object', properties: Object.fromEntries(FINAL_CLASSES.map((k) => [k, schema])), additionalProperties: false });
+
+export const metricParamsSchemas: Record<string, object> = {
+  'final-action': { type: 'object', properties: { classes: perClass(classTools) }, additionalProperties: false },
+  'tools-f1': {
+    type: 'object',
+    properties: { duplicates: { enum: ['tolerate', 'strict', 'whole'] }, maxRepeats: { type: 'integer', minimum: 1 }, ignore: strArr },
+    additionalProperties: false,
+  },
+  'answer-match': { type: 'object', properties: { runs: { type: 'integer', minimum: 1, maximum: 9 }, text: perClass(strArr) }, additionalProperties: false },
+  'case-score': {
+    type: 'object',
+    properties: {
+      weights: { type: 'object', required: ['tools', 'answer'], properties: { tools: { type: 'number', minimum: 0, maximum: 1 }, answer: { type: 'number', minimum: 0, maximum: 1 } }, additionalProperties: false },
+    },
+    additionalProperties: false,
+  },
+};
 
 export const metricsFileSchema = {
   anyOf: [
@@ -417,9 +443,15 @@ export const contractSchema = {
         type: 'object',
         required: ['name', 'description', 'inputSchema'],
         properties: {
+          // Поля MCP — как в tools/list оркестратора, агенту отдаются без изменений.
           name: str,
+          title: str,
           description: str,
           inputSchema: { type: 'object' },
+          outputSchema: { type: 'object' },
+          annotations: { type: 'object' },
+          _meta: { type: 'object' },
+          // Поля ClawGym — агенту не отдаются.
           requiresConfirmation: { type: 'boolean' },
           kind: { enum: ['info', 'action'] },
           enabled: { type: 'boolean' },

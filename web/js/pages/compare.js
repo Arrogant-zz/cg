@@ -1,5 +1,5 @@
 // Экран «Сравнение»: сопоставимость условий, метрики A → B, различия по кейсам (RES-02, SK-06).
-import { html, icon, get, typeBadge, fmtDate, fmtDur, mk, ver, hint, later, plural } from '../lib.js';
+import { html, icon, get, typeBadge, fmtDate, fmtDur, mk, ver, hint, later, plural, fmtShare } from '../lib.js';
 
 export const title = 'Сравнение';
 
@@ -8,10 +8,19 @@ function runOption(r, selected) {
   return html`<option value="${r.id}" ${selected ? 'selected' : ''}>#${r.id} ${r.title}${ss} · ${fmtDate(r.finishedAt)}</option>`;
 }
 
+// Доли от 0 до 1: метрики аналитика. Δ = B − A, как ΔM1 = M1_after − M1_before в документе аналитика.
+const SHARES = ['final-action', 'tools-f1', 'answer-match', 'case-score'];
+const LEAD = { 'final-action': 'ΔM1', 'case-score': 'ΔM2' };
+
 function deltaOf(a, b) {
   if (!a || !b || a.status !== 'ok' || b.status !== 'ok' || a.value === null || b.value === null) return html`<span class="delta same">${a?.status !== 'ok' && b?.status !== 'ok' ? 'нет данных ни в одном прогоне' : 'нет данных в одном из прогонов'}</span>`;
   if (a.denominator !== b.denominator && a.denominator !== null) return html`<span class="delta same">знаменатели различаются</span>`;
   const d = b.value - a.value;
+  const lead = LEAD[a.builtin] ? `${LEAD[a.builtin]} ` : '';
+  if (SHARES.includes(a.builtin)) {
+    if (Math.abs(d) < 0.005) return html`<span class="delta same">${lead}0,00 · без изменений</span>`;
+    return html`<span class="delta ${d > 0 ? 'up' : 'down'}">${lead}${d > 0 ? '+' : '−'}${fmtShare(Math.abs(d))}</span>`;
+  }
   if (!d) return html`<span class="delta same">без изменений</span>`;
   const good = ['success', 'answer-quality', 'action-checks'].includes(a.builtin) ? d > 0 : d < 0;
   const size = a.builtin === 'turns-duration' ? fmtDur(Math.abs(d)) : String(Math.abs(Math.round(d * 10) / 10));
@@ -45,6 +54,7 @@ export async function render(ctx) {
   const pickA = html`<label class="field"><span class="lbl">Прогон A</span><select class="input" data-change="pick" data-side="a">${done.map((r) => runOption(r, r.id === a))}</select></label>`;
   const pickB = html`<label class="field"><span class="lbl">Прогон B</span><select class="input" data-change="pick" data-side="b">${done.map((r) => runOption(r, r.id === b))}</select></label>`;
   const verOf = (x) => (x.skillset && x.skillset !== 'build' ? ver(x.skillset.version) : '');
+  const scored = c.cases.some((x) => x.a?.scores || x.b?.scores);
   return html`${head}
 <div class="pair">${pickA}<button class="btn ghost sq" type="button" data-action="swap" aria-label="Поменять прогоны местами" style="align-self: end">${icon('swap')}</button>${pickB}</div>
 <div class="row" style="gap: 8px">${typeBadge(c.a.type)}${verOf(c.a)}<a href="/runs/${c.a.id}">#${c.a.id}</a>${icon('arrow', 's14 t3')}${typeBadge(c.b.type)}${verOf(c.b)}<a href="/runs/${c.b.id}">#${c.b.id}</a></div>
@@ -62,17 +72,22 @@ ${c.limitations.length ? html`<div class="soft p20 col" style="gap: 10px"><span 
 </aside>
 </section>
 <section class="kpis" aria-label="Метрики A и B" style="grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr))">
+${c.metrics.filter((p) => LEAD[p.a.builtin]).map(pairKpi)}
 <div class="kpi"><span class="k">Успех на общих кейсах</span><span class="v">${c.common.passA} <span class="ar">→</span> ${c.common.passB} <small>из ${c.common.n}</small></span><span class="delta ${c.common.passB > c.common.passA ? 'up' : c.common.passB < c.common.passA ? 'down' : 'same'}">${c.common.passB - c.common.passA > 0 ? '+' : ''}${c.common.passB - c.common.passA} ${Math.abs(c.common.passB - c.common.passA) === 1 ? 'кейс' : 'кейса'}</span></div>
-${c.metrics.filter((p) => !['corrections', 'repeated-corrections'].includes(p.a.builtin) || c.a.type === 'training').map(pairKpi)}
+${c.metrics.filter((p) => !LEAD[p.a.builtin]).filter((p) => !['corrections', 'repeated-corrections'].includes(p.a.builtin) || c.a.type === 'training').map(pairKpi)}
 </section>
 <section class="sec" aria-labelledby="cases-h">
 <div class="sec-h"><h2 class="h2" id="cases-h">По кейсам</h2><span class="row cap" style="gap: 14px"><span>Улучшилось <span class="num t2 m5">${c.counts.better}</span></span><span>Ухудшилось <span class="num t2 m5">${c.counts.worse}</span></span><span>Без изменений <span class="num t2 m5">${c.counts.same}</span></span><span>Не сравнивается <span class="num t2 m5">${c.counts.na}</span></span></span></div>
-<div class="tw"><table class="tbl"><thead><tr><th>№</th><th>Кейс</th><th>#${c.a.id}</th><th>#${c.b.id}</th><th>Изменение</th><th>Что видно в журнале</th></tr></thead>
+<div class="tw"><table class="tbl"><thead><tr><th>№</th><th>Кейс</th><th>#${c.a.id}</th><th>#${c.b.id}</th><th>Изменение</th>${scored ? html`<th title="case_score = w_tools · F1 + w_answer · A_judge">case_score</th>` : ''}<th>Что видно в журнале</th></tr></thead>
 <tbody>${c.cases.map((x) => {
     const cell = (it) => (!it ? mk('na') : it.outcome === 'passed' ? mk(true) : it.outcome === 'failed' ? mk(false) : it.outcome === 'technical' ? mk('tech') : mk('na'));
     const link = (run, it) => (it?.execName ? `/runs/${run}/cases/${it.execName}` : null);
     const ch = x.change === 'better' ? html`<span class="pill pass">Улучшение</span>` : x.change === 'worse' ? html`<span class="pill fail">Ухудшение</span>` : x.change === 'same' ? html`<span class="pill">Без изменений</span>` : html`<span class="pill na">Не сравнивается</span>`;
-    return html`<tr><td class="num m5">${x.pos}</td><td>${link(c.b.id, x.b) ? html`<a class="rl mono" href="${link(c.b.id, x.b)}">${x.case}</a>` : html`<span class="mono">${x.case}</span>`}<div class="cap">${x.solution}</div></td><td>${link(c.a.id, x.a) ? html`<a href="${link(c.a.id, x.a)}" aria-label="Разбор в #${c.a.id}">${cell(x.a)}</a>` : cell(x.a)}</td><td>${link(c.b.id, x.b) ? html`<a href="${link(c.b.id, x.b)}" aria-label="Разбор в #${c.b.id}">${cell(x.b)}</a>` : cell(x.b)}</td><td>${ch}</td><td class="t2">${x.note || html`<span class="t3">—</span>`}</td></tr>`;
+    const sa = x.a?.scores?.caseScore ?? null;
+    const sb = x.b?.scores?.caseScore ?? null;
+    const sd = sa !== null && sb !== null ? sb - sa : null;
+    const scoreCell = html`<td class="num nw">${fmtShare(sa)} <span class="t3">→</span> ${fmtShare(sb)}${sd !== null && Math.abs(sd) >= 0.005 ? html` <span class="delta ${sd > 0 ? 'up' : 'down'}" style="display: inline">${sd > 0 ? '+' : '−'}${fmtShare(Math.abs(sd))}</span>` : ''}</td>`;
+    return html`<tr><td class="num m5">${x.pos}</td><td>${link(c.b.id, x.b) ? html`<a class="rl mono" href="${link(c.b.id, x.b)}">${x.case}</a>` : html`<span class="mono">${x.case}</span>`}<div class="cap">${x.solution}</div></td><td>${link(c.a.id, x.a) ? html`<a href="${link(c.a.id, x.a)}" aria-label="Разбор в #${c.a.id}">${cell(x.a)}</a>` : cell(x.a)}</td><td>${link(c.b.id, x.b) ? html`<a href="${link(c.b.id, x.b)}" aria-label="Разбор в #${c.b.id}">${cell(x.b)}</a>` : cell(x.b)}</td><td>${ch}</td>${scored ? scoreCell : ''}<td class="t2">${x.note || html`<span class="t3">—</span>`}</td></tr>`;
   })}</tbody></table></div>
 ${hint(html`Здесь — наблюдаемые различия ответа и действий. Причины по журналу знаний агента — «урок не показан», «скилл не прочитан», «прочитан, но не применён» — ${later()}`)}
 </section>`;

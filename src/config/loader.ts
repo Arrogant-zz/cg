@@ -10,6 +10,7 @@ import {
   caseSchema,
   contractSchema,
   metricSchema,
+  metricParamsSchemas,
   metricsFileSchema,
   modelSchema,
   runSchema,
@@ -31,6 +32,7 @@ import {
   type Issue,
   type MetricDef,
   type ModelDef,
+  type RefTool,
   type Registry,
   type RunConfigDef,
   type SkillsetDef,
@@ -135,6 +137,20 @@ function translate(e: ErrorObject): { reason: string; extraPath?: string; severi
     default:
       return { reason: e.message ?? e.keyword, severity: 'error' };
   }
+}
+
+/** Проверка вложенного значения (параметров метрики) с полем и строкой в исходном файле. */
+function paramsCheck(c: Collector, parsed: Parsed, base: (string | number)[], schema: object, value: unknown): boolean {
+  const v = validator(schema);
+  if (v(value)) return true;
+  let ok = true;
+  for (const e of (v.errors ?? []) as ErrorObject[]) {
+    const t = translate(e);
+    const full = [...base, ...e.instancePath.split('/').filter(Boolean), ...(t.extraPath ? [t.extraPath] : [])];
+    c.add({ severity: t.severity, file: parsed.rel, field: fieldFromPath(full), line: lineOf(parsed, full), reason: t.reason, action: t.severity === 'error' ? 'Исправьте файл и нажмите «Проверить файлы снова»' : undefined });
+    if (t.severity === 'error') ok = false;
+  }
+  return ok;
 }
 
 function schemaCheck(c: Collector, parsed: Parsed, schema: object): boolean {
@@ -246,10 +262,12 @@ async function loadContract(c: Collector, home: string): Promise<ContractDef | n
   (d.tools ?? []).forEach((t: any, i: number) => {
     if (names.has(t.name)) c.error(rel, `Инструмент «${t.name}» описан дважды`, { field: `tools[${i}].name` });
     names.add(t.name);
+    const { requiresConfirmation: _c, kind: _k, enabled: _e, ...listed } = t;
     tools.push({
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,
+      listed,
       requiresConfirmation: !!t.requiresConfirmation,
       kind: t.kind ?? (t.requiresConfirmation ? 'action' : 'info'),
       enabled: t.enabled !== false,
@@ -348,6 +366,16 @@ async function normalizeStubs(
 
 // ------------------------------------------------------------------ сущности
 
+/** Эталон F1_tools: имя или { tool, count }; повтор имени в списке складывает число вызовов. */
+function refTools(list: (string | { tool: string; count?: number })[]): RefTool[] {
+  const out = new Map<string, number>();
+  for (const x of list) {
+    const t = typeof x === 'string' ? { tool: x, count: 1 } : { tool: x.tool, count: x.count ?? 1 };
+    out.set(t.tool, (out.get(t.tool) ?? 0) + t.count);
+  }
+  return [...out].map(([tool, count]) => ({ tool, count }));
+}
+
 async function loadCase(c: Collector, home: string, p: Parsed, contract: ContractDef | null): Promise<CaseDef | null> {
   if (!schemaCheck(c, p, caseSchema)) return null;
   const d = p.data;
@@ -377,6 +405,9 @@ async function loadCase(c: Collector, home: string, p: Parsed, contract: Contrac
     reference: {
       procedure: ref.procedure ?? [],
       answer: ref.answer ?? '',
+      finalText: ref.finalText ?? '',
+      finalClass: ref.finalClass ?? null,
+      tools: ref.tools ? refTools(ref.tools) : null,
       criteria,
       required: (actions.required ?? []).map((a: any, i: number) => toAction(a, i, 'required')),
       forbidden: (actions.forbidden ?? []).map((a: any, i: number) => toAction(a, i, 'forbidden')),
@@ -403,7 +434,12 @@ async function loadCase(c: Collector, home: string, p: Parsed, contract: Contrac
     cd.reference.required.forEach((a, i) => check(a, `reference.actions.required[${i}]`));
     cd.reference.forbidden.forEach((a, i) => check(a, `reference.actions.forbidden[${i}]`));
     if (cd.reference.final && !known.has(cd.reference.final)) c.warn(p.rel, `Итоговое действие «${cd.reference.final}» отсутствует в контракте`, { field: 'reference.actions.final' });
+    for (const t of cd.reference.tools ?? []) {
+      if (!known.has(t.tool)) c.warn(p.rel, `Инструмента «${t.tool}» из эталона F1 нет в контракте: он всегда будет пропущенным (FN)`, { field: 'reference.tools', line: lineOf(p, ['reference', 'tools']) });
+    }
   }
+  if (!cd.reference.finalClass && !cd.reference.final) c.warn(p.rel, 'Нет эталонного класса финального действия (reference.finalClass): кейс не войдёт в M1', { field: 'reference.finalClass' });
+  if (!cd.reference.tools) c.warn(p.rel, 'Нет эталонного набора инструментов (reference.tools): F1 инструментов и M2 для кейса не посчитаются', { field: 'reference.tools' });
   const lessonIds = new Set(cd.reference.lessons.map((l) => l.id));
   for (const [i, a] of [...cd.reference.required, ...cd.reference.forbidden].entries()) {
     if (a.lesson && !lessonIds.has(a.lesson)) c.warn(p.rel, `Урок «${a.lesson}» не описан в reference.lessons`, { field: `reference.actions[${i}].lesson` });
@@ -586,21 +622,15 @@ function loadModel(c: Collector, p: Parsed): ModelDef | null {
   if (m.roles.includes('agent') && m.provider !== 'deployment' && m.provider !== 'agent-request') {
     c.error(p.rel, 'Модель агента задаётся развёртыванием (deployment) или параметром запроса агенту (agent-request)', { field: 'provider' });
   }
-  if (m.provider === 'openai-compatible' && (!m.baseUrl || !m.model)) c.error(p.rel, 'Для openai-compatible нужны baseUrl и model', { field: 'baseUrl' });
-  if (m.provider === 'anthropic' && !m.model) c.error(p.rel, 'Для anthropic нужно model', { field: 'model' });
-  if (m.provider === 'anthropic' && m.params.temperature !== undefined) {
-    c.warn(p.rel, 'temperature не передаётся в Anthropic Messages API: параметр больше не принимается', { field: 'params.temperature' });
-  }
   if (m.provider === 'agent-request' && !m.model) c.error(p.rel, 'Для agent-request нужно model — значение, которое уйдёт агенту', { field: 'model' });
   const gigachat = m.provider === 'gigachat-v1' || m.provider === 'gigachat-v2';
   if (gigachat) {
     if (!m.baseUrl || !m.model) c.error(p.rel, `Для ${m.provider} нужны baseUrl и model`, { field: 'baseUrl' });
-    if (m.params.responseFormat === 'json_object') c.error(p.rel, 'GigaChat не поддерживает json_object: используйте json_schema или none', { field: 'params.responseFormat' });
     if (m.params.temperature === 0) c.error(p.rel, 'GigaChat принимает temperature больше 0: уберите параметр или задайте, например, 0.01', { field: 'params.temperature' });
   }
   if (m.tls) {
     const t = m.tls;
-    if (m.provider !== 'openai-compatible' && !gigachat) c.error(p.rel, `Клиентский сертификат поддерживается для openai-compatible и gigachat, а не для ${m.provider}`, { field: 'tls' });
+    if (!gigachat) c.error(p.rel, `Клиентский сертификат поддерживается для gigachat, а не для ${m.provider}`, { field: 'tls' });
     // Сертификат необязателен; если задан, то целиком. Только tls.ca — для https без клиентского сертификата.
     if (t.pfx && (t.cert || t.key)) c.error(p.rel, 'Укажите либо tls.cert и tls.key, либо tls.pfx', { field: 'tls' });
     else if (!t.pfx && !!t.cert !== !!t.key) c.error(p.rel, 'Для клиентского сертификата нужны оба файла: tls.cert и tls.key', { field: t.cert ? 'tls.key' : 'tls.cert' });
@@ -697,6 +727,14 @@ function loadMetrics(c: Collector, p: Parsed): MetricDef[] {
     if (!v(m)) return;
     if (!(BUILTIN_METRICS as readonly string[]).includes(m.builtin)) {
       c.error(p.rel, `Встроенного расчёта «${m.builtin}» нет. Доступны: ${BUILTIN_METRICS.join(', ')}`, { field: `metrics[${i}].builtin`, line: lineOf(p, ['metrics', i, 'builtin']) });
+      return;
+    }
+    const base = p.data.metrics ? ['metrics', i] : [];
+    const ps = metricParamsSchemas[m.builtin];
+    if (ps && !paramsCheck(c, p, [...base, 'params'], ps, m.params ?? {})) return;
+    const w = m.params?.weights;
+    if (w && Math.abs(w.tools + w.answer - 1) > 1e-9) {
+      c.error(p.rel, `Сумма весов должна быть 1, сейчас ${w.tools + w.answer}`, { field: fieldFromPath([...base, 'params', 'weights']), line: lineOf(p, [...base, 'params', 'weights']), action: 'Например, tools: 0.5 и answer: 0.5 или 0.4 и 0.6' });
       return;
     }
     out.push({

@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "id": "{{messageId}}",
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "{{messageId}}",
+      "contextId": "{{taskId}}",
+      "role": "ROLE_USER",
+      "parts": [
+        {
+          "mediaType": "text/plain",
+          "text": "{{text}}"
+        }
+      ]
+    }
+  }
+}

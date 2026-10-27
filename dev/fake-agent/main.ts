@@ -7,7 +7,7 @@ startFakeAgent({
   host: process.env.HOST ?? '127.0.0.1',
   mcpUrl: process.env.CLAWGYM_MCP_URL ?? 'http://127.0.0.1:8080/mcp',
   workspaces: path.resolve(process.env.FAKE_AGENT_WORKSPACES ?? path.join(home, '.dev/fake-agent/workspaces')),
-  buildSkills: path.resolve(process.env.FAKE_AGENT_BUILD_SKILLS ?? path.join(home, 'skillsets/cards/V1')),
+  buildSkills: path.resolve(process.env.FAKE_AGENT_BUILD_SKILLS ?? path.join(home, 'skillsets/second-line/V1')),
   failOn: process.env.FAKE_AGENT_FAIL_ON ?? null,
   delayMs: Number(process.env.FAKE_AGENT_DELAY_MS ?? 0),
-}).then(({ url }) => console.log(`fake-agent: ${url}/a2a/message · workspace API ${url}/admin`));
+}).then(({ url }) => console.log(`fake-agent: ${url}/a2a · workspace API ${url}/admin`));

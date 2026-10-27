@@ -261,5 +261,14 @@ function availabilityOf(
       return { ...base, available: true, source: 'после каждого curator', reason: '' };
     case 'operator-errors':
       return { ...base, available: true, source: 'вызовы LLM-оператора', reason: '' };
+    case 'final-action':
+      return { ...base, available: true, source: 'журнал инструментов и эталонный класс', reason: '' };
+    case 'tools-f1':
+      return { ...base, available: true, source: 'журнал инструментов и эталонный набор', reason: '' };
+    case 'answer-match':
+    case 'case-score':
+      return ctx.models.judge
+        ? { ...base, available: true, source: 'LLM-оценка по эталонному тексту', reason: '' }
+        : { ...base, available: false, source: 'LLM-оценка по эталонному тексту', reason: 'не выбрана модель оценки' };
   }
 }

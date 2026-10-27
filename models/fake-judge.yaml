@@ -1,12 +1,13 @@
+# Детерминированная заглушка модели оценки: dev/fake-gigachat в формате GigaChat API v2, по http без сертификата.
 id: fake-judge
 title: fake-judge
 roles: [judge]
-provider: openai-compatible
-baseUrl: ${env:FAKE_LLM_URL:-http://127.0.0.1:8092/v1}
+provider: gigachat-v2
+baseUrl: ${env:FAKE_GIGACHAT_URL:-http://127.0.0.1:8092}
 model: fake-judge
 params:
-  temperature: 0
+  temperature: 0.01
   timeoutMs: 30000
   retries: 1
   devHints: true
-description: Детерминированная заглушка судьи из dev/fake-llm — только для офлайн-разработки.
+description: Детерминированная заглушка судьи из dev/fake-gigachat — только для офлайн-разработки.

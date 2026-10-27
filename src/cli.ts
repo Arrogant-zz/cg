@@ -3,6 +3,9 @@
 //   clawgym validate
 //   clawgym preview <run-config> [--skillset-version V2]
 //   clawgym run <run-config> [--skillset-version V2]
+//   clawgym import-tools (--url <MCP оркестратора> | --file <ответ tools/list>) [--header "Имя: значение"]... [--check]
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { loadEnv } from './env.js';
 import { App } from './app.js';
 import { loadRegistry } from './config/loader.js';
@@ -10,6 +13,7 @@ import { resolveRun } from './runner/resolve.js';
 import type { Issue } from './config/types.js';
 import { computeRunMetrics } from './metrics/builtins.js';
 import { setLogLevel } from './util/log.js';
+import { fetchToolsList, mergeTools, readToolsFile } from './config/tools-import.js';
 
 function printIssues(issues: Issue[]) {
   for (const i of issues) {
@@ -21,6 +25,45 @@ function printIssues(issues: Issue[]) {
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
   return i > 0 ? process.argv[i + 1] : undefined;
+}
+
+function args(name: string): string[] {
+  return process.argv.flatMap((a, i) => (a === name && process.argv[i + 1] ? [process.argv[i + 1]] : []));
+}
+
+/** Контракт из tools/list оркестратора: записать (по умолчанию) или только сверить (--check, код выхода 1 при расхождении). */
+async function importTools(home: string): Promise<number> {
+  const url = arg('--url');
+  const file = arg('--file');
+  if (!url === !file) {
+    console.log('Укажите --url <адрес MCP оркестратора> или --file <сохранённый ответ tools/list>');
+    return 2;
+  }
+  const headers: Record<string, string> = {};
+  for (const h of args('--header')) {
+    const i = h.indexOf(':');
+    if (i > 0) headers[h.slice(0, i).trim()] = h.slice(i + 1).trim();
+  }
+  const incoming = url ? await fetchToolsList(url, headers) : await readToolsFile(path.resolve(file!));
+  const target = path.join(home, 'contracts/tools.json');
+  const contract = JSON.parse(await fsp.readFile(target, 'utf8'));
+  const diff = mergeTools(contract.tools ?? [], incoming);
+  console.log(`Инструментов у оркестратора: ${incoming.length}, в контракте: ${(contract.tools ?? []).length}`);
+  for (const n of diff.added) console.log(`  + ${n} — новый: информационный, без подтверждения; проверьте пометки`);
+  for (const n of diff.removed) console.log(`  − ${n} — нет у оркестратора`);
+  for (const c of diff.changed) console.log(`  ~ ${c.name}: ${c.fields.join(', ')}`);
+  const same = !diff.added.length && !diff.removed.length && !diff.changed.length;
+  if (process.argv.includes('--check')) {
+    console.log(same ? 'Контракт совпадает с оркестратором.' : 'Контракт расходится с оркестратором.');
+    return same ? 0 : 1;
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  contract.version = `imported-${stamp}`;
+  contract.note = `Инструменты сняты из tools/list ${url ?? path.basename(file!)} ${stamp} командой import-tools. Пометки requiresConfirmation, kind и enabled — ClawGym.`;
+  contract.tools = diff.tools;
+  await fsp.writeFile(target, JSON.stringify(contract, null, 2) + '\n', 'utf8');
+  console.log(`${same ? 'Изменений нет. ' : ''}Записано: contracts/tools.json`);
+  return 0;
 }
 
 async function main() {
@@ -75,7 +118,8 @@ async function main() {
     await app.close();
     process.exit(r.status === 'completed' ? 0 : 1);
   }
-  console.log('Использование: clawgym validate | preview <run-config> | run <run-config> [--skillset-version V]');
+  if (cmd === 'import-tools') process.exit(await importTools(env.home));
+  console.log('Использование: clawgym validate | preview <run-config> | run <run-config> [--skillset-version V] | import-tools (--url U | --file F) [--header H] [--check]');
   process.exit(2);
 }
 

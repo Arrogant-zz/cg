@@ -1,0 +1,61 @@
+# У кейса нет решений: он проходится только вручную.
+# Для get_smsbank_notifications заглушки нет намеренно — в ручном режиме отвечает человек.
+id: notifications-channel-change
+title: Смена канала уведомлений
+topic: Уведомления / Смена канала
+tags: [Уведомления]
+situation: >
+  Клиент просит присылать уведомления по обращению в SMS вместо электронной почты.
+facts:
+  - Номер для SMS заканчивается на 44.
+state:
+  channel: EMAIL
+  case: open
+tools:
+  get_cases_assigned:
+    - id: case
+      result:
+        json: { caseId: CASE-TEST-3003, taskId: "{{execution.taskId}}", status: IN_WORK, clientMessage: "Пришлите уведомления по моему обращению в SMS, почту я не читаю." }
+  get_static_attributes_assigned:
+    - id: static
+      result:
+        json: { classifier: { categoryName: Уведомления / Смена канала }, channel: CHAT, priority: NORMAL }
+  get_dynamic_attributes:
+    - id: dynamic
+      result:
+        json: { notificationsFrom: "2026-10-01T00:00:00.000Z", notificationsTo: "2026-10-27T23:59:59.000Z", newContact: "***-**-44", oldContact: "t***@example.test" }
+  get_channel_cases:
+    - id: channels
+      result:
+        json: { channels: [{ channelCode: EMAIL, contact: "t***@example.test" }] }
+  change_notifications_channel_for_case:
+    - id: updated
+      when: { request.channelCode: SMS }
+      result:
+        json: { status: UPDATED, channelCode: SMS }
+      effect: { channel: SMS }
+  get_close_with_answer:
+    - id: closed
+      result:
+        json: { caseId: CASE-TEST-3003, status: CLOSED }
+      effect: { case: closed }
+reference:
+  procedure:
+    - Получить каналы уведомлений по кейсу
+    - Сменить канал уведомлений на SMS после подтверждения оператора
+    - "Ответить клиенту: уведомления будут приходить в SMS"
+    - Закрыть кейс с ответом
+  answer: Канал уведомлений по обращению изменён на SMS.
+  # Метрики аналитика: класс финального действия (M1) и минимально достаточный набор инструментов (F1_tools).
+  finalClass: close_answer
+  tools: [get_channel_cases, change_notifications_channel_for_case, get_close_with_answer]
+  criteria:
+    - id: sms
+      text: Сообщает, что уведомления будут приходить в SMS
+      hint: SMS
+  actions:
+    required:
+      - tool: get_channel_cases
+        before: change_notifications_channel_for_case
+      - tool: change_notifications_channel_for_case
+    final: get_close_with_answer

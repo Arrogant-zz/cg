@@ -48,7 +48,7 @@ function model(provider: 'gigachat-v1' | 'gigachat-v2', tls: Partial<ModelTls> =
   };
 }
 
-// Контекст судьи в том виде, в каком его понимает dev/fake-llm.
+// Контекст судьи в том виде, в каком его понимает dev/fake-gigachat.
 const judgeReq: LlmRequest = {
   system: 'Оценка (подсказка judge-v1)',
   user: '```json\n' + JSON.stringify({ reference: { criteria: [{ id: 'c1', text: 'Называет причину', hint: 'PIN' }] }, result: { agentMessages: [{ seq: 3, text: 'Карта заблокирована из-за неверного PIN' }] } }) + '\n```',
@@ -172,26 +172,27 @@ test('GigaChat без сертификата: http-адрес внутри Istio
 
 test('файлы моделей GigaChat: сертификат необязателен, но задаётся целиком; ограничения параметров', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-gc-cfg-'));
-  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates', 'data', 'baskets', 'runs']) {
+  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates', 'baskets', 'runs']) {
     fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
   }
   const w = (name: string, text: string) => fs.writeFileSync(path.join(home, 'models', `${name}.yaml`), text);
   w('gc-no-tls', 'id: gc-no-tls\nroles: [judge]\nprovider: gigachat-v1\nbaseUrl: https://gc.local/api\nmodel: GigaChat\n');
   w('gc-istio', 'id: gc-istio\nroles: [judge]\nprovider: gigachat-v2\nbaseUrl: http://gigachat.ai.svc.cluster.local/api\nmodel: GigaChat\n');
   w('gc-ca-only', 'id: gc-ca-only\nroles: [judge]\nprovider: gigachat-v1\nbaseUrl: https://gc.local/api\nmodel: GigaChat\ntls:\n  ca: /etc/ssl/russian-trusted-root.crt\n');
-  w('gc-zero', 'id: gc-zero\nroles: [judge]\nprovider: gigachat-v2\nbaseUrl: https://gc.local/api\nmodel: GigaChat\ntls:\n  pfx: /x.p12\nparams:\n  temperature: 0\n  responseFormat: json_object\n');
+  w('gc-zero', 'id: gc-zero\nroles: [judge]\nprovider: gigachat-v2\nbaseUrl: https://gc.local/api\nmodel: GigaChat\ntls:\n  pfx: /x.p12\nparams:\n  temperature: 0\n');
+  w('gc-json-object', 'id: gc-json-object\nroles: [judge]\nprovider: gigachat-v1\nbaseUrl: https://gc.local/api\nmodel: GigaChat\nparams:\n  responseFormat: json_object\n');
+  w('openai', 'id: openai\nroles: [judge]\nprovider: openai-compatible\nbaseUrl: https://llm.local/v1\nmodel: m\n');
   w('gc-half', 'id: gc-half\nroles: [judge]\nprovider: gigachat-v1\nbaseUrl: http://gc.local/api\nmodel: GigaChat\ntls:\n  cert: /x.crt\n  passphrase: secret\n');
-  w('claude-tls', 'id: claude-tls\nroles: [judge]\nprovider: anthropic\nmodel: claude-opus-5-5\ntls:\n  cert: /x.crt\n  key: /x.key\n');
   try {
     const reg = await loadRegistry(home, path.join(home, 'var'));
     const issues = (id: string) => reg.issues.filter((i) => i.file === `models/${id}.yaml`).map((i) => `${i.severity} ${i.field}: ${i.reason}`);
     for (const id of ['gc-no-tls', 'gc-istio', 'gc-ca-only']) assert.deepEqual(issues(id), [], `${id}: сертификат необязателен`);
     assert.ok(issues('gc-zero').some((x) => x.startsWith('error params.temperature')));
-    assert.ok(issues('gc-zero').some((x) => x.startsWith('error params.responseFormat')));
+    assert.ok(issues('gc-json-object').some((x) => x.startsWith('error') && /responseFormat/.test(x)), 'GigaChat: только json_schema или none');
+    assert.ok(issues('openai').some((x) => x.startsWith('error') && /provider/.test(x)), 'провайдеры OpenAI и Anthropic убраны');
     assert.ok(issues('gc-half').some((x) => x.startsWith('error tls.key')));
     assert.ok(issues('gc-half').some((x) => x.startsWith('error baseUrl') && /https/.test(x)));
     assert.ok(issues('gc-half').some((x) => x.startsWith('warning tls.passphrase')));
-    assert.ok(issues('claude-tls').some((x) => x.startsWith('error tls')));
     assert.deepEqual(issues('op-gigachat'), [], 'пример из репозитория проходит проверку');
     assert.deepEqual(issues('judge-gigachat'), []);
   } finally {
@@ -199,9 +200,9 @@ test('файлы моделей GigaChat: сертификат необязат�
   }
 });
 
-test('прогон: оператор на GigaChat v1, оценка на GigaChat v2 — те же итоги, что на OpenAI-совместимой заглушке', { skip }, async () => {
+test('прогон: оператор на GigaChat v1, оценка на GigaChat v2 — те же итоги, что на заглушке без сертификата', { skip }, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-gc-home-'));
-  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates', 'data', 'baskets', 'runs']) {
+  for (const d of ['contracts', 'cases', 'solutions', 'agents', 'models', 'skillsets', 'metrics', 'templates', 'baskets', 'runs']) {
     fs.cpSync(path.join(HOME, d), path.join(home, d), { recursive: true });
   }
   const tls = 'tls:\n  cert: ${env:GC_CERT}\n  key: ${env:GC_KEY}\n  ca: ${env:GC_CA}\n';
@@ -209,7 +210,7 @@ test('прогон: оператор на GigaChat v1, оценка на GigaCha
   fs.writeFileSync(path.join(home, 'models/gc-judge.yaml'), `id: gc-judge\nroles: [judge]\nprovider: gigachat-v2\nbaseUrl: \${env:GC_URL}\nmodel: GigaChat-2-Max\n${tls}params:\n  temperature: 0.01\n  retries: 0\n  devHints: true\n`);
   fs.writeFileSync(
     path.join(home, 'runs/gc-check.yaml'),
-    'id: gc-check\ntitle: Проверка · карты · V1 · GigaChat\nbasket: cards-check\nagent: fake-agent\nmodels:\n  agent: fake-agent-a\n  operator: gc-operator\n  judge: gc-judge\nskillset: { id: cards, version: V1 }\nmetrics: all\n',
+    'id: gc-check\ntitle: Проверка · вторая линия · V1 · GigaChat\nbasket: second-line-check\nagent: fake-agent\nmodels:\n  agent: fake-agent-a\n  operator: gc-operator\n  judge: gc-judge\nskillset: { id: second-line, version: V1 }\nmetrics: all\n',
   );
   const s = await startStand({ CLAWGYM_HOME: home, GC_URL: gc.url, GC_CERT: pki!.clientCert, GC_KEY: pki!.clientKey, GC_CA: pki!.ca });
   try {
@@ -217,7 +218,7 @@ test('прогон: оператор на GigaChat v1, оценка на GigaCha
     const created = await s.api('POST', '/api/runs', { config: 'gc-check' });
     assert.equal(created.status, 200, JSON.stringify(created.data));
     const viaGc = await s.waitRun(created.data.id);
-    const viaFake = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-cards-check-v1' })).data.id);
+    const viaFake = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check-v1' })).data.id);
     for (const r of [viaGc, viaFake]) assert.equal(r.status, 'completed', r.error ?? '');
     const outcomes = (r: any) => r.lines[0].items.filter((i: any) => i.kind === 'case').map((i: any) => [i.pos, i.outcome, i.steps.judge?.status]);
     assert.deepEqual(outcomes(viaGc), outcomes(viaFake));

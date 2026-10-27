@@ -14,11 +14,11 @@ after(async () => {
 });
 
 const v1Files = () =>
-  ['cards-pin-blocking', 'cards-reissue', 'cards-disputes'].map((n) => fs.readFileSync(path.join(HOME, `skillsets/cards/V1/skills/learned/${n}/SKILL.md`), 'utf8'));
+  ['spasibo-bonus', 'card-dispute', 'notifications-channel'].map((n) => fs.readFileSync(path.join(HOME, `skillsets/second-line/V1/skills/learned/${n}/SKILL.md`), 'utf8'));
 
 test('обучение V1: reset перед каждым кейсом, capture после каждого, curator после 2, 4, 6; новая версия V2', async () => {
   const before = v1Files();
-  const created = await s.api('POST', '/api/runs', { config: 'demo-cards-train' });
+  const created = await s.api('POST', '/api/runs', { config: 'demo-train' });
   assert.equal(created.status, 200, JSON.stringify(created.data));
   const run = await s.waitRun(created.data.id);
   assert.equal(run.status, 'completed', run.error ?? '');
@@ -51,7 +51,7 @@ test('обучение V1: reset перед каждым кейсом, capture �
   // Новая версия со ссылками на V1 и прогон; V1 не изменён.
   assert.equal(line.skills.newVersion?.status, 'ready', line.skills.versionNote);
   const ver = line.skills.newVersion.id;
-  const ss = await s.api('GET', '/api/skillsets/cards');
+  const ss = await s.api('GET', '/api/skillsets/second-line');
   const v = ss.data.versions.find((x: any) => x.id === ver);
   assert.equal(v.origin.from, 'V1');
   assert.equal(v.origin.run, run.id);
@@ -87,8 +87,8 @@ test('обучение V1: reset перед каждым кейсом, capture �
 });
 
 test('проверка V1 и полученной версии: без capture и curator, неизменность набора, сравнение', async () => {
-  const a = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-cards-check-v1' })).data.id);
-  const b = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-cards-check-latest' })).data.id);
+  const a = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check-v1' })).data.id);
+  const b = await s.waitRun((await s.api('POST', '/api/runs', { config: 'demo-check-latest' })).data.id);
   for (const r of [a, b]) {
     assert.equal(r.status, 'completed', r.error ?? '');
     const l = r.lines[0];
@@ -105,40 +105,74 @@ test('проверка V1 и полученной версии: без capture �
   assert.equal(cmp.status, 200);
   assert.ok(cmp.data.counts.better > 0);
   assert.equal(cmp.data.rows.filter((r: any) => !r.same).map((r: any) => r.key).join(','), 'skillset');
+
+  // Метрики аналитика. M1: классы финального действия верны в обеих версиях — в демо-корзине нечего различать.
+  const metric = (r: any, id: string) => r.summary.find((m: any) => m.id === id);
+  for (const r of [a, b]) {
+    const m1 = metric(r, 'final-action');
+    assert.equal(m1.value, 1);
+    assert.deepEqual(m1.details.matrix.slice(0, 2), [
+      [2, 0, 0, 0],
+      [0, 1, 0, 0],
+    ]);
+    assert.ok(r.lines[0].items.every((i: any) => i.scores.answer.runs === 3), 'три прогона судьи на кейс');
+  }
+  // M2 = 0,5 · F1 + 0,5 · A_judge. V1: нет истории операций и ответ не по эталону; описание экспертизы — ⅔ прогонов.
+  const [sp, card] = a.lines[0].items.map((i: any) => i.scores);
+  assert.deepEqual([sp.tools.f1, sp.answer.score, sp.caseScore], [0.8, 0, 0.4]);
+  assert.deepEqual([card.tools.fn, card.answer.matched], [1, 2]);
+  assert.equal(metric(a, 'case-score').display, '0,53');
+  assert.equal(metric(b, 'case-score').display, '0,94');
+  assert.match(metric(b, 'case-score').note, /^0,5 · F1 1,00 \+ 0,5 · A 0,89/);
+  // Журнал кейса: класс, F1 по инструментам и вердикты судьи с обоснованием.
+  const ex = await s.api('GET', `/api/runs/${b.id}/executions/${b.lines[0].items[0].execName}`);
+  const sc = ex.data.events.find((e: any) => e.type === 'scores');
+  assert.equal(sc.final.tool, 'get_close_with_answer');
+  assert.equal(sc.final.textFrom, 'request.extendedAnswer');
+  assert.deepEqual(sc.tools.rows.map((x: any) => x.tool).sort(), ['get_close_with_answer', 'get_spasibo_general_info', 'get_spasibo_history_info']);
+  assert.ok(sc.answer.runs.every((x: any) => x.match === true && x.reason));
+  // Сравнение: ΔM1 = 0, ΔM2 > 0; параметры метрик входят в определение.
+  const pair = (id: string) => cmp.data.metrics.find((p: any) => p.a.id === id);
+  assert.equal(pair('final-action').b.value - pair('final-action').a.value, 0);
+  assert.ok(pair('case-score').b.value - pair('case-score').a.value > 0.4);
+  assert.ok(cmp.data.rows.find((r: any) => r.key === 'prompts').a.includes('answer-judge-v1'));
 });
 
 test('ручной режим: кейс без решений, ответ вместо инструмента, подтверждение, команда, разметка', async () => {
-  const created = await s.api('POST', '/api/manual', { case: 'card-double-charge', agent: 'fake-agent', model: 'fake-agent-a', skillset: 'build' });
+  const created = await s.api('POST', '/api/manual', { case: 'notifications-channel-change', agent: 'fake-agent', model: 'fake-agent-a', skillset: 'build' });
   assert.equal(created.status, 200, JSON.stringify(created.data));
   const id = created.data.id;
   const get = async () => (await s.api('GET', `/api/manual/${id}`)).data;
-  // Нет заглушки для get_merchant_info: вызов ждёт ответа человека.
+  // Нет заглушки для get_smsbank_notifications: вызов ждёт ответа человека.
   const waiting = await until(async () => {
     const m = await get();
     return m.execution.pending.find((p: any) => p.kind === 'answer') ?? null;
   }, 20000, 'ручной ответ инструмента');
-  assert.equal(waiting.tool, 'get_merchant_info');
-  assert.equal((await s.api('POST', `/api/manual/${id}/tool/${waiting.callId}`, { action: 'answer', text: '{"name":"ТехноМаркет","status":"active"}' })).status, 200);
+  assert.equal(waiting.tool, 'get_smsbank_notifications');
+  assert.equal((await s.api('POST', `/api/manual/${id}/tool/${waiting.callId}`, { action: 'answer', text: '{"notifications":[{"date":"2026-10-20","channel":"EMAIL","status":"DELIVERED"}]}' })).status, 200);
   const conf = await until(async () => {
     const m = await get();
     return m.execution.pending.find((p: any) => p.kind === 'confirmation') ?? null;
-  }, 20000, 'подтверждение refund_operation');
-  assert.equal(conf.tool, 'refund_operation');
+  }, 20000, 'подтверждение change_notifications_channel_for_case');
+  assert.equal(conf.tool, 'change_notifications_channel_for_case');
   // Удерживаемый MCP-вызов уже виден в HTTP-обменах сессии — без ответа.
-  const held = ((await s.api('GET', `/api/manual/${id}/http`)).data as any[]).find((x) => x.label === 'tools/call refund_operation');
+  const held = ((await s.api('GET', `/api/manual/${id}/http`)).data as any[]).find((x) => x.label === 'tools/call change_notifications_channel_for_case');
   assert.ok(held && held.response === null && held.request.headers['x-task-id']);
   // Пока агент ждёт, реплика не принимается: один ход за раз.
   assert.equal((await s.api('POST', `/api/manual/${id}/message`, { text: 'Проверка занятости' })).status, 409);
   await s.api('POST', `/api/manual/${id}/tool/${conf.callId}`, { action: 'approve' });
   await until(async () => ((await get()).busy === null ? true : null), 20000, 'конец хода');
   assert.equal((await s.api('POST', `/api/manual/${id}/message`, { text: 'Хорошо, можно закрывать обращение.', correction: false })).status, 200);
-  const close = await until(async () => (await get()).execution.pending.find((p: any) => p.tool === 'close_case') ?? null, 20000, 'close_case');
+  const close = await until(async () => (await get()).execution.pending.find((p: any) => p.tool === 'get_close_with_answer') ?? null, 20000, 'get_close_with_answer');
   await s.api('POST', `/api/manual/${id}/tool/${close.callId}`, { action: 'approve' });
   await until(async () => ((await get()).busy === null ? true : null), 20000, 'закрытие');
   const m = await get();
-  const manualCall = m.execution.events.find((e: any) => e.type === 'tool_call' && e.tool === 'get_merchant_info');
+  const manualCall = m.execution.events.find((e: any) => e.type === 'tool_call' && e.tool === 'get_smsbank_notifications');
   assert.equal(manualCall.outcome, 'manual');
-  assert.match(manualCall.yaml, /get_merchant_info/);
+  assert.match(manualCall.yaml, /get_smsbank_notifications/);
+  // Ответ клиенту ушёл в request.shortAnswer инструмента закрытия.
+  const closeCall = m.execution.events.find((e: any) => e.type === 'tool_call' && e.tool === 'get_close_with_answer');
+  assert.match(closeCall.args.request.shortAnswer, /SMS/);
   // Разметка реплики как поправки и завершение с автоматическими проверками.
   const human = m.execution.events.find((e: any) => e.type === 'human_message');
   assert.equal((await s.api('POST', `/api/manual/${id}/mark`, { seq: human.seq, correction: true, lessonId: 'L-test-1' })).status, 200);
@@ -148,7 +182,7 @@ test('ручной режим: кейс без решений, ответ вме
   assert.equal(fin.data.status, 'closed');
   assert.ok(fin.data.evaluation.checks.length > 0);
   assert.equal(fin.data.evaluation.stats.corrections, 1);
-  const after = ((await s.api('GET', `/api/manual/${id}/http`)).data as any[]).find((x) => x.label === 'tools/call refund_operation');
+  const after = ((await s.api('GET', `/api/manual/${id}/http`)).data as any[]).find((x) => x.label === 'tools/call change_notifications_channel_for_case');
   assert.equal(after.response.status, 200, 'после решения ответ записан, обмены сохранены после закрытия сессии');
 });
 
@@ -156,7 +190,7 @@ test('вызов MCP с неизвестным x-task-id получает оши
   const res = await fetch(`${s.base}/mcp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-task-id': 'unknown-task' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_card_status', arguments: { card: '1' } } }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_client_cards', arguments: {} } }),
   });
   const j: any = await res.json();
   assert.equal(j.result.isError, true);
@@ -170,7 +204,7 @@ test('вызов MCP с неизвестным x-task-id получает оши
 test('удаление: завершённый прогон и закрытая сессия удаляются с файлами, идущий прогон — нет, версия скиллов остаётся', async () => {
   const runDir = (id: number) => path.join(s.dataDir, 'results', `run-${String(id).padStart(4, '0')}`);
   // Прогон в очереди или в работе удалить нельзя.
-  const created = await s.api('POST', '/api/runs', { config: 'demo-cards-check-v1' });
+  const created = await s.api('POST', '/api/runs', { config: 'demo-check-v1' });
   const busy = await s.api('DELETE', `/api/runs/${created.data.id}`);
   assert.equal(busy.status, 409);
   const run = await s.waitRun(created.data.id);
@@ -184,11 +218,11 @@ test('удаление: завершённый прогон и закрытая 
   assert.ok(train, 'обучающий прогон из первого теста');
   const vid = train.newVersions[0].id;
   assert.equal((await s.api('DELETE', `/api/runs/${train.id}`)).status, 200);
-  const v = (await s.api('GET', '/api/skillsets')).data.find((x: any) => x.id === 'cards').versions.find((x: any) => x.id === vid);
+  const v = (await s.api('GET', '/api/skillsets')).data.find((x: any) => x.id === 'second-line').versions.find((x: any) => x.id === vid);
   assert.ok(v, 'версия скиллов осталась');
   assert.equal(v.origin.run, train.id);
   assert.equal(v.runDeleted, true);
-  assert.equal((await s.api('GET', `/api/skillsets/cards`)).status, 200);
+  assert.equal((await s.api('GET', `/api/skillsets/second-line`)).status, 200);
   // Закрытая ручная сессия удаляется вместе с журналом и HTTP-обменами.
   const closed = (await s.api('GET', '/api/manual')).data.find((x: any) => x.status === 'closed');
   assert.ok(closed, 'закрытая сессия из теста ручного режима');
@@ -198,7 +232,7 @@ test('удаление: завершённый прогон и закрытая 
   assert.ok(files.every((f) => !fs.existsSync(f)), 'файлы сессии удалены');
   assert.equal((await s.api('GET', `/api/manual/${closed.id}`)).status, 404);
   // Номер удалённого прогона не занимается повторно.
-  const next = await s.api('POST', '/api/runs', { config: 'demo-cards-check-v1' });
+  const next = await s.api('POST', '/api/runs', { config: 'demo-check-v1' });
   assert.ok(next.data.id > run.id);
   await s.waitRun(next.data.id);
 });

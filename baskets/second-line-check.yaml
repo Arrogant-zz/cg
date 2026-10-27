@@ -1,0 +1,10 @@
+id: second-line-check
+title: Проверка · СберСпасибо и оспаривание операций
+type: checking
+description: Проверка текущих скиллов без обучения. Третий элемент — сценарий с обучающими поправками; в проверке они не исполняются.
+checking:
+  confirmations: approve
+items:
+  - solution: spasibo-bonus-missing/facts-only
+  - solution: card-operation-dispute/facts-only
+  - solution: spasibo-bonus-missing/explain-on-ask

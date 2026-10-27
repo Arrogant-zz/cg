@@ -3,11 +3,17 @@ import type { ModelDef } from '../config/types.js';
 import type { Execution } from '../execution/execution.js';
 import type { LlmProvider } from '../llm/provider.js';
 import { structuredCall, type StructuredResult } from '../llm/structured.js';
-import { JUDGE_SCHEMA, JUDGE_SYSTEM } from '../operator/prompts.js';
+import { ANSWER_JUDGE_SCHEMA, ANSWER_JUDGE_SYSTEM, JUDGE_SCHEMA, JUDGE_SYSTEM } from '../operator/prompts.js';
+import { FINAL_TEXT_KINDS, type FinalAction } from '../metrics/scoring.js';
 
 export interface JudgeVerdict {
   criteria: { id: string; passed: boolean; reason: string }[];
   summary: string;
+}
+
+export interface TextVerdict {
+  match: boolean;
+  reason: string;
 }
 
 /** Результат решения фиксируется до служебных команд: судья оценивает его, а не отчёт capture. */
@@ -57,5 +63,21 @@ export class LlmJudge {
       },
       1,
     );
+  }
+
+  /** A_judge: соответствует ли итоговый текст агента эталонному. Один прогон из runs; судья видит только тексты и тематику. */
+  async matchText(exec: Execution, final: FinalAction, reference: string, n: number, runs: number, signal?: AbortSignal): Promise<StructuredResult<TextVerdict>> {
+    const c = exec.caseDef;
+    const ctx = {
+      case: { id: c.id, title: c.title, topic: c.topic },
+      referenceKind: final.expected ? FINAL_TEXT_KINDS[final.expected] : null,
+      reference,
+      kind: final.predicted ? FINAL_TEXT_KINDS[final.predicted] : null,
+      text: final.text,
+      run: n,
+      runs,
+    };
+    const user = `Сравни итоговый текст агента с эталонным.\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\``;
+    return structuredCall<TextVerdict>(this.provider, { system: ANSWER_JUDGE_SYSTEM, user, schema: ANSWER_JUDGE_SCHEMA as any, schemaName: 'answer_match', signal }, () => [], 1);
   }
 }

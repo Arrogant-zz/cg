@@ -1,21 +1,27 @@
-# Локальная заглушка агента из dev/fake-agent. Формат запроса и ответа — условный A2A.
+# Локальная заглушка агента из dev/fake-agent для демо и тестов.
+# Запрос и ответ — в формате AEFClaw (agents/aef-claw.yaml); отличия: модель выбирается параметром запроса,
+# набор скиллов ставится через предложенный HTTP API workspace, в ответе есть счётчик токенов.
 id: fake-agent
 title: fake-agent · локально
 request:
-  url: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/a2a/message
+  url: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/a2a
   method: POST
-  body: templates/a2a-message.json
+  headers:
+    a2a-version: "1.0"
+  body: templates/aefclaw-a2a-message.json
   taskIdHeader: x-task-id
-  senderIdHeader: x-a2a-sender-id
+  senderIdHeader: X-A2A-Sender-Id
   taskIdScope: execution
 response:
   mode: sync
-  replyPath: $.result.parts[*].text
-  statusPath: $.result.metadata.status
+  replyPath: $.result.task.status.message.parts[*].text
+  statusPath: $.result.task.status.state
   errorPath: $.error.message
   usage:
-    inputPath: $.result.metadata.usage.input_tokens
-    outputPath: $.result.metadata.usage.output_tokens
+    inputPath: $.result.task.metadata.usage.input_tokens
+    outputPath: $.result.task.metadata.usage.output_tokens
+commands:
+  capture: /case-capture request_ref={{taskId}} category={{topic}}
 mcp:
   contract: contracts/tools.json
   protocolVersion: 2025-06-18
@@ -29,5 +35,5 @@ skills:
   installer: http
   baseUrl: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/admin
 healthUrl: ${env:FAKE_AGENT_URL:-http://127.0.0.1:8091}/health
-build: fake-agent 0.1
+build: fake-agent 0.2
 learningKit: learning-scripts (имитация)

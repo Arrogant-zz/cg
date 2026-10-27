@@ -1,0 +1,79 @@
+# Синтетический кейс на инструментах стенда оркестратора. Ответы инструментов — условные: формат DTO сверить со стендом.
+id: spasibo-bonus-missing
+title: Не начислены бонусы СберСпасибо
+topic: СберСпасибо / Начисление бонусов
+tags: [СберСпасибо, Бонусы]
+situation: >
+  Клиент 12 октября купил товар у партнёра СберСпасибо и не получил бонусы. Покупка ждёт подтверждения партнёром,
+  бонусы начислят после него. Признаков мошенничества нет.
+facts:
+  - Покупка 12 октября у партнёра «Тестовый партнёр» на 4 990 ₽.
+  - Партнёр подтверждает покупки в течение 30 дней.
+state:
+  case: open
+tools:
+  get_cases_assigned:
+    - id: case
+      result:
+        json: { caseId: CASE-TEST-1001, taskId: "{{execution.taskId}}", status: IN_WORK, clientMessage: "Купил товар у партнёра СберСпасибо 12 октября, бонусы так и не пришли. Где мои бонусы?" }
+  get_static_attributes_assigned:
+    - id: static
+      result:
+        json: { classifier: { categoryName: СберСпасибо / Начисление бонусов }, channel: CHAT, priority: NORMAL }
+  get_dynamic_attributes:
+    - id: dynamic
+      result:
+        json: { purchaseDate: "2026-10-12", purchaseSum: "4 990 ₽", partner: Тестовый партнёр, periodFrom: "2026-10-01", periodTo: "2026-10-27" }
+  get_spasibo_general_info:
+    - id: general
+      result:
+        json: { participant: true, balance: 1250, categories: [Супермаркеты, Аптеки], limits: [{ month: "2026-10", limit: 3000 }] }
+  get_spasibo_history_info:
+    - id: history
+      when: { dateFrom: "2026-10-01" }
+      result:
+        json: { operations: [{ date: "2026-10-12", partner: Тестовый партнёр, sum: "4 990 ₽", bonus: 249, status: PENDING_PARTNER_CONFIRMATION }] }
+  get_close_with_answer:
+    - id: closed
+      delayMs: 600
+      result:
+        json: { caseId: CASE-TEST-1001, status: CLOSED }
+      effect: { case: closed }
+reference:
+  procedure:
+    - Запросить основную информацию Спасибо по клиенту
+    - Проверить историю операций СберСпасибо за период покупки
+    - "Ответить клиенту: бонусы ожидают подтверждения покупки партнёром"
+    - Закрыть кейс с ответом после подтверждения оператора
+  answer: Бонусы за покупку 12 октября ожидают подтверждения партнёром и будут начислены после него.
+  # Метрики аналитика: класс финального действия (M1) и минимально достаточный набор инструментов (F1_tools).
+  # Эталонный итоговый текст для A_judge — answer: финал кейса — ответ клиенту.
+  finalClass: close_answer
+  tools: [get_spasibo_general_info, get_spasibo_history_info, get_close_with_answer]
+  criteria:
+    - id: bonus
+      text: Объясняет клиенту, что с бонусами за покупку
+      hint: бонус
+    - id: pending
+      text: Сообщает, что бонусы ожидают подтверждения покупки партнёром
+      hint: ожидают подтверждения
+      lesson: L-spasibo-005
+    - id: no-promises
+      text: Не обещает того, чего нет в данных кейса
+  actions:
+    required:
+      - tool: get_spasibo_history_info
+        before: get_close_with_answer
+        lesson: L-spasibo-004
+      - tool: get_close_with_answer
+    forbidden:
+      - tool: create_expertise
+        lesson: L-spasibo-006
+    final: get_close_with_answer
+  lessons:
+    - id: L-spasibo-004
+      rule: Перед ответом проверить историю операций СберСпасибо за период покупки.
+    - id: L-spasibo-005
+      rule: Сообщить клиенту, что бонусы ожидают подтверждения покупки партнёром и будут начислены после него.
+    - id: L-spasibo-006
+      rule: Экспертизу по бонусам, которые ждут подтверждения партнёра, не выставляем.

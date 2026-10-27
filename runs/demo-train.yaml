@@ -1,0 +1,16 @@
+# Офлайн-демонстрация: обучение рабочей копии V1 на fake-agent с fake-gigachat.
+id: demo-train
+title: Обучение · вторая линия · fake-agent
+basket: second-line-train
+agent: fake-agent
+models:
+  agent: fake-agent-a
+  operator: fake-operator
+  judge: fake-judge
+skillset: { id: second-line, version: V1 }
+metrics: all
+limits:
+  maxTurns: 20
+  maxDurationSec: 900
+  maxOperatorCalls: 30
+repetitions: 1

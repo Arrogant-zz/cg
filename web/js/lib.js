@@ -468,6 +468,45 @@ export function checksBlock(items) {
   )}</div>`;
 }
 
+// ----------------------------------------------------------------- метрики аналитика (M1, M2)
+
+export const FINAL_CLASS_TITLES = { close_answer: 'Ответ клиенту и закрытие', expertise: 'Экспертиза', request_info: 'Запрос информации у клиента', operator_instruction: 'Инструкция оператору' };
+export const fmtShare = (x) => (x === null || x === undefined ? '—' : x.toFixed(2).replace('.', ','));
+/** A_judge элемента прогона как доля прогонов судьи: «2 из 3» — так видна градация 0, ⅓, ⅔, 1. */
+export const fmtRuns = (a) => (a?.runs ? `${a.matched} из ${a.runs}` : '');
+const clsTitle = (c) => (c ? FINAL_CLASS_TITLES[c] ?? c : 'не завершено');
+
+/** Строка про финальное действие: класс агента и эталон. */
+export function finalVerdict(f) {
+  if (!f) return '';
+  if (f.incomplete) return html`<span class="pill na">не завершён</span>`;
+  const pill = html`<span class="pill ${f.correct === true ? 'pass' : f.correct === false ? 'fail' : ''}">${f.correct === true ? icon('check') : f.correct === false ? icon('x') : ''}${clsTitle(f.predicted)}</span>`;
+  return f.correct === false ? html`${pill}<span class="cap">эталон — ${clsTitle(f.expected)}</span>` : pill;
+}
+
+export function scoresBlock(e) {
+  const f = e.final;
+  const t = e.tools;
+  const a = e.answer;
+  const w = e.weights;
+  const num = (x) => String(x).replace('.', ',');
+  return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}Метрики аналитика · M1 и M2 · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span></div>
+<div class="chkl">
+<div class="chki">${mk(f.correct === null ? 'na' : f.correct)}<span class="col" style="gap: 2px"><span class="m5">Финальное действие: ${clsTitle(f.predicted)}</span><span class="t2">${f.expected ? `эталон — ${clsTitle(f.expected)}${f.expectedFrom === 'actions.final' ? ', выведен из reference.actions.final' : ''}` : 'эталонного класса нет — в M1 не входит'}</span><span class="cap">${f.seq ? html`<a href="#ev-${f.seq}">событие #${f.seq}</a> · ` : ''}${f.note}</span></span></div>
+<div class="chki">${mk(t.f1 === null ? 'na' : t.f1 === 1)}<span class="col" style="gap: 2px"><span class="m5">F1 инструментов: ${fmtShare(t.f1)}${t.f1 !== null ? html`<span class="t2" style="font-weight: 400"> · TP ${t.tp} · FP ${t.fp} · FN ${t.fn}</span>` : ''}</span>
+${t.f1 === null ? html`<span class="t2">${t.reason}</span>` : t.rows.map((r) => html`<span class="t2"><span class="mono">${r.tool}</span> · ${r.ref ? `в эталоне${r.ref > 1 ? ` ×${r.ref}` : ''}` : 'вне эталона'} · ${r.calls ? `вызовов ${r.calls}${r.counted !== r.calls ? `, засчитано ${r.counted}` : ''}` : 'не вызывался'}${r.fp ? ` · FP ${r.fp}` : ''}${r.fn ? ` · FN ${r.fn}` : ''}</span>`)}
+<span class="cap">${t.rule}</span></span></div>
+<div class="chki">${mk(a.status !== 'ok' ? 'na' : a.score === 1)}<span class="col" style="gap: 2px"><span class="m5">A_judge: ${a.status === 'ok' ? html`${fmtShare(a.score)}${a.runs.length ? html`<span class="t2" style="font-weight: 400"> · соответствует в ${a.runs.filter((r) => r.match).length} из ${a.runs.length} прогонов${a.model ? ` · ${a.model}` : ''}</span>` : ''}` : a.status === 'failed' ? 'сбой судьи' : 'не оценено'}</span>
+${a.runs.map((r) => html`<span class="t2">прогон ${r.n}: ${r.error ? `сбой — ${r.error}` : r.match ? 'соответствует' : 'не соответствует'}${r.reason ? ` — ${r.reason}` : ''}</span>`)}
+${a.reason ? html`<span class="t2">${a.reason}</span>` : ''}
+${f.text || a.reference ? html`<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 8px 16px; padding-top: 6px">
+<div class="col" style="gap: 4px"><span class="lbl">Итоговый текст агента${f.textFrom ? html` · <span class="mono">${f.textFrom}</span>` : ''}</span><div class="quote">${f.text || '—'}</div></div>
+<div class="col" style="gap: 4px"><span class="lbl">Эталонный текст</span><div class="quote">${a.reference || '—'}</div></div></div>` : ''}</span></div>
+</div>
+<div class="kvh"><span>case_score: ${e.caseScore === null ? 'нет — не хватает одной из частей' : fmtShare(e.caseScore)}</span><span>${num(w.tools)} · F1 + ${num(w.answer)} · A</span></div>
+</div>`;
+}
+
 /** Лента событий выполнения. full=false — только то, что видел агент. */
 export function feed(events, { full = true, toolActions = null, httpLinks = false } = {}) {
   const out = [];
@@ -495,6 +534,9 @@ export function feed(events, { full = true, toolActions = null, httpLinks = fals
         break;
       case 'checks':
         out.push(html`<div class="hid" id="ev-${e.seq}"><div class="hid-h">${icon('hidden')}Автоматические проверки действий · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span></div>${checksBlock(e.items)}</div>`);
+        break;
+      case 'scores':
+        out.push(scoresBlock(e));
         break;
       case 'status':
         if (full) out.push(html`<div class="cmd" id="ev-${e.seq}"><span class="ref">${icon(TECH.has(e.status) ? 'bolt' : 'check')}${TECH.has(e.status) ? STATUS_TITLES[e.status] ?? e.status : 'кейс завершён'}</span><span>${e.reason}${TECH.has(e.status) ? '' : ' · результат зафиксирован до служебных команд'}</span><span class="ev">#${e.seq}</span></div>`);

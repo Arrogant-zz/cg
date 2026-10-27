@@ -28,6 +28,9 @@ import {
   toast,
   STATUS_TITLES,
   removeRun,
+  fmtShare,
+  fmtRuns,
+  FINAL_CLASS_TITLES,
 } from '../lib.js';
 
 export const title = (ctx) => `Прогон #${ctx.params[0]}`;
@@ -214,10 +217,39 @@ ${s.newVersion ? html`<div class="row"><a class="btn" href="/skillsets/${s.sourc
 </section></aside>`;
 }
 
+/** M1: матрица ошибок по классам финального действия — строки эталон, столбцы действие агента; показываются встретившиеся классы. */
+function classMatrix(m) {
+  if (!m || m.status !== 'ok' || !m.details?.matrix) return '';
+  const d = m.details;
+  const used = d.classes.map((_, i) => i).filter((i) => d.matrix[i].some((x) => x) || d.matrix.some((row) => row[i]));
+  const name = (i) => FINAL_CLASS_TITLES[d.classes[i]] ?? d.classes[i];
+  const single = d.perClass.filter((c) => c.support).length === 1;
+  return html`<section class="sec" aria-labelledby="cm-h">
+<div class="sec-h"><h2 class="h2" id="cm-h">M1 · классы финального действия</h2><span class="cap">macro-F1 ${fmtShare(d.macroF1)} · accuracy ${fmtShare(d.accuracy)} · строки — эталон, столбцы — действие агента</span></div>
+<div class="tw"><table class="tbl cm"><thead><tr><th>Эталон</th>${used.map((i) => html`<th class="n">${name(i)}</th>`)}<th class="n">F1 класса</th><th class="n">Кейсов</th></tr></thead>
+<tbody>${used.map((i) => html`<tr><td class="m5">${name(i)}</td>${used.map((j) => {
+    const v = d.matrix[i][j];
+    return html`<td class="n ${v === 0 ? 'zero' : i === j ? 'hit' : 'miss'}">${v}</td>`;
+  })}<td class="n num">${fmtShare(d.perClass[i].f1)}</td><td class="n num t2">${d.perClass[i].support}</td></tr>`)}</tbody></table></div>
+<span class="cap">Незавершённые кейсы в M1 не входят: ${d.incomplete} из ${d.finished}${d.technical ? `, из них технический сбой — ${d.technical}` : ''}.${d.noReference ? ` Без эталонного класса: ${d.noReference}.` : ''}</span>
+${single ? hint('В корзине один эталонный класс: M1 заметит только ошибки в сторону других классов. Для полной картины нужны кейсы, где финал — не ответ клиенту.') : ''}
+</section>`;
+}
+
+function analystCell(sc) {
+  if (!sc) return html`<span class="t3">—</span>`;
+  const f = sc.final;
+  const a = sc.answer;
+  const wrong = f.correct === false ? html`<div class="cap">эталон — ${FINAL_CLASS_TITLES[f.expected] ?? f.expected}</div>` : '';
+  return html`<span class="row" style="gap: 6px; flex-wrap: nowrap">${mk(f.incomplete || f.correct === null ? 'na' : f.correct)}<span class="num m5">${sc.caseScore === null ? '—' : fmtShare(sc.caseScore)}</span></span>
+<div class="cap nw">F1 ${fmtShare(sc.tools.f1)} · A ${a.status === 'ok' ? (a.runs ? fmtRuns(a) : fmtShare(a.score)) : a.status === 'failed' ? 'сбой' : '—'}</div>${f.incomplete ? html`<div class="cap">не завершён</div>` : wrong}`;
+}
+
 function resultsTable(run, line) {
   const training = run.type === 'training';
+  const analystOn = run.settings.metrics.some((m) => m.builtin === 'final-action' || m.builtin === 'case-score');
   return html`<div class="tw"><table class="tbl">
-<thead><tr><th>№</th><th>Кейс · решение</th><th>Итог</th><th>Действия</th><th>Ответ</th>${training ? html`<th>Поправки</th>` : ''}<th>Команды</th><th class="r">Время</th></tr></thead>
+<thead><tr><th>№</th><th>Кейс · решение</th><th>Итог</th><th>Действия</th><th>Ответ</th>${analystOn ? html`<th title="Финальное действие верно (M1) · case_score (M2)">M1 · M2</th>` : ''}${training ? html`<th>Поправки</th>` : ''}<th>Команды</th><th class="r">Время</th></tr></thead>
 <tbody>${line.items
     .filter((i) => i.kind === 'case')
     .map((i) => {
@@ -233,6 +265,7 @@ function resultsTable(run, line) {
 <td>${outcomePill(i)}${reason ? html`<div class="cap" style="padding-top: 4px">${reason}</div>` : ''}</td>
 <td class="num">${ch ? html`<span${ch.passed < ch.total ? raw(' style="color: #A51C14"') : ''}>${ch.passed}/${ch.total}</span>` : html`<span class="t3">—</span>`}</td>
 <td class="num">${jd?.status === 'ok' ? html`<span${jd.passed < jd.total ? raw(' style="color: #A51C14"') : ''}>${jd.passed}/${jd.total}</span>` : jd && jd.total ? html`<span class="pill na">${jd.status === 'failed' ? 'сбой судьи' : 'не оценён'}</span>` : html`<span class="t3">—</span>`}</td>
+${analystOn ? html`<td>${analystCell(i.scores)}</td>` : ''}
 ${training ? html`<td>${i.stats ? html`<span class="num">${i.stats.corrections}</span> ${i.repeated.map((l) => html`<span class="lesson">повтор ${l}</span>`)}` : html`<span class="t3">—</span>`}</td>` : ''}
 <td><span class="steps">${cmds}</span></td>
 <td class="r num t3">${i.startedAt && i.finishedAt ? fmtClock(Date.parse(i.finishedAt) - Date.parse(i.startedAt)) : '—'}</td>
@@ -320,9 +353,13 @@ ${liveAside(run, line)}
 </div>`;
   }
 
-  const metrics = run.summary ?? [];
+  // В проверке главные цифры — M1 и M2 по документу аналитика: они идут первыми.
+  const lead = run.type === 'checking' ? ['final-action', 'case-score'] : [];
+  const summary = run.summary ?? [];
+  const metrics = [...lead.flatMap((b) => summary.filter((m) => m.builtin === b)), ...summary.filter((m) => !lead.includes(m.builtin))];
   return html`${head}
 <section class="kpis" aria-label="Метрики прогона" style="grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr))">${metrics.map((m) => kpi(m))}</section>
+${classMatrix(metrics.find((m) => m.builtin === 'final-action'))}
 <div class="split">
 <section class="mn sec" aria-labelledby="curve-h" style="gap: 14px">
 <div class="sec-h"><h2 class="h2" id="curve-h">${run.type === 'training' ? 'Кривая обучения' : 'Результат по позициям'}</h2><span class="cap">${run.type === 'training' ? 'Поправки оператора по позициям корзины' : 'Успех среди оценённых, по позициям'}${run.lines.length > 1 ? ' · среднее и разброс повторений' : ''}</span></div>

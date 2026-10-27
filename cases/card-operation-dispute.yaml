@@ -1,0 +1,88 @@
+# Синтетический кейс на инструментах стенда оркестратора. Ответы инструментов — условные: формат DTO сверить со стендом.
+id: card-operation-dispute
+title: Клиент не узнаёт операцию по карте
+topic: Карты / Оспаривание операции
+tags: [Карты, Оспаривание]
+situation: >
+  Клиент не узнаёт списание 3 200 ₽ по карте 20 октября. Карта у клиента, операция подтверждена кодом из SMS.
+  Решение принимает подразделение по спорным операциям: нужна экспертиза, кейс откладывается до её выполнения.
+facts:
+  - Карта у клиента, операция 20 октября на 3 200 ₽ в интернет-магазине.
+  - Срок рассмотрения экспертизы — до 30 дней.
+state:
+  case: open
+  expertise: none
+tools:
+  get_cases_assigned:
+    - id: case
+      result:
+        json: { caseId: CASE-TEST-2002, taskId: "{{execution.taskId}}", status: IN_WORK, clientMessage: "20 октября с карты списали 3 200 ₽, я такой покупки не делал. Разберитесь, пожалуйста." }
+  get_static_attributes_assigned:
+    - id: static
+      result:
+        json: { classifier: { categoryName: Карты / Оспаривание операции }, channel: CHAT, priority: HIGH }
+  get_dynamic_attributes:
+    - id: dynamic
+      result:
+        json: { cardId: CARD-TEST-2208, operationDate: "2026-10-20", operationSum: "3 200 ₽", operationFrom: "2026-10-20T00:00:00", operationTo: "2026-10-20T23:59:59" }
+  get_client_cards:
+    - id: cards
+      result:
+        json: { cards: [{ cardId: CARD-TEST-2208, maskedNumber: "****2208", status: ACTIVE }] }
+  get_card_history:
+    - id: dispute-operation
+      when: { id: CARD-TEST-2208 }
+      result:
+        json: { operations: [{ date: "2026-10-20T14:05:11", sum: "3 200 ₽", merchant: Тестовый интернет-магазин, confirmation: SMS_CODE }] }
+  get_stages_expertise:
+    - id: stages
+      result:
+        json: { content: [{ code: EXP-DISPUTE, name: Спорные операции по картам }], totalElements: 1 }
+  create_expertise:
+    - id: created
+      result:
+        json: { expertiseId: 7f1c2d3e-0000-4000-8000-000000000001, status: CREATED }
+      effect: { expertise: created }
+  postpone_expertises:
+    - id: postponed
+      delayMs: 600
+      result:
+        json: { status: POSTPONED }
+      effect: { case: postponed }
+reference:
+  procedure:
+    - Получить информацию о картах клиента
+    - Посмотреть историю операций по карте за период операции
+    - Получить этапы экспертизы и выставить экспертизу после подтверждения оператора
+    - "Ответить клиенту: операция передана на проверку, срок — до 30 дней"
+    - Отложить кейс до выполнения экспертиз
+  answer: Операция передана на проверку в подразделение по спорным операциям; срок рассмотрения — до 30 дней.
+  # Метрики аналитика: финал — экспертиза, поэтому эталонный итоговый текст для A_judge — описание экспертизы.
+  finalClass: expertise
+  finalText: Клиент не узнаёт операцию по карте 20 октября на 3 200 ₽ и оспаривает её; просим проверить операцию.
+  tools: [get_client_cards, get_card_history, get_stages_expertise, create_expertise, postpone_expertises]
+  criteria:
+    - id: expertise
+      text: Сообщает, что операция передана на проверку
+      hint: на проверку
+    - id: deadline
+      text: Называет срок рассмотрения — до 30 дней
+      hint: до 30 дней
+      lesson: L-dispute-011
+  actions:
+    required:
+      - tool: get_card_history
+        before: create_expertise
+        lesson: L-dispute-010
+      - tool: create_expertise
+    forbidden:
+      - tool: get_close_with_answer
+        lesson: L-dispute-012
+    final: postpone_expertises
+  lessons:
+    - id: L-dispute-010
+      rule: Перед экспертизой посмотреть историю операций по карте за период операции.
+    - id: L-dispute-011
+      rule: В ответе назвать срок рассмотрения — до 30 дней.
+    - id: L-dispute-012
+      rule: Спорную операцию не закрывать ответом — сначала экспертиза.

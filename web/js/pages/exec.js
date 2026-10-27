@@ -1,5 +1,5 @@
 // Экран «Разбор кейса»: журнал с ролями, вызовы и заглушки, решения оператора, оценка, режим «что видел агент» (SOL-02–06, RES-01).
-import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH } from '../lib.js';
+import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH, fmtShare, finalVerdict } from '../lib.js';
 
 export const title = (ctx) => `Разбор ${ctx.params[1]}`;
 
@@ -26,6 +26,27 @@ ${training && cap ? html`<span class="cap">${cap.status === 'not_sent' ? 'Captur
 </section>`;
 }
 
+/** M1 и M2 по документу аналитика: класс финального действия, F1 инструментов, A_judge и case_score. */
+function analyst(ex, item) {
+  const e = ex.events.filter((x) => x.type === 'scores').pop();
+  const head = (pill) => html`<div class="sec-h" style="padding-bottom: 6px"><h2 class="h3" id="an-h">M1 и M2 · метрики аналитика</h2>${pill}</div>`;
+  if (!e) {
+    if (!item?.outcome) return '';
+    return html`<section class="sec" aria-labelledby="an-h" style="gap: 6px">${head(html`<span class="pill na">нет</span>`)}<span class="cap">${item.outcome === 'technical' ? 'Технический сбой: кейс не оценивается и считается незавершённым.' : 'Прогон выполнен до метрик аналитика.'}</span></section>`;
+  }
+  const t = e.tools;
+  const a = e.answer;
+  return html`<section class="sec" aria-labelledby="an-h" style="gap: 6px">
+${head(e.caseScore === null ? html`<span class="pill na">case_score нет</span>` : html`<span class="pill">case_score ${fmtShare(e.caseScore)}</span>`)}
+<div class="mt"><span>Финальное действие · M1</span><span class="row" style="gap: 6px; justify-content: flex-end">${finalVerdict(e.final)}</span></div>
+<div class="mt"><span>F1 инструментов</span><span class="num t2">${t.f1 === null ? 'нет эталона' : `${fmtShare(t.f1)} · TP ${t.tp} · FP ${t.fp} · FN ${t.fn}`}</span></div>
+<div class="mt"><span>A_judge · эталонный текст</span><span class="num t2">${a.status === 'ok' ? `${fmtShare(a.score)}${a.runs.length ? ` · ${a.runs.filter((r) => r.match).length} из ${a.runs.length}` : ''}` : a.status === 'failed' ? 'сбой судьи' : 'не оценено'}</span></div>
+${a.status !== 'ok' && a.reason ? html`<div class="mt"><span class="cap" style="grid-column: 1 / -1">${a.reason}</span></div>` : ''}
+<div class="mt"><span>Подробно</span><span class="t2"><a href="#ev-${e.seq}">событие #${e.seq}</a></span></div>
+<span class="cap" style="padding-top: 6px">case_score = ${String(e.weights.tools).replace('.', ',')} · F1 + ${String(e.weights.answer).replace('.', ',')} · A; итог кейса не меняет.</span>
+</section>`;
+}
+
 function stats(ex, item) {
   const st = item?.stats;
   const judge = ex.events.filter((e) => e.type === 'judge').pop();
@@ -42,6 +63,7 @@ ${item?.checks ? checksBlock(item.checks) : html`<span class="cap">Провер�
 <div class="mt"><span>Модель и вызов</span><span class="t2">${judge?.model ?? '—'} · отдельный контекст</span></div>
 ${judge?.status === 'ok' ? html`<div class="mt"><span>Непройденные критерии</span><span class="t2">${judge.criteria.filter((c) => !c.passed).map((c) => c.text).join('; ') || 'нет'}</span></div><div class="mt"><span>Обоснование</span><span class="t2"><a href="#ev-${judge.seq}">событие #${judge.seq}</a></span></div>` : html`<div class="mt"><span>Причина</span><span class="t2">${judge?.error ?? 'оценка не запускалась'}</span></div>`}
 </section>
+${analyst(ex, item)}
 ${ex.mode === 'auto'
     ? html`<section class="sec" aria-labelledby="op-h" style="gap: 6px">
 <h2 class="h3" id="op-h" style="padding-bottom: 6px">LLM-оператор</h2>

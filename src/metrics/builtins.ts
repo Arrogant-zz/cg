@@ -1,6 +1,7 @@
 // Встроенные метрики (MET-01–04). Нет данных — не ноль: значение отсутствует, причина видна.
 import type { ItemRecord, LineRecord, RunRecord } from '../runner/types.js';
 import { plural } from '../util/core.js';
+import { classReport, fmtShare, scoringOf } from './scoring.js';
 
 export interface MetricValue {
   id: string;
@@ -19,6 +20,8 @@ export interface MetricValue {
 const caseItems = (lines: LineRecord[]) => lines.flatMap((l) => l.items.filter((i) => i.kind === 'case'));
 const evaluated = (items: ItemRecord[]) => items.filter((i) => i.outcome === 'passed' || i.outcome === 'failed');
 const done = (items: ItemRecord[]) => items.filter((i) => i.outcome && i.outcome !== 'technical');
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+const cases = (n: number) => `${n} ${plural(n, 'кейс', 'кейса', 'кейсов')}`;
 
 function fmtMs(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -191,6 +194,105 @@ export function computeRunMetrics(run: RunRecord): MetricValue[] {
         const mo = changes.filter((c) => c.kind === 'modified').length;
         const r = changes.filter((c) => c.kind === 'removed').length;
         out.push({ ...base, status: 'ok', value: a + mo + r, denominator: null, display: `+${a} ~${mo} −${r}`, note: `создано, изменено, удалено · проходов curator ${passes.length}`, reason: '' });
+        break;
+      }
+      case 'final-action': {
+        // M1: macro-F1 по классам финального действия среди завершённых; незавершённые — отдельный счётчик.
+        const finished = items.filter((i) => i.outcome);
+        const tech = finished.filter((i) => i.outcome === 'technical').length;
+        const incomplete = tech + finished.filter((i) => i.scores?.final.incomplete).length;
+        const noRef = finished.filter((i) => i.scores && !i.scores.final.incomplete && !i.scores.final.expected).length;
+        const pairs = finished.flatMap((i) => (i.scores?.final.expected && i.scores.final.predicted ? [{ expected: i.scores.final.expected, predicted: i.scores.final.predicted }] : []));
+        const rep = classReport(pairs);
+        const incNote = `незавершённых ${incomplete} из ${finished.length}${tech ? ` · техн. сбой ${tech}` : ''}`;
+        if (rep.macroF1 === null) {
+          out.push({ ...na(m.id, m.title, m.builtin, noRef ? 'у завершённых кейсов нет эталонного класса (reference.finalClass)' : 'нет завершённых кейсов'), note: finished.length ? incNote : '' });
+          break;
+        }
+        out.push({
+          ...base,
+          status: 'ok',
+          value: rep.macroF1,
+          denominator: null,
+          display: fmtShare(rep.macroF1),
+          note: `accuracy ${fmtShare(rep.accuracy!)} · завершено ${rep.completed} · ${incNote}${noRef ? ` · без эталона класса ${noRef}` : ''}`,
+          reason: '',
+          details: { ...rep, incomplete, technical: tech, finished: finished.length, noReference: noRef },
+        });
+        break;
+      }
+      case 'tools-f1': {
+        const scored = items.filter((i) => i.scores);
+        const ok = scored.filter((i) => i.scores!.tools.f1 !== null);
+        if (!ok.length) {
+          out.push(na(m.id, m.title, m.builtin, scored.length ? 'у кейсов нет эталона инструментов (reference.tools)' : 'нет оценённых кейсов'));
+          break;
+        }
+        const v = mean(ok.map((i) => i.scores!.tools.f1!));
+        const sum = (k: 'tp' | 'fp' | 'fn') => ok.reduce((a, i) => a + i.scores!.tools[k], 0);
+        const noRef = scored.length - ok.length;
+        out.push({
+          ...base,
+          status: 'ok',
+          value: v,
+          denominator: null,
+          display: fmtShare(v),
+          note: `среднее · ${cases(ok.length)} · TP ${sum('tp')} · FP ${sum('fp')} · FN ${sum('fn')}${noRef ? ` · без эталона ${noRef}` : ''}`,
+          reason: '',
+          series: seriesOf(lines, (i) => i.scores?.tools.f1 ?? null),
+        });
+        break;
+      }
+      case 'answer-match': {
+        const scored = items.filter((i) => i.scores);
+        const ok = scored.filter((i) => i.scores!.answer.status === 'ok');
+        const failed = scored.filter((i) => i.scores!.answer.status === 'failed').length;
+        const skipped = scored.filter((i) => i.scores!.answer.status === 'skipped');
+        if (!ok.length) {
+          const why = avail?.available === false ? avail.reason : failed ? 'сбой судьи во всех кейсах' : skipped[0]?.scores!.answer.reason || 'нет оценённых кейсов';
+          out.push(na(m.id, m.title, m.builtin, why));
+          break;
+        }
+        const runs = scoringOf(run.settings.metrics).answer.runs;
+        const v = mean(ok.map((i) => i.scores!.answer.score!));
+        out.push({
+          ...base,
+          status: 'ok',
+          value: v,
+          denominator: null,
+          display: fmtShare(v),
+          note: `среднее · ${cases(ok.length)} · ${runs} ${plural(runs, 'прогон', 'прогона', 'прогонов')} судьи на кейс${failed ? ` · сбой судьи ${failed}` : ''}${skipped.length ? ` · без оценки ${skipped.length}` : ''}`,
+          reason: '',
+          series: seriesOf(lines, (i) => (i.scores?.answer.status === 'ok' ? i.scores.answer.score : null)),
+        });
+        break;
+      }
+      case 'case-score': {
+        // M2: среднее case_score по кейсам, где есть обе части; F1 и A в подписи — по тем же кейсам, M2 из них складывается точно.
+        const w = scoringOf(run.settings.metrics).weights;
+        const scored = items.filter((i) => i.scores);
+        const ok = scored.filter((i) => i.scores!.caseScore !== null);
+        const tech = items.filter((i) => i.outcome === 'technical').length;
+        if (!ok.length) {
+          out.push(na(m.id, m.title, m.builtin, avail?.available === false ? avail.reason : 'нет кейсов с обеими оценками: F1 инструментов и A_judge'));
+          break;
+        }
+        const v = mean(ok.map((i) => i.scores!.caseScore!));
+        const f1 = mean(ok.map((i) => i.scores!.tools.f1!));
+        const a = mean(ok.map((i) => i.scores!.answer.score!));
+        const excluded = scored.length - ok.length;
+        const wt = (x: number) => String(x).replace('.', ',');
+        out.push({
+          ...base,
+          status: 'ok',
+          value: v,
+          denominator: null,
+          display: fmtShare(v),
+          note: `${wt(w.tools)} · F1 ${fmtShare(f1)} + ${wt(w.answer)} · A ${fmtShare(a)} · ${cases(ok.length)}${excluded ? ` · без оценки ${excluded}` : ''}${tech ? ` · техн. сбой ${tech}` : ''}`,
+          reason: '',
+          series: seriesOf(lines, (i) => i.scores?.caseScore ?? null),
+          details: { weights: w, f1, answer: a, cases: ok.length, excluded, technical: tech },
+        });
         break;
       }
       case 'operator-errors': {

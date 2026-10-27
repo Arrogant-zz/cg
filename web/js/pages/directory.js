@@ -62,7 +62,7 @@ ${hint('Одна модель может играть разные роли, н�
 <section class="sec" id="metrics" aria-labelledby="me-h">
 <div class="sec-h"><h2 class="h2" id="me-h">Встроенные метрики</h2><span class="cap">Выбираются в файле прогона · свои формулы — ${later('позднее')}</span></div>
 <div class="tw"><table class="tbl"><thead><tr><th>Метрика</th><th>Что означает</th><th>Уровень</th><th>Нужные события</th><th class="r">Расчёт</th></tr></thead>
-<tbody>${d.metrics.map((m) => html`<tr><td class="m5 nw">${m.title}<div class="cap mono">${m.builtin}</div></td><td class="t2">${m.description}</td><td class="nw">${m.level.join(', ')}</td><td class="t2">${m.needs}</td><td class="r mono cap">${m.version}</td></tr>`)}</tbody></table></div>
+<tbody>${d.metrics.map((m) => html`<tr><td class="m5 nw">${m.title}<div class="cap mono">${m.builtin}</div></td><td class="t2">${m.description}${Object.keys(m.params ?? {}).length ? html`<div class="cap mono" style="word-break: break-word; padding-top: 4px">${Object.entries(m.params).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')}</div>` : ''}</td><td class="nw">${m.level.join(', ')}</td><td class="t2">${m.needs}</td><td class="r mono cap">${m.version}</td></tr>`)}</tbody></table></div>
 </section>
 <hr class="rule">
 <section class="sec" id="tools" aria-labelledby="to-h">

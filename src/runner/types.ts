@@ -6,6 +6,7 @@ import type { Issue, Limits } from '../config/types.js';
 import type { PlanStep } from './plan.js';
 import type { MetricAvailability } from './resolve.js';
 import type { HttpExchange } from '../util/httplog.js';
+import type { ItemScores } from '../metrics/scoring.js';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'stopped' | 'failed';
 
@@ -38,6 +39,8 @@ export interface ItemRecord {
   };
   checks: CheckItem[] | null;
   answerFailed: string[];
+  /** Метрики аналитика по кейсу (M1, M2); нет у технических сбоев и в записях до 27.10.2026. */
+  scores?: ItemScores | null;
   stats: ExecStats | null;
   repeated: string[];
   limits: Limits;
@@ -111,10 +114,10 @@ export interface RunRecord {
     operator: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     judge: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     skillset: { id: string; title: string; version: string; requested: string; checksum: string; files: number } | 'build' | null;
-    metrics: { id: string; title: string; builtin: string; version: string }[];
+    metrics: { id: string; title: string; builtin: string; version: string; params?: Record<string, unknown> }[];
     limits: Limits;
     repetitions: number;
-    prompts: { operator: string; judge: string };
+    prompts: { operator: string; judge: string; answerJudge?: string };
     contract: { file: string; hash: string; version: string; conditional: boolean };
   };
   snapshot: { createdAt: string; files: { file: string; hash: string }[] };

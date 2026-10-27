@@ -8,28 +8,40 @@ import path from 'node:path';
 
 // ------------------------------------------------------------ разговорник
 
-type Rule = { kind: 'call'; tool: string; args: Record<string, string>; before?: string } | { kind: 'answer'; text: string };
+type Args = Record<string, unknown>;
+type Rule = { kind: 'call'; tool: string; args: Args; before?: string } | { kind: 'answer'; text: string };
 
 interface Phrase {
   re: RegExp;
   rule: Rule | 'quote';
 }
 
-/** Порядок важен: первая подходящая фраза строки побеждает. */
+/**
+ * Порядок важен: первая подходящая фраза строки побеждает. Инструменты и аргументы — из tools/list стенда оркестратора;
+ * {{ключ}} берётся из фактов: JSON стартового сообщения и ответов инструментов, {{answer}} — текущий ответ клиенту.
+ */
 export const PHRASEBOOK: Phrase[] = [
   { re: /ответить клиенту.*«([^»]+)»/iu, rule: 'quote' },
-  { re: /последние операции|последних операций/iu, rule: { kind: 'call', tool: 'get_recent_operations', args: { card: '{{Карта}}' }, before: 'unblock_card' } },
-  { re: /адрес доставки/iu, rule: { kind: 'call', tool: 'get_client_profile', args: { client_id: '{{ID клиента}}' }, before: 'reissue_card' } },
-  { re: /сменить PIN/iu, rule: { kind: 'answer', text: 'Рекомендуем сменить PIN-код в мобильном приложении.' } },
-  { re: /срок перевыпуска|рабочих дней/iu, rule: { kind: 'answer', text: 'Новая карта будет готова в течение 5 рабочих дней.' } },
-  { re: /статус карты/iu, rule: { kind: 'call', tool: 'get_card_status', args: { card: '{{Карта}}' } } },
-  { re: /разблокировать карту/iu, rule: { kind: 'call', tool: 'unblock_card', args: { card: '{{Карта}}' } } },
-  { re: /перевыпустить карту/iu, rule: { kind: 'call', tool: 'reissue_card', args: { card: '{{Карта}}' } } },
-  { re: /детали операци/iu, rule: { kind: 'call', tool: 'get_operation_details', args: { operation_id: '{{Операция}}' } } },
-  { re: /сведения о магазине|информацию о магазине/iu, rule: { kind: 'call', tool: 'get_merchant_info', args: { merchant_id: '{{merchant_id}}' } } },
-  { re: /оформить возврат/iu, rule: { kind: 'call', tool: 'refund_operation', args: { operation_id: '{{Операция}}', amount: '{{amount}}' } } },
-  { re: /лимиты клиента/iu, rule: { kind: 'call', tool: 'get_client_limits', args: { client_id: '{{ID клиента}}' } } },
-  { re: /закрыть обращение/iu, rule: { kind: 'call', tool: 'close_case', args: { case_id: '{{caseNumber}}' } } },
+  // СберСпасибо
+  { re: /основн\S* информаци\S* Спасибо/iu, rule: { kind: 'call', tool: 'get_spasibo_general_info', args: {} } },
+  { re: /истори\S* операций (Сбер)?Спасибо/iu, rule: { kind: 'call', tool: 'get_spasibo_history_info', args: { dateFrom: '{{periodFrom}}', dateTo: '{{periodTo}}' }, before: 'get_close_with_answer' } },
+  { re: /ожида\S* подтверждени\S* (покупки )?партн/iu, rule: { kind: 'answer', text: 'Бонусы за эту покупку ожидают подтверждения партнёром и будут начислены после него.' } },
+  // Карты: оспаривание операции
+  { re: /информаци\S* о картах/iu, rule: { kind: 'call', tool: 'get_client_cards', args: {} } },
+  { re: /истори\S* операций по карте/iu, rule: { kind: 'call', tool: 'get_card_history', args: { fromDate: '{{operationFrom}}', toDate: '{{operationTo}}', id: '{{cardId}}' }, before: 'create_expertise' } },
+  { re: /этап\S* экспертиз/iu, rule: { kind: 'call', tool: 'get_stages_expertise', args: { pageNumber: 0 } } },
+  { re: /выстав\S* экспертиз/iu, rule: { kind: 'call', tool: 'create_expertise', args: { request: { expertiseDescription: 'Клиент не узнаёт операцию по карте и оспаривает её', stageCode: '{{code}}', stageName: '{{name}}' } } } },
+  { re: /срок рассмотрения|до 30 дней/iu, rule: { kind: 'answer', text: 'Срок рассмотрения — до 30 дней.' } },
+  { re: /отложить кейс до выполнения экспертиз/iu, rule: { kind: 'call', tool: 'postpone_expertises', args: {} } },
+  // Уведомления
+  { re: /каналы уведомлений по кейсу/iu, rule: { kind: 'call', tool: 'get_channel_cases', args: {} } },
+  { re: /уведомления клиента за период/iu, rule: { kind: 'call', tool: 'get_smsbank_notifications', args: { fromDate: '{{notificationsFrom}}', toDate: '{{notificationsTo}}' } } },
+  {
+    re: /сменить канал уведомлений/iu,
+    rule: { kind: 'call', tool: 'change_notifications_channel_for_case', args: { request: { channelCode: 'SMS', commandType: 'UPDATE', contact: '{{newContact}}', previousChannelCode: 'EMAIL', previousContact: '{{oldContact}}' } } },
+  },
+  // Закрытие с ответом клиенту
+  { re: /закрыть кейс с ответом/iu, rule: { kind: 'call', tool: 'get_close_with_answer', args: { request: { shortAnswer: '{{answer}}', extendedAnswer: '{{answer}}' } } } },
 ];
 
 export function rulesOf(text: string): Rule[] {
@@ -47,7 +59,7 @@ export function rulesOf(text: string): Rule[] {
   return out;
 }
 
-type Step = { kind: 'call'; tool: string; args: Record<string, string> } | { kind: 'answer'; parts: string[] };
+type Step = { kind: 'call'; tool: string; args: Args } | { kind: 'answer'; parts: string[] };
 
 export function buildPlan(rules: Rule[]): Step[] {
   const steps: Step[] = [];
@@ -72,6 +84,19 @@ export function buildPlan(rules: Rule[]): Step[] {
   }
   if (!steps.includes(answer) && answer.parts.length) steps.push(answer);
   return steps;
+}
+
+/** Скалярные поля JSON на любой глубине — в факты диалога; overwrite — ответ инструмента обновляет прежние значения. */
+function flatten(v: unknown, facts: Record<string, string>, overwrite: boolean): void {
+  if (Array.isArray(v)) {
+    for (const x of v) flatten(x, facts, overwrite);
+    return;
+  }
+  if (!v || typeof v !== 'object') return;
+  for (const [k, x] of Object.entries(v)) {
+    if (x !== null && typeof x === 'object') flatten(x, facts, overwrite);
+    else if (['string', 'number', 'boolean'].includes(typeof x) && (overwrite || facts[k] === undefined)) facts[k] = String(x);
+  }
 }
 
 // ------------------------------------------------------------ workspace
@@ -183,7 +208,7 @@ export class Workspace {
 
   async capture(topic: string, ref: string, corrections: string[]): Promise<string> {
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-    const rel = `learning/cases/pending/${stamp}-${ref.slice(0, 8)}.md`;
+    const rel = `learning/cases/pending/${stamp}-${ref.replace(/[^\w.-]/g, '_').slice(-16)}-${Math.random().toString(16).slice(2, 6)}.md`;
     const signal = corrections.length ? 'strong' : 'none';
     const body = [`---`, `topic: ${topic}`, `request_ref: ${ref}`, `signal: ${signal}`, `---`, ``, `## Поправки оператора`, ...corrections.map((c) => `- ${c}`), ``].join('\n');
     await this.write(rel, body);
@@ -298,18 +323,25 @@ export class FakeAgent {
     private mcp: McpClient,
   ) {}
 
-  private resolveArgs(args: Record<string, string>): { args: Record<string, unknown>; missing: string | null } {
+  /** {{ключ}} из фактов диалога, в том числе во вложенных объектах (request у инструментов оркестратора). */
+  private resolveArgs(args: Args): { args: Args; missing: string | null } {
     const d = this.dialog!;
-    const out: Record<string, unknown> = {};
+    const out: Args = {};
     for (const [k, v] of Object.entries(args)) {
-      const m = /^\{\{(.+)\}\}$/.exec(v);
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const inner = this.resolveArgs(v as Args);
+        if (inner.missing) return { args: out, missing: inner.missing };
+        out[k] = inner.args;
+        continue;
+      }
+      const m = typeof v === 'string' ? /^\{\{(.+)\}\}$/.exec(v) : null;
       if (!m) {
         out[k] = v;
         continue;
       }
       const val = d.facts[m[1]];
       if (val === undefined || val === '') return { args: out, missing: m[1] };
-      out[k] = /^\d+(\.\d+)?$/.test(val) ? Number(val) : val;
+      out[k] = val;
     }
     return { args: out, missing: null };
   }
@@ -347,10 +379,19 @@ export class FakeAgent {
   private async start(text: string, taskId: string): Promise<string> {
     const facts: Record<string, string> = {};
     for (const line of text.split('\n')) {
+      // Результаты инструментов, встроенные оркестратором: «название»{JSON}.
+      const json = /»(\{.*\})\.?\s*$/.exec(line);
+      if (json) {
+        try {
+          flatten(JSON.parse(json[1]), facts, false);
+        } catch {
+          /* не JSON */
+        }
+        continue;
+      }
       const i = line.indexOf(':');
       if (i > 0) facts[line.slice(0, i).trim()] = line.slice(i + 1).trim();
     }
-    facts.caseNumber = /Новое обращение\s+(\S+?)\.?(\s|$)/.exec(text)?.[1] ?? 'CG-?';
     const topic = facts['Тематика'] ?? '';
     const k = await this.ws.knowledge(topic);
     this.dialog = {
@@ -394,16 +435,17 @@ export class FakeAgent {
           continue;
         }
         d.done.add(step.tool);
-        if (r.json && typeof r.json === 'object') for (const [kk, vv] of Object.entries(r.json)) if (['string', 'number'].includes(typeof vv)) d.facts[kk] = String(vv);
+        if (r.json && typeof r.json === 'object') flatten(r.json, d.facts, true);
         notes.push(`${step.tool} выполнен`);
       } else if (!d.answered) {
         d.answered = true;
         d.awaiting = { kind: 'close' };
+        d.facts.answer = step.parts.join(' ');
         return `${prefix}${notes.length ? `Проверил: ${notes.join('; ')}. ` : ''}Ответ клиенту: «${step.parts.join(' ')}» Можно закрывать обращение?`;
       }
     }
     d.awaiting = null;
-    return `${prefix}${notes.length ? `${notes.join('; ')}. ` : ''}Обращение закрыто.`;
+    return `${prefix}${notes.length ? `${notes.join('; ')}. ` : ''}Обращение обработано.`;
   }
 
   private async onOperator(text: string, taskId: string): Promise<string> {

@@ -9,6 +9,7 @@ import { createInstaller, type Installer, type WsFile } from '../skillsets/insta
 import { StubState } from '../stubs/engine.js';
 import { findVersion } from '../skillsets/store.js';
 import { LlmJudge } from '../judge/judge.js';
+import { scoringOf } from '../metrics/scoring.js';
 import { createProvider, modelReadiness } from '../llm/provider.js';
 import { checkAllowedHost } from '../agent/client.js';
 import { resolveEnvRefs } from '../config/loader.js';
@@ -355,7 +356,8 @@ export class ManualManager {
       const resultSeq = l.exec.events[l.exec.events.length - 1]?.seq ?? 0;
       l.exec.setStatus('completed', 'Ручная сессия завершена');
       l.exec.add<StatusEvent>({ type: 'status', status: 'completed', reason: 'Ручная сессия завершена человеком' });
-      const ev = await evaluate(l.exec, resultSeq, judge);
+      // Ручной сеанс: метрики аналитика по всем определениям из metrics/.
+      const ev = await evaluate(l.exec, resultSeq, judge, undefined, scoringOf([...this.app.registry.metrics.values()]));
       rec.evaluation = { ...ev, stats: execStats(l.exec) };
     } finally {
       rec.busy = null;

@@ -1,5 +1,5 @@
 // Экран «Кейсы и решения»: ситуация, стартовые данные, заглушки, эталон, решения со своими инструкциями (CASE-01–04, SOL-01).
-import { html, icon, get, post, typeBadge, mk, ref, hint, later, plural, issuesBox, warningsList, toast } from '../lib.js';
+import { html, icon, get, post, typeBadge, mk, ref, hint, later, plural, issuesBox, warningsList, toast, FINAL_CLASS_TITLES } from '../lib.js';
 
 export const title = 'Кейсы и решения';
 
@@ -35,6 +35,7 @@ function reference(c) {
 <span class="lbl">Процедура</span>
 <ol class="steps-ol">${r.procedure.map((p, i) => html`<li><span>${i + 1}</span><span>${p}</span></li>`)}</ol>
 ${r.answer ? html`<span class="lbl" style="padding-top: 8px">Правильный ответ</span><div class="quote">${r.answer}</div>` : ''}
+${r.finalText ? html`<span class="lbl" style="padding-top: 8px">Эталонный итоговый текст · для A_judge</span><div class="quote">${r.finalText}</div>` : ''}
 </div>
 <div class="col" style="gap: 16px">
 <div class="col" style="gap: 8px"><span class="lbl">Критерии ответа · для LLM-оценки</span>${r.criteria.length ? r.criteria.map((x) => html`<span class="sm">${x.text}${x.lesson ? html` <span class="lesson">${x.lesson}</span>` : ''}</span>`) : html`<span class="cap">нет критериев — LLM-оценка пропускается</span>`}</div>
@@ -42,6 +43,11 @@ ${r.answer ? html`<span class="lbl" style="padding-top: 8px">Правильны�
 ${r.required.map((a) => html`<span class="row sm" style="gap: 8px; flex-wrap: nowrap; align-items: flex-start"><span class="pill pass">обязательно</span><span><span class="mono">${a.tool}</span>${a.before ? html` до <span class="mono">${a.before}</span>` : ''}${a.lesson ? html` <span class="lesson">${a.lesson}</span>` : ''}</span></span>`)}
 ${r.final ? html`<span class="row sm" style="gap: 8px"><span class="pill pass">итог</span><span class="mono">${r.final}</span></span>` : ''}
 ${r.forbidden.map((a) => html`<span class="row sm" style="gap: 8px"><span class="pill fail">запрещено</span><span class="mono">${a.tool}</span>${a.lesson ? html`<span class="lesson">${a.lesson}</span>` : ''}</span>`)}
+</div>
+<div class="col" style="gap: 8px"><span class="lbl">Метрики аналитика · M1 и M2</span>
+<span class="row sm" style="gap: 8px"><span class="t2">Класс финального действия</span>${r.finalClass ? html`<span class="pill">${FINAL_CLASS_TITLES[r.finalClass]}</span>` : html`<span class="cap">не задан${r.final ? ' — выводится из итогового действия' : ' — кейс не войдёт в M1'}</span>`}</span>
+<span class="row sm" style="gap: 6px; align-items: flex-start"><span class="t2">Эталон F1 инструментов</span>${r.tools ? r.tools.map((t) => html`<span class="mono">${t.tool}${t.count > 1 ? ` ×${t.count}` : ''}</span>`) : html`<span class="cap">не задан — F1 и M2 не посчитаются</span>`}</span>
+${!r.finalText && r.answer ? html`<span class="cap">Эталонный текст для A_judge — правильный ответ.</span>` : ''}
 </div>
 ${r.lessons.length ? html`<div class="col" style="gap: 8px"><span class="lbl">Каталог уроков кейса</span>${r.lessons.map((l) => html`<span class="sm"><span class="lesson">${l.id}</span> ${l.rule}</span>`)}</div>` : ''}
 </div>

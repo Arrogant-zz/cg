@@ -1,7 +1,23 @@
 # Ответы по умолчанию, если в кейсе нет подходящей заглушки. Порядок поиска: кейс → этот файл → нет заглушки.
+# Формат ответов — условный: DTO оркестратора нужно сверить со стендом.
 tools:
-  postpone_case:
-    - id: default-ok
+  get_client_universal_info:
+    - id: default-client
       result:
-        json: { case_id: "{{args.case_id}}", status: POSTPONED, until: "{{args.until}}" }
-      effect: { case: postponed }
+        json: { clientId: CL-TEST-0001, fullName: Тестовый Клиент, segment: MASS, isVip: false }
+  check_assigned_case:
+    - id: default-assigned
+      result:
+        json: { assigned: true }
+  get_channels_answer:
+    - id: default-channels
+      result:
+        json: { channels: [CHAT, SMS, EMAIL] }
+  get_cases_history:
+    - id: default-empty
+      result:
+        json: { content: [], totalElements: 0 }
+  get_unified_list:
+    - id: default-empty
+      result:
+        json: { appeals: [] }
