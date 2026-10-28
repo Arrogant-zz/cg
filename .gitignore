@@ -6,6 +6,9 @@ var/
 .DS_Store
 .env
 
+# Исходники PDF-руководства — только локально; в git — собранный docs/guide/clawgym-guide.pdf
+docs/guide/pdf/
+
 # OpenSpec: спецификации и команды агента — только локально
 openspec/
 .claude/commands/opsx/
