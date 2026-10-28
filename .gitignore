@@ -5,3 +5,8 @@ var/
 *.log
 .DS_Store
 .env
+
+# OpenSpec: спецификации и команды агента — только локально
+openspec/
+.claude/commands/opsx/
+.claude/skills/openspec-*/
