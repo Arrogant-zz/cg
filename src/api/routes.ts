@@ -3,14 +3,21 @@ import type { App } from '../app.js';
 import { HttpError, Router, sendFile } from '../util/http.js';
 import { buildZip } from '../util/zip.js';
 import { compareRuns } from '../results/compare.js';
-import { runKey } from '../results/store.js';
+import { isExecName, runKey } from '../results/store.js';
 import * as v from './views.js';
 import type { RunOverrides } from '../runner/resolve.js';
 
+/** Номер прогона или сессии — только цифры в пределах безопасного целого: Number() принял бы «1e0» и «0x1» и округлил бы большое число. */
 const num = (s: string) => {
-  const n = Number(s);
-  if (!Number.isInteger(n)) throw new HttpError(400, 'Ожидался номер');
+  const n = /^\d+$/.test(s) ? Number(s) : NaN;
+  if (!Number.isSafeInteger(n)) throw new HttpError(400, 'Ожидался номер');
   return n;
+};
+
+/** Имя журнала кейса из адреса: неверное — 400, а не чтение файла вне каталога прогона. */
+const execParam = (name: string) => {
+  if (!isExecName(name)) throw new HttpError(400, `Неверное имя журнала кейса «${name}»`);
+  return name;
 };
 
 /** Тестовый оператор при запуске: new — новый, номер — продолжить на операторе этого прогона; без поля — как в файле прогона. */
@@ -18,8 +25,9 @@ function overridesOf(o: { continueFrom?: unknown }): RunOverrides {
   const c = o.continueFrom;
   if (c === undefined || c === null || c === '') return {};
   if (c === 'new') return { continueFrom: 'new' };
-  const n = Number(c);
-  if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'continueFrom — номер прогона или new');
+  // Номер — числом или строкой из цифр: Number(true) дал бы прогон №1.
+  const n = typeof c === 'number' ? c : typeof c === 'string' && /^\d+$/.test(c) ? Number(c) : NaN;
+  if (!Number.isSafeInteger(n) || n < 1) throw new HttpError(400, 'continueFrom — номер прогона или new');
   return { continueFrom: n };
 }
 
@@ -60,20 +68,22 @@ export function buildRoutes(app: App): Router {
   r.post('/api/runs/:id/stop', async ({ params }) => v.runListItem(await app.runs.stop(num(params.id))));
   r.get('/api/runs/:id/executions/:name', async ({ params }) => {
     const id = num(params.id);
+    const name = execParam(params.name);
     const run = app.runs.get(id);
-    const live = app.runs.liveExecution(id, params.name);
-    const item = run.lines.flatMap((l) => l.items).find((i) => i.execName === params.name) ?? null;
+    const live = app.runs.liveExecution(id, name);
+    const item = run.lines.flatMap((l) => l.items).find((i) => i.execName === name) ?? null;
     if (live) return { ...live.toJSON(), item, live: true };
-    const saved = await app.store.loadExecution(id, params.name);
+    const saved = await app.store.loadExecution(id, name);
     if (!saved) throw new HttpError(404, 'Журнал кейса не найден');
     return { ...saved, item: item ?? saved.item, live: false };
   });
   r.get('/api/runs/:id/executions/:name/http', async ({ params, query, res }) => {
     const id = num(params.id);
+    const name = execParam(params.name);
     app.runs.get(id);
-    const live = app.runs.liveExecution(id, params.name);
-    const list = live ? live.http : ((await app.store.loadHttp(id, params.name)) ?? []);
-    if (query.get('download')) return sendFile(res, `${runKey(id)}-${params.name}-http.json`, JSON.stringify(list, null, 2), 'application/json');
+    const live = app.runs.liveExecution(id, name);
+    const list = live ? live.http : ((await app.store.loadHttp(id, name)) ?? []);
+    if (query.get('download')) return sendFile(res, `${runKey(id)}-${name}-http.json`, JSON.stringify(list, null, 2), 'application/json');
     return list;
   });
   r.delete('/api/runs/:id', async ({ params }) => {

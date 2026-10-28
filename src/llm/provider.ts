@@ -125,6 +125,16 @@ export function modelAuth(model: ModelDef, env: NodeJS.ProcessEnv): string | nul
 
 const RETRYABLE = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529]);
 
+/** Пауза между попытками. Остановка в ней — тоже «вызов прерван», а не сбой модели, и следующая попытка не уходит. */
+async function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  try {
+    await sleep(ms, signal);
+  } catch (e) {
+    if (signal?.aborted) throw new LlmError('aborted', 'Вызов модели прерван');
+    throw e;
+  }
+}
+
 /** POST с повторами при 429, 5xx и сетевых сбоях. Ошибки сертификата и остальные HTTP-ошибки не повторяются. */
 async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, signal: AbortSignal | undefined, headers: () => Record<string, string>, log: ExchangeLog | null = null): Promise<{ data: any; requestId: string | null }> {
   const p = model.params;
@@ -134,7 +144,7 @@ async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, sign
   const timeoutMs = p.timeoutMs ?? 120_000;
   let lastErr: LlmError | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep(Math.min(8000, 600 * 2 ** (attempt - 1)), signal);
+    if (attempt > 0) await pause(Math.min(8000, 600 * 2 ** (attempt - 1)), signal);
     let tls = null;
     try {
       tls = r.tls && r.https ? readTls(r.tls) : null;
@@ -186,7 +196,7 @@ async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, sign
       lastErr = new LlmError('http', `Модель вернула HTTP ${res.status}${rid}: ${res.text.slice(0, 300)}${certHint}`, res.status);
       if (RETRYABLE.has(res.status)) {
         const ra = Number(res.headers['retry-after']);
-        if (ra > 0 && ra < 60) await sleep(ra * 1000, signal);
+        if (ra > 0 && ra < 60) await pause(ra * 1000, signal);
         continue;
       }
       throw lastErr;

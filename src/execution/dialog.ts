@@ -43,13 +43,19 @@ export interface StartExecution {
  */
 export function renderStartMessage(contract: ContractDef, c: CaseDef, execution: StartExecution, state: Record<string, unknown>, missing?: Set<string>): string {
   const cache = new Map<string, unknown>();
+  const preview = (tool: string | symbol): unknown => {
+    if (typeof tool !== 'string') return undefined;
+    if (!cache.has(tool)) cache.set(tool, previewStub(c, contract.defaults[tool], tool, state, { ...execution }));
+    return cache.get(tool);
+  };
   const tools = new Proxy(
     {},
     {
-      get: (_t, tool) => {
-        if (typeof tool !== 'string') return undefined;
-        if (!cache.has(tool)) cache.set(tool, previewStub(c, contract.defaults[tool], tool, state, { ...execution }));
-        return cache.get(tool);
+      get: (_t, tool) => preview(tool),
+      // Подстановка читает только собственные поля (util/jsonpath.ts): ответ заглушки — собственное поле, вычисляемое по запросу.
+      getOwnPropertyDescriptor: (_t, tool) => {
+        const value = preview(tool);
+        return value === undefined ? undefined : { value, enumerable: true, configurable: true, writable: false };
       },
     },
   );

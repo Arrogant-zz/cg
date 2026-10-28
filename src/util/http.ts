@@ -2,6 +2,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isPlainObject } from './core.js';
 
 export class HttpError extends Error {
   constructor(
@@ -48,7 +49,12 @@ export class Router {
   }
 
   match(method: string, pathname: string): { route: Route; params: Record<string, string> } | undefined {
-    const segs = pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    let segs: string[];
+    try {
+      segs = pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    } catch {
+      throw new HttpError(400, 'В адресе битая %-последовательность');
+    }
     for (const route of this.routes) {
       if (route.method !== method) continue;
       const params: Record<string, string> = {};
@@ -77,7 +83,15 @@ export class Router {
   /** true — маршрут найден и обработан. */
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const m = this.match(req.method ?? 'GET', url.pathname);
+    let m: ReturnType<Router['match']>;
+    try {
+      m = this.match(req.method ?? 'GET', url.pathname);
+    } catch (e) {
+      // Битый адрес — ошибка клиента, а не сбой стенда.
+      if (!(e instanceof HttpError)) throw e;
+      sendJson(res, e.status, { error: e.message });
+      return true;
+    }
     if (!m) return false;
     // POST — только с телом JSON. Такой запрос с чужой страницы браузер шлёт лишь после OPTIONS, а стенд его не разрешает:
     // форма или fetch без CORS не запустят прогон и не напишут в ручную сессию от имени сотрудника. DELETE без OPTIONS не уходит и так.
@@ -132,11 +146,15 @@ export async function readBody(req: IncomingMessage, limit = 20 * 1024 * 1024): 
 export async function readJsonBody(req: IncomingMessage): Promise<any> {
   const buf = await readBody(req);
   if (!buf.length) return {};
+  let data: unknown;
   try {
-    return JSON.parse(buf.toString('utf8'));
+    data = JSON.parse(buf.toString('utf8'));
   } catch {
     throw new HttpError(400, 'Тело запроса — не JSON');
   }
+  // Тела запросов API — объекты: null или массив дошли бы до обработчика и уронили его с ответом 500.
+  if (!isPlainObject(data)) throw new HttpError(400, 'Тело запроса — не JSON-объект');
+  return data;
 }
 
 const TYPES: Record<string, string> = {

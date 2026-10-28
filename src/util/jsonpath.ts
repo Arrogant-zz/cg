@@ -4,6 +4,14 @@ export type PathToken = { kind: 'key'; key: string } | { kind: 'index'; index: n
 
 export class PathError extends Error {}
 
+/** Служебные имена объектов: запись по ним меняет прототипы всех объектов процесса, а чтение находит унаследованное. */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export const isForbiddenKey = (key: string): boolean => FORBIDDEN_KEYS.has(key);
+
+/** Собственное поле значения: унаследованные поля и методы — не данные. */
+const hasOwn = (v: unknown, key: string | number): boolean => v !== null && v !== undefined && Object.hasOwn(v, key);
+
 export function parsePath(path: string): PathToken[] {
   let s = path.trim();
   if (!s.startsWith('$')) throw new PathError(`Путь должен начинаться с $: ${path}`);
@@ -48,7 +56,7 @@ export function queryPath(obj: unknown, path: string): unknown[] {
     for (const v of cur) {
       if (v === null || v === undefined) continue;
       if (t.kind === 'key') {
-        if (typeof v === 'object' && t.key in (v as any)) next.push((v as any)[t.key]);
+        if (typeof v === 'object' && hasOwn(v, t.key)) next.push((v as any)[t.key]);
       } else if (t.kind === 'index') {
         if (Array.isArray(v)) {
           const idx = t.index < 0 ? v.length + t.index : t.index;
@@ -73,12 +81,13 @@ export function setPath(obj: any, path: string, value: unknown): void {
     const t = tokens[i];
     const last = i === tokens.length - 1;
     if (t.kind === 'wild') throw new PathError(`Запись по пути с [*] невозможна: ${path}`);
+    if (t.kind === 'key' && isForbiddenKey(t.key)) throw new PathError(`Имя «${t.key}» недопустимо в пути записи ${path}`);
     const key: string | number = t.kind === 'key' ? t.key : t.index;
     if (last) {
       cur[key] = value;
       return;
     }
-    if (cur[key] === undefined || cur[key] === null) {
+    if (!hasOwn(cur, key) || cur[key] === undefined || cur[key] === null) {
       const nt = tokens[i + 1];
       cur[key] = nt.kind === 'index' ? [] : {};
     }
@@ -90,7 +99,7 @@ export function setPath(obj: any, path: string, value: unknown): void {
 export function getDotted(obj: unknown, dotted: string): unknown {
   let cur: any = obj;
   for (const part of dotted.split('.')) {
-    if (cur === null || cur === undefined) return undefined;
+    if (!hasOwn(cur, part)) return undefined;
     cur = cur[part];
   }
   return cur;
@@ -98,9 +107,11 @@ export function getDotted(obj: unknown, dotted: string): unknown {
 
 export function setDotted(obj: Record<string, any>, dotted: string, value: unknown): void {
   const parts = dotted.split('.');
+  const bad = parts.find(isForbiddenKey);
+  if (bad) throw new PathError(`Имя «${bad}» недопустимо в пути ${dotted}`);
   let cur: any = obj;
   for (let i = 0; i < parts.length - 1; i++) {
-    if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] === null) cur[parts[i]] = {};
+    if (!hasOwn(cur, parts[i]) || typeof cur[parts[i]] !== 'object' || cur[parts[i]] === null) cur[parts[i]] = {};
     cur = cur[parts[i]];
   }
   cur[parts[parts.length - 1]] = value;

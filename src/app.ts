@@ -114,7 +114,14 @@ export class App {
   async listen(): Promise<{ port: number; mcpPort: number | null }> {
     const routes = buildRoutes(this);
     const handler = async (req: http.IncomingMessage, res: http.ServerResponse, mcpOnly: boolean) => {
-      const url = new URL(req.url ?? '/', 'http://localhost');
+      let url: URL;
+      try {
+        url = new URL(req.url ?? '/', 'http://localhost');
+      } catch {
+        // Адрес, который не разбирается, например «//», — ошибка клиента, а не сбой стенда.
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'Некорректный адрес запроса' }));
+        return;
+      }
       if (url.pathname === this.env.mcpPath || url.pathname === `${this.env.mcpPath}/`) return this.mcp.handle(req, res);
       if (url.pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });

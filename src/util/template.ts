@@ -42,7 +42,12 @@ export function renderDeep<T>(value: T, ctx: TemplateContext, missing?: Set<stri
   if (Array.isArray(value)) return value.map((v) => renderDeep(v, ctx, missing)) as T;
   if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = renderDeep(v, ctx, missing);
+    for (const [k, v] of Object.entries(value)) {
+      const r = renderDeep(v, ctx, missing);
+      // Поле __proto__ из JSON — обычное поле ответа: присваивание сменило бы прототип, и поле пропало бы из ответа.
+      if (k === '__proto__') Object.defineProperty(out, k, { value: r, enumerable: true, writable: true, configurable: true });
+      else out[k] = r;
+    }
     return out as T;
   }
   return value;

@@ -39,10 +39,11 @@ import {
   type StubResponse,
   type ToolDef,
 } from './types.js';
-import { isPlainObject, shortHash } from '../util/core.js';
+import { errorMessage, isPlainObject, shortHash } from '../util/core.js';
 import { whenRegexErrors } from '../stubs/engine.js';
 import { mcpPart } from './tools-import.js';
-import { walkFiles } from '../util/fsx.js';
+import { safeJoin, walkFiles } from '../util/fsx.js';
+import { isForbiddenKey } from '../util/jsonpath.js';
 
 const Ajv: any = (AjvModule as any).default ?? AjvModule;
 const ajv = new Ajv({ allErrors: true, strict: false, allowUnionTypes: true });
@@ -214,12 +215,50 @@ async function parseFile(c: Collector, configDir: string, rel: string): Promise<
     return null;
   }
   for (const w of doc.warnings) c.warn(rel, `YAML: ${w.message.split('\n')[0]}`, { line: w.linePos?.[0]?.line });
-  const data = doc.toJS({ maxAliasCount: 100 });
+  let data: unknown;
+  try {
+    data = doc.toJS({ maxAliasCount: 100 });
+  } catch (e) {
+    // Алиасы раскрываются только здесь: «бомба» алиасов или алиас без якоря — ошибка этого файла, а не всей загрузки.
+    const { reason, line } = aliasIssue(e, doc, lc);
+    c.error(rel, `Ошибка YAML: ${reason}`, { line, action: 'Исправьте синтаксис файла' });
+    return null;
+  }
   if (!isPlainObject(data)) {
     c.error(rel, 'Ожидался YAML-объект с полями', { line: 1 });
     return null;
   }
   return { rel, text, data, doc, lc };
+}
+
+/** Ошибка раскрытия алиасов: позиции у неё нет, поэтому строку алиаса без якоря ищем сами. */
+function aliasIssue(e: unknown, doc: YAML.Document.Parsed, lc: LineCounter): { reason: string; line?: number } {
+  const m = errorMessage(e);
+  if (/Excessive alias count/.test(m)) return { reason: 'слишком много раскрытий алиасов — файл похож на «бомбу» алиасов' };
+  const name = /^Unresolved alias[^:]*: (.+)$/.exec(m)?.[1];
+  if (!name) return { reason: m };
+  let line: number | undefined;
+  YAML.visit(doc, {
+    Alias(_key, node) {
+      if (node.source !== name || node.resolve(doc) || !node.range) return;
+      line = lc.linePos(node.range[0]).line;
+      return YAML.visit.BREAK;
+    },
+  });
+  return { reason: `алиас *${name} без якоря &${name} перед ним`, line };
+}
+
+/**
+ * Файл по ссылке из справочников: путь не выходит из своего каталога. Иначе — ошибка с полем, а файл не читается:
+ * его текст ушёл бы в данные кейса, снимок прогона и materials.zip.
+ */
+function refPath(c: Collector, p: Parsed, dir: string, rel: string, at: (string | number)[], where: string): string | null {
+  try {
+    return safeJoin(dir, rel);
+  } catch {
+    c.error(p.rel, `Путь «${rel}» выходит за ${where}`, { field: fieldFromPath(at), line: lineOf(p, at), action: 'Укажите путь внутри каталога: без «..» за его пределы и без начального «/»' });
+    return null;
+  }
 }
 
 const src = (p: Parsed): Source => ({ file: p.rel, hash: shortHash(p.text), text: p.text });
@@ -287,11 +326,14 @@ async function loadContract(c: Collector, configDir: string): Promise<ContractDe
   });
   const smRel = d.startMessage ?? 'contracts/start-message.txt';
   let smText = '';
-  try {
-    smText = await fsp.readFile(path.join(configDir, smRel), 'utf8');
-    c.files++;
-  } catch {
-    c.error(smRel, 'Нет шаблона стартового сообщения', { action: 'Добавьте шаблон по коду оркестратора' });
+  const smAbs = refPath(c, p, configDir, smRel, ['startMessage'], 'каталог справочников');
+  if (smAbs) {
+    try {
+      smText = await fsp.readFile(smAbs, 'utf8');
+      c.files++;
+    } catch {
+      c.error(smRel, 'Нет шаблона стартового сообщения', { action: 'Добавьте шаблон по коду оркестратора' });
+    }
   }
   if (smText && (!/Тематика:/.test(smText) || !/request_ref:/.test(smText))) {
     c.warn(smRel, 'В шаблоне нет строк «Тематика:» и «request_ref:» из INTEGRATION.md');
@@ -350,14 +392,22 @@ async function normalizeStubs(
       const responses: StubResponse[] = s.sequence ? s.sequence : [s];
       for (let k = 0; k < responses.length; k++) {
         const r = responses[k];
+        const at = [base, tool, i, ...(s.sequence ? ['sequence', k] : [])];
         if (r.result && r.error) c.error(p.rel, 'В одном ответе заданы и result, и error', { field, line });
+        // Ключ effect — точечный путь в состоянии выполнения: служебные имена изменили бы прототипы объектов процесса.
+        for (const key of isPlainObject(r.effect) ? Object.keys(r.effect) : []) {
+          const bad = key.split('.').find(isForbiddenKey);
+          if (bad) c.error(p.rel, `Имя «${bad}» недопустимо в пути effect`, { field: fieldFromPath([...at, 'effect', key]), line: lineOf(p, [...at, 'effect', key]), action: 'Переименуйте поле состояния' });
+        }
         if (r.result) {
           const keys = ['json', 'text', 'file'].filter((x) => r.result![x as 'json'] !== undefined);
           if (keys.length !== 1) c.error(p.rel, 'В result нужно ровно одно из json, text, file', { field, line });
           if (r.result.file) {
             const fileRel = `data/${r.result.file}`;
+            const abs = refPath(c, p, path.join(configDir, 'data'), String(r.result.file), [...at, 'result', 'file'], 'каталог data/');
+            if (!abs) continue;
             try {
-              const text = await fsp.readFile(path.join(configDir, fileRel), 'utf8');
+              const text = await fsp.readFile(abs, 'utf8');
               dataFiles.push({ file: fileRel, hash: shortHash(text), text });
               r.result.fileContent = fileRel.endsWith('.json') ? JSON.parse(text) : text;
             } catch (e: any) {
@@ -533,9 +583,10 @@ async function loadAgent(c: Collector, configDir: string, p: Parsed): Promise<Ag
   const r = d.request;
   let body: unknown = r.body ?? { text: '{{text}}' };
   let bodyFile: Source | null = null;
-  if (typeof r.body === 'string') {
+  const bodyAbs = typeof r.body === 'string' ? refPath(c, p, configDir, r.body, ['request', 'body'], 'каталог справочников') : null;
+  if (bodyAbs) {
     try {
-      const text = await fsp.readFile(path.join(configDir, r.body), 'utf8');
+      const text = await fsp.readFile(bodyAbs, 'utf8');
       c.files++;
       bodyFile = { file: r.body, hash: shortHash(text), text };
       body = JSON.parse(text);

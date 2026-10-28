@@ -26,6 +26,8 @@ export class Semaphore {
   }
 
   acquire(owner: string, signal?: AbortSignal): Promise<void> {
+    // Уже отменённое ожидание не занимает свободный слот и не встаёт в очередь: события abort для него больше не будет.
+    if (signal?.aborted) return Promise.reject(new Error('Ожидание сессии прервано'));
     if (this.tryAcquire(owner)) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const w = {

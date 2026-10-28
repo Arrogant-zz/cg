@@ -105,7 +105,9 @@ function joinTexts(values: unknown[]): string {
 function numberAt(obj: unknown, p: string | null): number | null {
   if (!p) return null;
   const v = queryPath(obj, p)[0];
-  return typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)) ? Number(v) : null;
+  // Токены — неотрицательное целое: бесконечность, минус или дробь испортили бы метрики, такое значение — «нет данных».
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
 export function parseReply(agent: AgentDef, raw: unknown): { text: string; status: string | null; usage: AgentUsage | null; agentError: string | null } {

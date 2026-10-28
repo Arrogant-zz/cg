@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import type { BasketType, CaseDef, ContractDef, SolutionDef } from '../config/types.js';
 import type { Env } from '../env.js';
-import { StubState, matchStub, renderResponse, templateContext, terminalMatches, yamlSnippet } from '../stubs/engine.js';
+import { StubState, matchStub, renderStub, templateContext, terminalMatches, yamlSnippet } from '../stubs/engine.js';
 import { renderString } from '../util/template.js';
 import { isAbortError, nowIso, randomHex, sleep } from '../util/core.js';
 import type { ExecEvent, MessageEvent, ToolCallEvent } from './events.js';
@@ -394,7 +394,7 @@ export class Execution {
       const { response, call } = this.stub.next(match.stub);
       ev.stub = { id: match.stub.id, origin: match.stub.origin, candidates: match.candidates, call };
       const ctx = templateContext(this.caseDef, args, this.stub.state, { caseNumber: this.caseNumber, requestRef: this.requestRef, id: this.id, taskId });
-      const rendered = renderResponse(response, ctx, this.stub);
+      const rendered = renderStub(response, ctx);
       if (rendered.delayMs) {
         try {
           await sleep(rendered.delayMs, this.abort.signal);
@@ -402,6 +402,8 @@ export class Execution {
           if (isAbortError(e) || this.flags.stopped) return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name) }, t0);
         }
       }
+      // Эффект — у вызова, ответ которого уходит агенту: остановка во время задержки состояние не меняет.
+      this.stub.apply(rendered.effect);
       return this.finish(
         ev,
         {

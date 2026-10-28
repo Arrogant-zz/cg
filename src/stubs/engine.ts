@@ -1,8 +1,13 @@
 // Заглушки инструментов (CASE-02–04): условия на аргументы, последовательности, состояние выполнения.
+import vm from 'node:vm';
+import YAML from 'yaml';
 import type { CaseDef, StubDef, StubResponse, ToolDef } from '../config/types.js';
 import { getDotted, setDotted } from '../util/jsonpath.js';
 import { deepClone, errorMessage, isPlainObject, stableStringify } from '../util/core.js';
 import { renderDeep, type TemplateContext } from '../util/template.js';
+import { logger } from '../util/log.js';
+
+const log = logger('stubs');
 
 export interface StubMatch {
   stub: StubDef;
@@ -21,6 +26,28 @@ const WHEN_OPS = ['regex', 'in', 'exists', 'not', 'eq'];
 /** Выражение `regex` компилируется одинаково при вызове и при проверке файлов: строка и флаг u. */
 const whenRegex = (source: unknown): RegExp => new RegExp(String(source), 'u');
 
+/** Сколько может идти одна проверка `regex`: выражение с катастрофическим перебором не должно останавливать стенд. */
+export const REGEX_TIMEOUT_MS = 100;
+const regexContext = vm.createContext({});
+const regexTest = new vm.Script('re.test(s)');
+
+/** Проверка в отдельном контексте: V8 прерывает перебор по таймауту, и тогда условие не выполнено. */
+function regexMatches(source: unknown, value: string): boolean {
+  const re = whenRegex(source);
+  regexContext.re = re;
+  regexContext.s = value;
+  try {
+    return regexTest.runInContext(regexContext, { timeout: REGEX_TIMEOUT_MS }) === true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw e;
+    log.warn(`Условие regex «${re.source}» проверялось дольше ${REGEX_TIMEOUT_MS} мс на значении длиной ${value.length}: проверка прервана, условие не выполнено`);
+    return false;
+  } finally {
+    regexContext.re = undefined;
+    regexContext.s = undefined;
+  }
+}
+
 /** Одно условие `when`: равенство, {regex}, {in}, {exists}, {not}. */
 export function condMatches(actual: unknown, expected: unknown): boolean {
   if (isPlainObject(expected)) {
@@ -29,7 +56,7 @@ export function condMatches(actual: unknown, expected: unknown): boolean {
       if ('exists' in expected && (actual !== undefined) !== Boolean(expected.exists)) return false;
       if ('regex' in expected) {
         if (actual === undefined || actual === null) return false;
-        if (!whenRegex(expected.regex).test(String(actual))) return false;
+        if (!regexMatches(expected.regex, String(actual))) return false;
       }
       if ('in' in expected && !(Array.isArray(expected.in) && expected.in.some((x) => condMatches(actual, x)))) return false;
       if ('not' in expected && condMatches(actual, expected.not)) return false;
@@ -125,8 +152,13 @@ export class StubState {
   applyEffect(effect: Record<string, unknown> | undefined, ctx: TemplateContext): Record<string, unknown> | null {
     if (!effect) return null;
     const rendered = renderDeep(effect, ctx);
-    for (const [k, v] of Object.entries(rendered)) setDotted(this.state, k, v);
+    this.apply(rendered);
     return rendered;
+  }
+
+  /** Уже отрисованный эффект — в состояние выполнения. */
+  apply(rendered: Record<string, unknown> | null): void {
+    for (const [k, v] of Object.entries(rendered ?? {})) setDotted(this.state, k, v);
   }
 
   snapshot(): Record<string, unknown> {
@@ -148,13 +180,17 @@ export function templateContext(c: CaseDef, args: Record<string, unknown>, state
   return { case: { id: c.id, title: c.title, topic: c.topic, tags: c.tags }, start: c.start, args, state, execution };
 }
 
-export function renderResponse(response: StubResponse, ctx: TemplateContext, stubState: StubState): RenderedResponse {
+/**
+ * Ответ заглушки без изменения состояния: значение и отрисованный эффект. Эффект применяет выполнение, когда ответ уходит
+ * агенту, — после delayMs: вызов, остановленный во время задержки, не выполнен и состояние не меняет.
+ */
+export function renderStub(response: StubResponse, ctx: TemplateContext): RenderedResponse {
   const delayMs = response.delayMs ?? 0;
+  // Эффект есть и у ошибки: например, повторный вызов фиксирует попытку.
+  const effect = response.effect ? renderDeep(response.effect, ctx) : null;
   if (response.error !== undefined) {
     const err = typeof response.error === 'string' ? { message: response.error } : response.error;
     const message = String(renderDeep(err.message, ctx));
-    // Эффект применяется и для ошибки: например, повторный вызов фиксирует попытку.
-    const effect = stubState.applyEffect(response.effect, ctx);
     return { isError: true, value: message, text: message, errorCode: err.code, delayMs, effect };
   }
   const r = response.result ?? {};
@@ -163,8 +199,14 @@ export function renderResponse(response: StubResponse, ctx: TemplateContext, stu
   else if (r.text !== undefined) value = String(renderDeep(r.text, ctx));
   else if (r.fileContent !== undefined) value = renderDeep(deepClone(r.fileContent), ctx);
   else value = {};
-  const effect = stubState.applyEffect(response.effect, ctx);
   return { isError: false, value, text: typeof value === 'string' ? value : JSON.stringify(value), delayMs, effect };
+}
+
+/** Ответ заглушки с эффектом сразу — когда задержки ждать не нужно. */
+export function renderResponse(response: StubResponse, ctx: TemplateContext, stubState: StubState): RenderedResponse {
+  const rendered = renderStub(response, ctx);
+  stubState.apply(rendered.effect);
+  return rendered;
 }
 
 /**
@@ -177,16 +219,28 @@ export function previewStub(c: CaseDef, defaults: StubDef[] | undefined, tool: s
   if (!match) return undefined;
   const response = match.stub.sequence?.length ? match.stub.sequence[0] : match.stub;
   if (response.error !== undefined) return undefined;
-  return renderResponse({ ...response, effect: undefined }, templateContext(c, {}, state, execution), new StubState(state)).value;
+  return renderStub({ ...response, effect: undefined }, templateContext(c, {}, state, execution)).value;
 }
 
 /** YAML-фрагмент для файла кейса по ответу, введённому человеком (plan_start.md, п. 6). */
 export function yamlSnippet(tool: string, args: Record<string, unknown>, answer: { json?: unknown; text?: string; error?: string }): string {
   const ind = (s: string, n: number) => s.split('\n').map((l) => ' '.repeat(n) + l).join('\n');
   const toYaml = (v: unknown): string => JSON.stringify(v);
-  const lines = [`  ${tool}:`, `    - when: ${toYaml(args)}`];
-  if (answer.error !== undefined) lines.push(`      error: ${toYaml(answer.error)}`);
-  else if (answer.json !== undefined) lines.push(`      result:`, `        json: ${toYaml(answer.json)}`);
-  else lines.push(`      result:`, `        text: |-`, ind(answer.text ?? '', 10));
-  return `tools:\n${lines.join('\n')}\n`;
+  const snippet = (result: string[]) => `tools:\n${[`  ${tool}:`, `    - when: ${toYaml(args)}`, ...result].join('\n')}\n`;
+  if (answer.error !== undefined) return snippet([`      error: ${toYaml(answer.error)}`]);
+  if (answer.json !== undefined) return snippet([`      result:`, `        json: ${toYaml(answer.json)}`]);
+  // Текст — блоком, как его удобно читать в кейсе. Индикатор сохраняет концевые переводы строк: |- — ни одного, | — один,
+  // |+ — несколько; отступ задаётся явно, если текст начинается с пробела или табуляции.
+  const text = answer.text ?? '';
+  const chomp = !text.endsWith('\n') ? '-' : text === '\n' || text.endsWith('\n\n') ? '+' : '';
+  const indent = /^\n*[ \t]/.test(text) ? '2' : '';
+  const block = snippet([`      result:`, `        text: |${indent}${chomp}`, ind(chomp === '-' ? text : text.slice(0, -1), 10)]);
+  // Чего блок не сохраняет — \r, непечатные символы, — пишется строкой JSON: в YAML это строка в кавычках.
+  let exact = false;
+  try {
+    exact = YAML.parse(block)?.tools?.[tool]?.[0]?.result?.text === text;
+  } catch {
+    exact = false;
+  }
+  return exact ? block : snippet([`      result:`, `        text: ${toYaml(text)}`]);
 }

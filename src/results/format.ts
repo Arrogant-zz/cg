@@ -2,6 +2,8 @@
 // дольше кода (синхронизация с S3), поэтому совместимость со старыми записями собрана здесь: остальной код видит только текущий вид.
 // Несовместимое изменение записи — новая версия RECORD_FORMAT и шаг миграции к ней в списках ниже.
 // Журналы HTTP-обменов — массивы без версии: их только показывают. Записи в памяти поля format не несут, его ставит сохранение.
+import AjvModule from 'ajv';
+import type { ErrorObject, ValidateFunction } from 'ajv';
 import type { RunRecord, ItemRecord, OperatorStep } from '../runner/types.js';
 import type { ManualRecord } from '../manual/manual.js';
 import type { ExecutionJSON } from '../execution/execution.js';
@@ -16,7 +18,67 @@ export type Loaded<T> = { ok: true; record: T } | { ok: false; reason: string };
 /** Шаг n приводит запись версии n к версии n + 1; запись меняется на месте. */
 type Step = (record: any) => void;
 
-function load<T>(raw: unknown, steps: Step[]): Loaded<T> {
+const Ajv: any = (AjvModule as any).default ?? AjvModule;
+const ajv = new Ajv({ allErrors: true, strict: false });
+
+const object = { type: 'object' };
+const arrayOf = (items: object) => ({ type: 'array', items });
+
+// Номер формата не доказывает целостность: файл мог оборваться или быть затёрт. После миграции проверяются только поля,
+// без которых ClawGym не запускается и не строит списки прогонов и сессий. Миграции создают их и у записей прежних версий;
+// остальные поля не проверяются, чтобы запись с недостающим необязательным полем оставалась видна.
+const RUN_SCHEMA = {
+  type: 'object',
+  required: ['id', 'settings', 'snapshot', 'lines'],
+  properties: {
+    id: { type: 'integer', minimum: 1 },
+    settings: object,
+    snapshot: { type: 'object', required: ['files'], properties: { files: { type: 'array' } } },
+    lines: arrayOf({ type: 'object', required: ['items', 'history'], properties: { items: arrayOf(object), history: arrayOf(object) } }),
+  },
+};
+
+const SESSION_SCHEMA = {
+  type: 'object',
+  required: ['id', 'history'],
+  properties: {
+    id: { type: 'integer', minimum: 1 },
+    history: { type: ['array', 'null'], items: object },
+    createdAt: { type: 'string' },
+    case: object,
+    execution: { type: ['object', 'null'], properties: { events: arrayOf(object) } },
+  },
+  // Сессия с тестовым оператором — шаг его истории: для неё нужны время начала и кейс.
+  dependencies: { senderId: ['createdAt', 'case'] },
+};
+
+const EXECUTION_SCHEMA = { type: 'object', required: ['events'], properties: { events: arrayOf(object), case: object } };
+
+const OPERATORS_SCHEMA = { type: 'object', required: ['operators'], properties: { operators: { type: 'object', additionalProperties: arrayOf(object) } } };
+
+const TYPE_NAMES: Record<string, string> = { object: 'объект', array: 'массив', integer: 'целое число', string: 'строка', null: 'null' };
+
+/** Первые ошибки проверки — по-русски, с путём поля: «lines[0].items — не массив». */
+function describe(errors: ErrorObject[] | null | undefined): string {
+  return (errors ?? [])
+    .slice(0, 3)
+    .map((e) => {
+      const at = e.instancePath
+        .split('/')
+        .filter(Boolean)
+        .map((s) => (/^\d+$/.test(s) ? `[${s}]` : `.${s}`))
+        .join('')
+        .replace(/^\./, '');
+      const p: any = e.params;
+      if (p.missingProperty) return `нет поля «${at ? `${at}.` : ''}${p.missingProperty}»`;
+      if (e.keyword === 'type') return `«${at}» — не ${String(p.type).split(',').map((t) => TYPE_NAMES[t] ?? t).join(' и не ')}`;
+      if (e.keyword === 'minimum') return `«${at}» меньше ${p.limit}`;
+      return `«${at}»: ${e.message}`;
+    })
+    .join('; ');
+}
+
+function load<T>(raw: unknown, steps: Step[], valid: ValidateFunction): Loaded<T> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'запись — не JSON-объект' };
   const { format = 0, ...record } = raw as Record<string, unknown>;
   if (typeof format !== 'number' || !Number.isInteger(format) || format < 0) return { ok: false, reason: `непонятная версия формата «${String(format)}»` };
@@ -27,6 +89,7 @@ function load<T>(raw: unknown, steps: Step[]): Loaded<T> {
   } catch (e) {
     return { ok: false, reason: `запись формата ${format} не приводится к текущему виду: ${errorMessage(e)}` };
   }
+  if (!valid(record)) return { ok: false, reason: `запись повреждена: ${describe(valid.errors)}` };
   return { ok: true, record: record as T };
 }
 
@@ -83,8 +146,13 @@ export interface OperatorsRecord {
   operators: Record<string, OperatorStep[]>;
 }
 
-export const loadRunRecord = (raw: unknown) => load<RunRecord>(raw, [runFrom0, runFrom1]);
-export const loadExecutionRecord = (raw: unknown) => load<SavedExecution>(raw, [execFrom0, unchanged]);
-export const loadSessionRecord = (raw: unknown) => load<ManualRecord>(raw, [sessionFrom0, sessionFrom1]);
+const validRun: ValidateFunction = ajv.compile(RUN_SCHEMA);
+const validExecution: ValidateFunction = ajv.compile(EXECUTION_SCHEMA);
+const validSession: ValidateFunction = ajv.compile(SESSION_SCHEMA);
+const validOperators: ValidateFunction = ajv.compile(OPERATORS_SCHEMA);
+
+export const loadRunRecord = (raw: unknown) => load<RunRecord>(raw, [runFrom0, runFrom1], validRun);
+export const loadExecutionRecord = (raw: unknown) => load<SavedExecution>(raw, [execFrom0, unchanged], validExecution);
+export const loadSessionRecord = (raw: unknown) => load<ManualRecord>(raw, [sessionFrom0, sessionFrom1], validSession);
 /** Журнал операторов появился в формате 2: прежних версий у него нет. */
-export const loadOperatorsRecord = (raw: unknown) => load<OperatorsRecord>(raw, [unchanged, unchanged]);
+export const loadOperatorsRecord = (raw: unknown) => load<OperatorsRecord>(raw, [unchanged, unchanged], validOperators);

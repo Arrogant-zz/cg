@@ -357,7 +357,8 @@ export function runListItem(r: RunRecord) {
     finishedAt: r.finishedAt,
     testOperator: operatorLabel(r),
     senders: r.lines.map((l) => l.senderId).filter(Boolean),
-    agent: { id: r.settings.agent.id, title: r.settings.agent.title, build: r.settings.agent.build, model: r.settings.agent.model ?? null },
+    // Подключения в записи может не быть: загрузка проверяет только поля, без которых не строится список (results/format.ts).
+    agent: { id: r.settings.agent?.id ?? null, title: r.settings.agent?.title ?? null, build: r.settings.agent?.build ?? null, model: r.settings.agent?.model ?? null },
     models: { operator: r.settings.operator?.id ?? null, judge: r.settings.judge?.id ?? null },
     bar: (line?.items ?? []).filter((i) => i.kind === 'case').map((i) => (i.status === 'running' ? 'live' : i.outcome === 'passed' ? 'ok' : i.outcome === 'failed' ? 'no' : i.outcome === 'technical' ? 'tech' : i.outcome === 'not_evaluated' ? 'na' : '')),
     progress: { done, total, phase: cur?.phase ?? null, pos: curItem?.pos ?? null, turns: null as number | null },

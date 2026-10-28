@@ -340,12 +340,16 @@ export class ManualManager {
     rec.status = 'closed';
     rec.closedAt = nowIso();
     rec.execution = l.exec.toJSON();
-    await this.app.store.saveSessionHttp(id, l.exec.http);
-    this.app.bindings.unbindAll(l.exec);
-    this.app.sessions.release(l.owner);
-    l.hold.release();
-    this.live.delete(id);
-    this.schedule(id, true);
+    try {
+      await this.app.store.saveSessionHttp(id, l.exec.http);
+    } finally {
+      // Сессия уже закрыта и оценена: слот агента, x-task-id и тестовый оператор свободны и при отказе диска, ошибка уходит в ответ.
+      this.app.bindings.unbindAll(l.exec);
+      this.app.sessions.release(l.owner);
+      l.hold.release();
+      this.live.delete(id);
+      this.schedule(id, true);
+    }
     return rec;
   }
 

@@ -7,7 +7,7 @@ import type { ContractDef } from '../config/types.js';
 import type { Env } from '../env.js';
 import type { Execution, McpCallResult } from '../execution/execution.js';
 import { readBody } from '../util/http.js';
-import { nowIso } from '../util/core.js';
+import { isPlainObject, nowIso } from '../util/core.js';
 import { renderString } from '../util/template.js';
 import { logger } from '../util/log.js';
 import { clip, finishExchange, maskedHeaders, startExchange, type HttpExchange } from '../util/httplog.js';
@@ -84,6 +84,14 @@ interface CallCtx {
 
 const TRAFFIC_LIMIT = 300;
 
+/** id запроса JSON-RPC 2.0: строка, число или null. */
+const validId = (id: unknown): boolean => id === null || typeof id === 'string' || (typeof id === 'number' && Number.isFinite(id));
+
+/** Ответ на невалидный запрос: id запроса, если он допустимого типа, иначе null (JSON-RPC 2.0, раздел 5). */
+const invalidRequest = (m: unknown) => ({ jsonrpc: '2.0', id: isPlainObject(m) && validId(m.id) ? m.id : null, error: { code: -32600, message: 'Invalid Request' } });
+
+const TYPE_NAMES: Record<string, string> = { string: 'строка', number: 'число', boolean: 'логическое значение' };
+
 export class McpServer {
   sessions = new Map<string, McpSession>();
   /** Последние HTTP-обмены MCP; без привязки к кейсу — initialize, tools/list и вызовы без x-task-id. */
@@ -144,9 +152,15 @@ export class McpServer {
       return;
     }
     const batch = Array.isArray(payload);
-    const list: RpcRequest[] = batch ? payload : [payload];
+    // Пустой пакет — одна ошибка, а не 202 без тела: клиент ждёт ответа (JSON-RPC 2.0, раздел 6).
+    if (batch && !payload.length) {
+      x.label = 'пустой пакет';
+      this.reply(send, invalidRequest(null), {}, req);
+      return;
+    }
+    const list: unknown[] = batch ? payload : [payload];
     x.label = list
-      .map((m) => (m?.method === 'tools/call' && typeof m.params?.name === 'string' ? `tools/call ${m.params.name}` : String(m?.method ?? '?')))
+      .map((m: any) => (m?.method === 'tools/call' && typeof m.params?.name === 'string' ? `tools/call ${m.params.name}` : String(m?.method ?? '?')))
       .join(', ');
     const sessionHeader: Record<string, string> = {};
     const results = await Promise.all(list.map((m) => this.dispatch(m, req, sessionHeader, ctx)));
@@ -178,11 +192,11 @@ export class McpServer {
     return null;
   }
 
-  private async dispatch(m: RpcRequest, req: IncomingMessage, sessionHeader: Record<string, string>, ctx: CallCtx): Promise<unknown | null> {
-    const isNotification = m.id === undefined || m.id === null;
-    if (!m || m.jsonrpc !== '2.0' || typeof m.method !== 'string') {
-      return { jsonrpc: '2.0', id: m?.id ?? null, error: { code: -32600, message: 'Invalid Request' } };
-    }
+  private async dispatch(raw: unknown, req: IncomingMessage, sessionHeader: Record<string, string>, ctx: CallCtx): Promise<unknown | null> {
+    if (!isPlainObject(raw) || raw.jsonrpc !== '2.0' || typeof raw.method !== 'string' || (Object.hasOwn(raw, 'id') && !validId(raw.id))) return invalidRequest(raw);
+    const m = raw as RpcRequest;
+    // Уведомление — сообщение без поля id. На id: null нужен ответ: иначе клиент ждал бы его вечно.
+    const isNotification = !Object.hasOwn(m, 'id');
     const ok = (result: unknown) => (isNotification ? null : { jsonrpc: '2.0', id: m.id, result });
     const fail = (code: number, message: string) => (isNotification ? null : { jsonrpc: '2.0', id: m.id, error: { code, message } });
     const sid = String(req.headers['mcp-session-id'] ?? '');
@@ -217,7 +231,14 @@ export class McpServer {
         const c = this.getContract();
         const name = m.params?.name;
         if (typeof name !== 'string') return fail(-32602, 'Нет params.name');
-        const args = { ...(m.params?.arguments ?? {}) };
+        const given: unknown = m.params?.arguments;
+        // Аргументы — объект или их нет (схема MCP): строка разложилась бы в заглушке по символам, массив — по индексам.
+        if (given !== undefined && !isPlainObject(given)) {
+          const type = given === null ? 'null' : Array.isArray(given) ? 'массив' : (TYPE_NAMES[typeof given] ?? typeof given);
+          this.stand.add('warn', 'mcp.invalid', `Вызов ${name}: params.arguments — ${type}, а не объект. Агент получил ошибку -32602, заглушка не вызывалась`, { tool: name, arguments: given, httpId: ctx.x.id });
+          return fail(-32602, 'Invalid params: params.arguments должен быть объектом');
+        }
+        const args: Record<string, unknown> = { ...(given ?? {}) };
         const taskId = this.taskIdOf(req, m.params);
         delete args[this.env.mcpTaskIdHeader];
         delete args['x-task-id'];

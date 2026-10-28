@@ -11,6 +11,9 @@ import type { ManualRecord } from '../manual/manual.js';
 export const runKey = (id: number) => `run-${String(id).padStart(4, '0')}`;
 export const sessionKey = (id: number) => `m-${String(id).padStart(4, '0')}`;
 
+/** Имя журнала кейса — позиция вида L1-P01: без разделителей пути и «..», чтобы файл не вышел из executions/. */
+export const isExecName = (name: string): boolean => /^[A-Za-z0-9][\w.-]*$/.test(name) && !name.includes('..');
+
 /** Пропущенная при загрузке запись: путь внутри CLAWGYM_VAR и причина. */
 export type OnSkip = (file: string, reason: string) => void;
 
@@ -48,7 +51,12 @@ export class ResultsStore {
   private async allocate(kind: 'run' | 'session'): Promise<number> {
     const file = path.join(this.dataDir, 'counters.json');
     const c = (await readJsonIf<Record<string, number>>(file)) ?? {};
-    let n = (c[kind] ?? 0) + 1;
+    // Повреждённый счётчик не чинится молча: номера удалённых прогонов и сессий повторно не выдаются, а по каталогам их не узнать.
+    const last: unknown = isPlainObject(c) ? (c[kind] ?? 0) : c;
+    if (!isPlainObject(c) || typeof last !== 'number' || !Number.isSafeInteger(last) || last < 0 || !Number.isSafeInteger(last + 1)) {
+      throw new Error(`counters.json: счётчик «${kind}» повреждён (${JSON.stringify(last)}): нужно целое число от 0 до ${Number.MAX_SAFE_INTEGER - 1}. Исправьте файл в CLAWGYM_VAR: укажите номер не меньше последнего выданного`);
+    }
+    let n = last + 1;
     // Номер не должен совпасть с уже сохранённым результатом.
     const dir = kind === 'run' ? this.resultsDir : this.sessionsDir;
     const key = kind === 'run' ? runKey : sessionKey;
@@ -93,23 +101,29 @@ export class ResultsStore {
     return out.sort((a, b) => a.id - b.id);
   }
 
+  /** Файл журнала кейса или его HTTP-обменов: имя из адреса API не выводит за каталог executions/. */
+  private execFile(runId: number, name: string, ext: '.json' | '.http.json'): string {
+    if (!isExecName(name)) throw new Error(`Недопустимое имя журнала кейса «${name}»: путь вне каталога прогона`);
+    return path.join(this.runDir(runId), 'executions', `${name}${ext}`);
+  }
+
   async saveExecution(runId: number, name: string, data: SavedExecution): Promise<void> {
-    await writeJsonAtomic(path.join(this.runDir(runId), 'executions', `${name}.json`), { format: RECORD_FORMAT, ...data });
+    await writeJsonAtomic(this.execFile(runId, name, '.json'), { format: RECORD_FORMAT, ...data });
   }
 
   /** Журнал кейса прогона; несовместимый журнал — ошибка с причиной, а не «не найден». */
   async loadExecution(runId: number, name: string): Promise<SavedExecution | undefined> {
-    return this.readRecord(path.join(this.runDir(runId), 'executions', `${name}.json`), loadExecutionRecord, (file, reason) => {
+    return this.readRecord(this.execFile(runId, name, '.json'), loadExecutionRecord, (file, reason) => {
       throw new Error(`${file}: ${reason}`);
     });
   }
 
   async saveHttp(runId: number, name: string, list: unknown[]): Promise<void> {
-    await writeJsonAtomic(path.join(this.runDir(runId), 'executions', `${name}.http.json`), list);
+    await writeJsonAtomic(this.execFile(runId, name, '.http.json'), list);
   }
 
   async loadHttp(runId: number, name: string): Promise<any[] | undefined> {
-    return readJsonIf(path.join(this.runDir(runId), 'executions', `${name}.http.json`));
+    return readJsonIf(this.execFile(runId, name, '.http.json'));
   }
 
   async saveSessionHttp(id: number, list: unknown[]): Promise<void> {
@@ -143,8 +157,12 @@ export class ResultsStore {
     return walkFiles(this.runDir(runId));
   }
 
+  /** Файл материалов прогона. Symlink на файл вне каталога прогона не раскрывается: сверяются настоящие пути. */
   async readRunFile(runId: number, rel: string): Promise<Buffer> {
-    return fsp.readFile(safeJoin(this.runDir(runId), rel));
+    const file = safeJoin(this.runDir(runId), rel);
+    const [real, root] = await Promise.all([fsp.realpath(file), fsp.realpath(this.runDir(runId))]);
+    if (real !== root && !real.startsWith(root + path.sep)) throw new Error(`Путь вне каталога прогона: ${rel}`);
+    return fsp.readFile(real);
   }
 
   async saveSession(id: number, data: ManualRecord): Promise<void> {
@@ -153,14 +171,9 @@ export class ResultsStore {
 
   /** Журнал тестовых операторов: x-a2a-sender-id → через что оператор прошёл. Нет файла — undefined. */
   async loadOperators(onSkip?: OnSkip): Promise<Record<string, OperatorStep[]> | undefined> {
-    const file = path.join(this.dataDir, 'operators.json');
-    const r = await this.readRecord(file, loadOperatorsRecord, onSkip);
-    if (!r) return undefined;
-    if (!isPlainObject(r.operators) || !Object.values(r.operators).every(Array.isArray)) {
-      onSkip?.(path.relative(this.dataDir, file), 'нет списка операторов с шагами истории');
-      return undefined;
-    }
-    return r.operators;
+    // Список операторов с шагами истории проверяет загрузка записи (format.ts).
+    const r = await this.readRecord(path.join(this.dataDir, 'operators.json'), loadOperatorsRecord, onSkip);
+    return r?.operators;
   }
 
   async saveOperators(operators: Record<string, OperatorStep[]>): Promise<void> {

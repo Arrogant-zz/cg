@@ -30,11 +30,16 @@ export interface Env {
   raw: NodeJS.ProcessEnv;
 }
 
-function num(v: string | undefined, def: number): number {
+/** Предел таймеров Node.js: больший срок setTimeout срабатывает сразу. */
+const MAX_MS = 2_147_483_647;
+
+/** Целое число из окружения в границах. Иначе запуск останавливается с именем переменной: молча подменённое значение незаметно. */
+function int(e: NodeJS.ProcessEnv, name: string, def: number, min: number, max = Number.MAX_SAFE_INTEGER): number {
+  const v = e[name];
   if (v === undefined || v === '') return def;
-  const n = Number(v);
-  if (!Number.isFinite(n)) throw new Error(`Ожидалось число, получено «${v}»`);
-  return n;
+  const n = /^\s*-?\d+\s*$/.test(v) ? Number(v) : NaN;
+  if (Number.isSafeInteger(n) && n >= min && n <= max) return n;
+  throw new Error(`${name}=«${v}»: нужно целое число ${max === Number.MAX_SAFE_INTEGER ? `не меньше ${min}` : `от ${min} до ${max}`}`);
 }
 
 /** Каталог внутри другого или тот же: при раздельной синхронизации с S3 файлы одного попадут в копию другого. */
@@ -52,12 +57,12 @@ export function loadEnv(e: NodeJS.ProcessEnv = process.env, cwd = process.cwd())
   const mode = (e.MCP_RESPONSE_MODE ?? 'json').toLowerCase();
   const level = (e.LOG_LEVEL ?? 'info').toLowerCase();
   return {
-    port: num(e.PORT, 8080),
+    port: int(e, 'PORT', 8080, 0, 65535),
     host: e.HOST ?? '0.0.0.0',
     configDir,
     varDir,
     webDir: path.resolve(cwd, e.CLAWGYM_WEB || 'web'),
-    mcpPort: e.MCP_PORT ? num(e.MCP_PORT, 0) : null,
+    mcpPort: e.MCP_PORT ? int(e, 'MCP_PORT', 0, 0, 65535) : null,
     mcpPath: e.MCP_PATH ?? '/mcp',
     mcpTaskIdHeader: (e.MCP_TASK_ID_HEADER ?? 'x-task-id').toLowerCase(),
     mcpResponseMode: mode === 'sse' ? 'sse' : 'json',
@@ -66,15 +71,16 @@ export function loadEnv(e: NodeJS.ProcessEnv = process.env, cwd = process.cwd())
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
     senderPrefix: e.SENDER_PREFIX ?? 'lab-',
-    agentMcpTimeoutMs: num(e.AGENT_MCP_TIMEOUT_MS, 600_000),
-    operatorMarginMs: num(e.OPERATOR_DECISION_MARGIN_MS, 30_000),
-    turnTimeoutMs: num(e.TURN_TIMEOUT_MS, 900_000),
-    resetTimeoutMs: num(e.RESET_TIMEOUT_MS, 120_000),
-    captureTimeoutMs: num(e.CAPTURE_TIMEOUT_MS, 300_000),
-    curatorTimeoutMs: num(e.CURATOR_TIMEOUT_MS, 900_000),
-    agentBusyWaitMs: num(e.AGENT_BUSY_WAIT_MS, 900_000),
+    // Ожидания хода, MCP-вызова и служебных команд — от 1 мс; запас решения оператора и ожидание занятого агента могут быть нулём.
+    agentMcpTimeoutMs: int(e, 'AGENT_MCP_TIMEOUT_MS', 600_000, 1, MAX_MS),
+    operatorMarginMs: int(e, 'OPERATOR_DECISION_MARGIN_MS', 30_000, 0, MAX_MS),
+    turnTimeoutMs: int(e, 'TURN_TIMEOUT_MS', 900_000, 1, MAX_MS),
+    resetTimeoutMs: int(e, 'RESET_TIMEOUT_MS', 120_000, 1, MAX_MS),
+    captureTimeoutMs: int(e, 'CAPTURE_TIMEOUT_MS', 300_000, 1, MAX_MS),
+    curatorTimeoutMs: int(e, 'CURATOR_TIMEOUT_MS', 900_000, 1, MAX_MS),
+    agentBusyWaitMs: int(e, 'AGENT_BUSY_WAIT_MS', 900_000, 0, MAX_MS),
     unmatchedMode: unmatched === 'error' ? 'error' : 'manual',
-    maxParallelSessions: Math.max(1, num(e.MAX_PARALLEL_SESSIONS, 2)),
+    maxParallelSessions: int(e, 'MAX_PARALLEL_SESSIONS', 2, 1),
     requestRefSecret: e.REQUEST_REF_SECRET ?? null,
     logLevel: (['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info') as Env['logLevel'],
     raw: e,
