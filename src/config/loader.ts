@@ -1,7 +1,7 @@
 // Загрузка и проверка файловых настроек (CFG-01, CFG-02). Ошибка указывает файл, строку, поле и причину.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import YAML, { LineCounter, isNode } from 'yaml';
+import YAML, { LineCounter, isNode, visit, type Alias } from 'yaml';
 import AjvModule from 'ajv';
 import type { ErrorObject, ValidateFunction } from 'ajv';
 import {
@@ -214,12 +214,40 @@ async function parseFile(c: Collector, configDir: string, rel: string): Promise<
     return null;
   }
   for (const w of doc.warnings) c.warn(rel, `YAML: ${w.message.split('\n')[0]}`, { line: w.linePos?.[0]?.line });
-  const data = doc.toJS({ maxAliasCount: 100 });
+  let data: unknown;
+  try {
+    data = doc.toJS({ maxAliasCount: 100 });
+  } catch (e: any) {
+    // Синтаксис верен, а данные не собираются: ссылка *имя без якоря. Так YAML читает маску карты ****2208 без кавычек.
+    const alias = unresolvedAlias(doc);
+    if (!alias) c.error(rel, `Ошибка YAML: ${String(e?.message ?? e).split('\n')[0]}`, { action: 'Исправьте синтаксис файла' });
+    else {
+      const value = `*${alias.source}`;
+      c.error(rel, `Значение «${value}» YAML читает как ссылку на якорь, а якоря с таким именем выше нет`, {
+        line: alias.range ? lc.linePos(alias.range[0]).line : undefined,
+        action: `Если это значение, а не ссылка, возьмите его в кавычки: "${value}"`,
+      });
+    }
+    return null;
+  }
   if (!isPlainObject(data)) {
     c.error(rel, 'Ожидался YAML-объект с полями', { line: 1 });
     return null;
   }
   return { rel, text, data, doc, lc };
+}
+
+/** Первая ссылка `*имя`, для которой выше по файлу нет якоря `&имя`. */
+function unresolvedAlias(doc: YAML.Document.Parsed): Alias | null {
+  let found: Alias | null = null;
+  visit(doc, {
+    Alias(_key, node) {
+      if (node.resolve(doc)) return;
+      found = node;
+      return visit.BREAK;
+    },
+  });
+  return found;
 }
 
 const src = (p: Parsed): Source => ({ file: p.rel, hash: shortHash(p.text), text: p.text });

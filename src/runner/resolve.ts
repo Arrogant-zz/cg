@@ -102,6 +102,7 @@ export function resolveRun(
 
   const basket = reg.baskets.get(cfg.basket) ?? null;
   const agent = reg.agents.get(cfg.agent) ?? null;
+  const plan = basket ? buildPlan(basket) : [];
 
   // Элементы корзины с решениями и кейсами.
   const items: ResolvedItem[] = [];
@@ -151,7 +152,8 @@ export function resolveRun(
     if (agent.response.mode !== 'sync') err(agent.source.file, `Тип ответа «${agent.response.mode}» не поддержан`, 'response.mode');
     if (basket?.type === 'training') {
       if (!agent.commands.capture.trim()) err(agent.source.file, 'Подключение не поддерживает /case-capture, а корзина обучающая', 'commands.capture');
-      if (basket.curator.enabled && !agent.commands.curator.trim()) err(agent.source.file, 'Подключение не поддерживает /skill-curator, а корзина его запускает', 'commands.curator');
+      // Проходы — по плану: явный шаг curator выполняется и без блока curator.
+      if (plan.some((s) => s.kind === 'curator') && !agent.commands.curator.trim()) err(agent.source.file, 'Подключение не поддерживает /skill-curator, а корзина его запускает', 'commands.curator');
     }
     if (!agent.commands.reset.trim()) err(agent.source.file, '/reset обязателен перед каждым кейсом, а команда не задана', 'commands.reset');
     if (agent.mcp.contract !== reg.contract?.source.file) err(agent.source.file, `Подключение ожидает контракт ${agent.mcp.contract}, загружен ${reg.contract?.source.file ?? '—'}`, 'mcp.contract');
@@ -214,7 +216,6 @@ export function resolveRun(
   const files = new Set(inputs.files.map((f) => f.file));
   for (const i of reg.issues) if (files.has(i.file) && !issues.some((x) => x.file === i.file && x.reason === i.reason && x.field === i.field)) issues.push(i);
 
-  const plan = basket ? buildPlan(basket) : [];
   const ok = !issues.some((i) => i.severity === 'error') && !!basket && !!agent && items.every((i) => i.kind === 'curator' || (i.solution && i.caseDef));
   const resolved: ResolvedRun | null =
     basket && agent
