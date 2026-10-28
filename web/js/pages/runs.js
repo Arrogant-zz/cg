@@ -70,7 +70,7 @@ function standSection(status, traffic) {
   return html`<section class="sec" aria-labelledby="stand-h">
 <div class="sec-h"><h2 class="h2" id="stand-h">Журнал стенда</h2><span class="cap">События вне кейсов: вызовы MCP без привязки, сбои стенда</span></div>
 ${entries.length ? html`<div class="col" style="gap: 0">${entries.slice(0, 12).map((e) => html`<div class="okr">${mk(e.level === 'info' ? 'na' : 'tech')}<span>${e.message}${e.data?.httpId ? html` · <a href="#http-${e.data.httpId}" data-action="openUnbound" data-http="${e.data.httpId}">HTTP</a>` : ''}</span><span class="cap num">${fmtTime(e.ts)}</span></div>`)}</div>` : ''}
-${traffic.length ? html`<details class="raw" id="mcp-unbound"><summary>MCP-запросы без привязки к кейсу · ${traffic.length}: initialize, tools/list и вызовы без известного x-task-id</summary><div class="col" style="gap: 8px; padding: 8px 0">${traffic.slice(0, 60).map(exchangeCard)}</div></details>` : ''}
+${traffic.length ? html`<details class="raw" id="mcp-unbound"><summary>MCP-запросы без привязки к кейсу · ${traffic.length}: initialize, tools/list и вызовы без известного x-task-id</summary><div class="col" style="gap: 8px; padding: 8px 0">${traffic.slice(0, 60).map((x) => exchangeCard(x, { live: true }))}</div></details>` : ''}
 </section>`;
 }
 

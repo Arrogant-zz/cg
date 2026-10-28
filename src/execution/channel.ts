@@ -33,11 +33,11 @@ export interface RawCommandResult {
   durationMs: number;
   error?: string;
   startedAt: string;
-  /** HTTP-обмен команды; у прохода curator вне кейса хранится в записи прохода. */
-  http: HttpExchange[];
   /** Команда ждала в очереди агента за прерванным запросом и не дождалась. */
   busy: boolean;
 }
+
+type OnExchange = (x: HttpExchange, phase: 'start' | 'end') => void;
 
 const LABELS: Record<'start' | 'operator' | 'human', string> = { start: 'Стартовое сообщение', operator: 'Реплика LLM-оператора', human: 'Реплика человека' };
 const COMMAND_LABELS: Record<CommandName, string> = { reset: '/reset', capture: '/case-capture', curator: '/skill-curator' };
@@ -112,7 +112,7 @@ export class AgentChannel {
           x.eventSeq = out.seq;
           out.httpId = x.id;
           exec.update(out);
-          exec.addHttp(x);
+          exec.addHttp(x, waited?.what ?? null);
         } else exec.updateHttp(x);
       };
       try {
@@ -155,7 +155,7 @@ export class AgentChannel {
           x.eventSeq = ev.seq;
           ev.httpId = x.id;
           exec.update(ev);
-          exec.addHttp(x);
+          exec.addHttp(x, waited?.what ?? null);
         } else exec.updateHttp(x);
       };
       const r = await this.rawUnlocked(exec.senderId, exec.taskIdForRequest(), name, text, waited, signal ?? exec.abort.signal, onExchange);
@@ -165,10 +165,10 @@ export class AgentChannel {
     });
   }
 
-  /** Команда вне кейса — проход curator между решениями. */
-  async rawCommand(senderId: string, taskId: string, name: CommandName, signal?: AbortSignal): Promise<RawCommandResult> {
+  /** Команда вне кейса — проход curator между решениями. Обмен проход получает с момента отправки, через onExchange. */
+  async rawCommand(senderId: string, taskId: string, name: CommandName, signal?: AbortSignal, onExchange?: OnExchange): Promise<RawCommandResult> {
     const text = renderCommand(this.agent, name, {});
-    return this.locks.run(senderId, () => this.rawUnlocked(senderId, taskId, name, text, this.waitFor(senderId, COMMAND_LABELS[name], null), signal));
+    return this.locks.run(senderId, () => this.rawUnlocked(senderId, taskId, name, text, this.waitFor(senderId, COMMAND_LABELS[name], null), signal, onExchange));
   }
 
   private async rawUnlocked(
@@ -178,15 +178,10 @@ export class AgentChannel {
     text: string,
     waited: UnfinishedRequest | null,
     signal?: AbortSignal,
-    onExchange?: (x: HttpExchange, phase: 'start' | 'end') => void,
+    onExchange?: OnExchange,
   ): Promise<RawCommandResult> {
     const startedAt = new Date().toISOString();
     const t0 = Date.now();
-    const http: HttpExchange[] = [];
-    const track = (x: HttpExchange, phase: 'start' | 'end') => {
-      if (phase === 'start') http.push(x);
-      onExchange?.(x, phase);
-    };
     try {
       const r = await this.client.send({
         text,
@@ -196,10 +191,10 @@ export class AgentChannel {
         waitMs: waited ? this.env.agentBusyWaitMs : 0,
         signal,
         label: waited ? `${COMMAND_LABELS[name]} · за прерванным запросом` : COMMAND_LABELS[name],
-        onExchange: track,
+        onExchange,
       });
       this.settle(senderId, COMMAND_LABELS[name], taskId, startedAt, null, waited);
-      const base = { name, text, reply: r.text, durationMs: Date.now() - t0, startedAt, http, busy: false };
+      const base = { name, text, reply: r.text, durationMs: Date.now() - t0, startedAt, busy: false };
       // HTTP 200 на /reset — сессия сброшена при любом тексте, даже «Command not available.» (уточнение владельца от 27.10.2026).
       if (name === 'reset') return { ...base, status: 'ok', parsed: null };
       if (name === 'capture') {
@@ -214,7 +209,7 @@ export class AgentChannel {
       const err = e instanceof AgentError ? e : new AgentError('network', errorMessage(e));
       this.settle(senderId, COMMAND_LABELS[name], taskId, startedAt, err, waited);
       const busy = this.busyError(err, waited);
-      return { name, text, status: 'failed', reply: null, parsed: null, durationMs: Date.now() - t0, error: busy ?? err.message, startedAt, http, busy: !!busy };
+      return { name, text, status: 'failed', reply: null, parsed: null, durationMs: Date.now() - t0, error: busy ?? err.message, startedAt, busy: !!busy };
     }
   }
 }

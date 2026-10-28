@@ -20,6 +20,8 @@ export interface HttpExchange {
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;
+  /** Когда стенд перестанет ждать ответа: таймаут запроса от startedAt. В записях до 28.10.2026 поля нет. */
+  deadline: string | null;
   request: HttpPart & { method: string; url: string };
   response: (HttpPart & { status: number }) | null;
   error: string | null;
@@ -58,14 +60,18 @@ export function startExchange(
   label: string,
   req: { method: string; url: string; headers: Record<string, string>; body: string },
   ids: { taskId?: string | null; senderId?: string | null; mcpSessionId?: string | null } = {},
+  /** Таймаут запроса: из него срок обмена. */
+  timeoutMs: number | null = null,
 ): HttpExchange {
+  const startedAt = nowIso();
   return {
     id: randomHex(6),
     kind,
     label,
-    startedAt: nowIso(),
+    startedAt,
     finishedAt: null,
     durationMs: null,
+    deadline: timeoutMs === null ? null : new Date(Date.parse(startedAt) + timeoutMs).toISOString(),
     request: { method: req.method, url: maskUrl(req.url), headers: req.headers, ...clip(req.body) },
     response: null,
     error: null,

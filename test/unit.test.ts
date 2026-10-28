@@ -9,7 +9,7 @@ import type { BasketDef, StubDef } from '../src/config/types.js';
 import { renderLines, renderValue } from '../src/util/template.js';
 import { queryPath, setPath } from '../src/util/jsonpath.js';
 import { parseCapture, parseCurator } from '../src/agent/commands.js';
-import { buildPlan } from '../src/runner/plan.js';
+import { buildPlan, describePlan } from '../src/runner/plan.js';
 import { loadRegistry } from '../src/config/loader.js';
 import { resolveRun } from '../src/runner/resolve.js';
 import { loadEnv } from '../src/env.js';
@@ -93,6 +93,19 @@ test('план команд: curator каждые 2 и финальный про
   ]);
   const plan = buildPlan({ ...b, type: 'checking', curator: { ...b.curator, enabled: false } });
   assert.ok(plan.every((s) => s.kind === 'case' && !s.capture));
+});
+
+test('план команд: явный шаг curator выполняется и без блока curator — описание плана по его проходам', () => {
+  const solution = (index: number) => ({ kind: 'solution' as const, index, solution: `s${index}`, limits: {}, note: '' });
+  // Так загрузчик разбирает обучающую корзину без блока curator.
+  const b: BasketDef = { id: 'b', title: 'b', type: 'training', description: '', curator: { enabled: false, every: 0, final: false, resetBefore: true }, checking: { confirmations: 'approve' }, items: [solution(0), { kind: 'curator', index: 1, note: '' }, solution(2)], source: { file: 'b', hash: '', text: '' } };
+  const plan = buildPlan(b);
+  assert.deepEqual(plan.filter((s) => s.kind === 'curator').map((s: any) => [s.afterPos, s.reason]), [[1, 'explicit']]);
+  assert.ok(describePlan(b, plan).includes('/skill-curator на явных шагах корзины: после 1-го.'));
+  const final: BasketDef = { ...b, curator: { enabled: true, every: 0, final: true, resetBefore: true }, items: [solution(0), solution(1)] };
+  assert.ok(describePlan(final, buildPlan(final)).includes('/skill-curator один раз в конце корзины: финальный после 2-го.'), 'финальный проход — не явный шаг');
+  const none: BasketDef = { ...b, items: [solution(0)] };
+  assert.ok(describePlan(none, buildPlan(none)).includes('/skill-curator в этой корзине не запускается.'));
 });
 
 test('белый список хостов агента', () => {
@@ -241,6 +254,51 @@ test('битая ссылка в корзине: ошибка с файлом и
   }
 });
 
+test('явный шаг curator без блока curator: перед запуском проверяется команда /skill-curator подключения', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-curator-'));
+  try {
+    fs.cpSync(CONFIG, dir, { recursive: true });
+    // Подключение без /skill-curator: fake-agent с пустой командой.
+    const agent = fs.readFileSync(path.join(dir, 'agents/fake-agent.yaml'), 'utf8').replace(/^id: fake-agent$/m, 'id: no-curator').replace(/^commands:$/m, 'commands:\n  curator: ""');
+    fs.writeFileSync(path.join(dir, 'agents/no-curator.yaml'), agent);
+    fs.writeFileSync(path.join(dir, 'baskets/explicit.yaml'), 'id: explicit\ntitle: Явный шаг\ntype: training\nitems:\n  - solution: spasibo-bonus-missing/explain-now\n  - curator: true\n');
+    fs.writeFileSync(path.join(dir, 'baskets/no-passes.yaml'), 'id: no-passes\ntitle: Без проходов\ntype: training\ncurator: { every: 0 }\nitems:\n  - solution: spasibo-bonus-missing/explain-now\n');
+    for (const id of ['explicit', 'no-passes']) fs.writeFileSync(path.join(dir, `runs/${id}.yaml`), `id: ${id}\nbasket: ${id}\nagent: no-curator\nmodels: { operator: fake-operator, judge: fake-judge }\n`);
+    const reg = await loadRegistry(dir);
+    const env = loadEnv({ CLAWGYM_CONFIG: dir }, REPO);
+    const curatorError = (p: ReturnType<typeof resolveRun>) => p.issues.find((i) => i.severity === 'error' && i.field === 'commands.curator');
+    const explicit = resolveRun(reg, env, 'explicit');
+    assert.ok(curatorError(explicit), 'явный шаг выполнится, значит, нужна команда /skill-curator');
+    assert.equal(explicit.ok, false);
+    assert.ok(explicit.planText.includes('/skill-curator на явных шагах корзины: после 1-го.'));
+    const noPasses = resolveRun(reg, env, 'no-passes');
+    assert.equal(curatorError(noPasses), undefined, 'блок curator есть, а проходов нет — команда не нужна');
+    assert.equal(noPasses.ok, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('значение с * без кавычек: ошибка YAML с файлом и строкой, остальные справочники загружаются', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-alias-'));
+  try {
+    fs.cpSync(CONFIG, dir, { recursive: true });
+    const file = path.join(dir, 'cases/card-operation-dispute.yaml');
+    // Маска карты без кавычек: YAML читает её как ссылку на якорь «***2208», которого нет.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('maskedNumber: "****2208"', 'maskedNumber: ****2208'));
+    const line = fs.readFileSync(file, 'utf8').split('\n').findIndex((l) => l.includes('maskedNumber: ****2208')) + 1;
+    const reg = await loadRegistry(dir);
+    const issue = reg.issues.find((i) => i.file === 'cases/card-operation-dispute.yaml');
+    assert.deepEqual([issue?.severity, issue?.line], ['error', line]);
+    assert.match(issue!.reason, /«\*\*\*\*2208»/);
+    assert.match(issue!.action ?? '', /в кавычки: "\*\*\*\*2208"/);
+    assert.ok(!reg.cases.has('card-operation-dispute'), 'файл с ошибкой не загружен');
+    assert.ok(reg.cases.has('spasibo-bonus-missing'), 'остальные справочники загружены');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('журнал HTTP: авторизация скрыта, большое тело обрезается', () => {
   const h = maskedHeaders({ Authorization: 'Bearer secret-token-123', 'x-task-id': 'cg-1', 'Set-Cookie': 'sid=abcdef123456', 'X-Gateway-Token': 'gw-secret-777', 'X-Gateway-Key': 'gw-key-888888', 'Mcp-Session-Id': 'abc-session-42' });
   assert.equal(h['x-task-id'], 'cg-1');
@@ -253,6 +311,10 @@ test('журнал HTTP: авторизация скрыта, большое т�
   const x = startExchange('agent', 't', { method: 'POST', url: 'https://user:pa55word@stand.local/a2a?api_key=k-123456789&lang=ru', headers: {}, body: '{}' });
   assert.ok(!x.request.url.includes('pa55word') && !x.request.url.includes('k-123456789') && x.request.url.includes('lang=ru'));
   assert.equal(startExchange('mcp', 't', { method: 'POST', url: '/mcp', headers: {}, body: '' }).request.url, '/mcp');
+  // Срок обмена — таймаут запроса от начала; без таймаута срока нет.
+  const timed = startExchange('agent', 't', { method: 'POST', url: '/a2a', headers: {}, body: '{}' }, {}, 1500);
+  assert.equal(Date.parse(timed.deadline!) - Date.parse(timed.startedAt), 1500);
+  assert.equal(x.deadline, null);
   for (const ch of ['я', '€', '😀']) {
     const big = clip(ch.repeat(BODY_LIMIT));
     assert.equal(big.truncated, true);

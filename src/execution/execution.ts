@@ -8,6 +8,7 @@ import { renderString } from '../util/template.js';
 import { isAbortError, nowIso, randomHex, sleep } from '../util/core.js';
 import type { ExecEvent, MessageEvent, ToolCallEvent } from './events.js';
 import type { HttpExchange } from '../util/httplog.js';
+import { waitsOf, type LlmCall, type Wait } from './waits.js';
 
 export interface McpCallResult {
   content: { type: 'text'; text: string }[];
@@ -84,6 +85,10 @@ export class Execution {
   pending = new Map<string, Pending>();
   /** HTTP-обмены выполнения: запросы к агенту и запросы агента к MCP. В toJSON не входят — отдаются отдельно. */
   http: HttpExchange[] = [];
+  /** Запросы к агенту, отправленные за прерванным запросом: id обмена → подпись прерванного. Только в памяти, для ожиданий. */
+  behind = new Map<string, string>();
+  /** Открытые группы вызовов LLM: решение оператора или оценка, пока событие не записано. */
+  llmCalls = new Set<LlmCall>();
   abort = new AbortController();
   /** Автоматический режим: решение по подтверждению принимает LLM-оператор. */
   confirmationHandler: ((ev: ToolCallEvent) => Promise<ConfirmDecision>) | null = null;
@@ -165,9 +170,11 @@ export class Execution {
     this.emit({ kind: 'event', event: ev });
   }
 
-  addHttp(x: HttpExchange): void {
+  /** behind — подпись прерванного запроса, за которым этот встал в очередь агента. */
+  addHttp(x: HttpExchange, behind: string | null = null): void {
     x.execId = this.id;
     this.http.push(x);
+    if (behind) this.behind.set(x.id, behind);
     this.emit({ kind: 'http', id: x.id });
   }
 
@@ -178,26 +185,42 @@ export class Execution {
 
   /**
    * Обмены одного вызова LLM-оператора или судьи: попадают в журнал HTTP сразу, а к событию решения
-   * или оценки привязываются после ответа — событие появляется только тогда.
+   * или оценки привязываются после ответа — событие появляется только тогда. До attach() вызов — открытое ожидание.
+   * timeoutMs — общий срок вызова; callId — решение по подтверждению этого вызова.
    */
-  llmLog(): { onExchange: (x: HttpExchange, phase: 'start' | 'end') => void; attach: (ev: ExecEvent) => void } {
-    const list: HttpExchange[] = [];
+  llmLog(group: { label: string; title: string; timeoutMs?: number; callId?: string }): { onExchange: (x: HttpExchange, phase: 'start' | 'end') => void; attach: (ev: ExecEvent) => void } {
+    const startedAt = nowIso();
+    const call: LlmCall = {
+      label: group.label,
+      title: group.title,
+      startedAt,
+      deadline: group.timeoutMs === undefined ? null : new Date(Date.parse(startedAt) + group.timeoutMs).toISOString(),
+      callId: group.callId ?? null,
+      exchanges: [],
+    };
+    this.llmCalls.add(call);
     return {
       onExchange: (x, phase) => {
         if (phase === 'end') return this.updateHttp(x);
-        list.push(x);
+        call.exchanges.push(x);
         this.addHttp(x);
       },
       attach: (ev) => {
-        for (const x of list) {
+        this.llmCalls.delete(call);
+        for (const x of call.exchanges) {
           x.eventSeq = ev.seq;
           this.updateHttp(x);
         }
-        if (!list.length) return;
-        ev.httpId = list[list.length - 1].id;
+        if (!call.exchanges.length) return;
+        ev.httpId = call.exchanges[call.exchanges.length - 1].id;
         this.update(ev);
       },
     };
+  }
+
+  /** Текущие ожидания: кто держит ход диалога, на чём он стоит и сколько стенд готов ждать. */
+  waits(): Wait[] {
+    return waitsOf(this);
   }
 
   setStatus(status: string, reason = ''): void {

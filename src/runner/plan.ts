@@ -46,12 +46,14 @@ export function describePlan(basket: BasketDef, steps: PlanStep[]): string[] {
     ];
   }
   const out = ['/reset перед каждым кейсом, следующий шаг — только после успешного ответа.', '/case-capture после каждого завершённого кейса, в том числе решённого неверно.'];
-  if (!basket.curator.enabled || !passes.length) out.push('/skill-curator в этой корзине не запускается.');
+  if (!passes.length) out.push('/skill-curator в этой корзине не запускается.');
   else {
+    // Описание — по проходам плана: явный шаг выполняется и без блока curator, и при enabled: false.
+    const cur = basket.curator;
     const where = passes.map((p) => (p.reason === 'final' ? `финальный после ${p.afterPos}-го` : `после ${p.afterPos}-го`)).join(', ');
-    const freq = basket.curator.every > 0 ? `каждые ${basket.curator.every} завершённых решения` : 'на явных шагах корзины';
-    out.push(`/skill-curator ${freq}: ${where}.`);
-    if (basket.curator.resetBefore) out.push('Перед /skill-curator отправляется /reset, как в INTEGRATION.md.');
+    const freq = [...(cur.enabled && cur.every > 0 ? [`каждые ${cur.every} завершённых решения`] : []), ...(passes.some((p) => p.reason === 'explicit') ? ['на явных шагах корзины'] : [])];
+    out.push(`/skill-curator ${freq.length ? freq.join(' и ') : 'один раз в конце корзины'}: ${where}.`);
+    if (cur.resetBefore) out.push('Перед /skill-curator отправляется /reset, как в INTEGRATION.md.');
   }
   out.push('Если кейс прерван технически, capture не отправляется и кейс не входит в счётчик curator.');
   return out;

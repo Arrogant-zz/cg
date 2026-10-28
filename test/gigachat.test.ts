@@ -224,6 +224,16 @@ test('журнал HTTP вызовов LLM: каждая попытка — об
       seen.map((x) => x.label),
       ['LLM-оценка · проба', 'LLM-оценка · проба · переспрос формата'],
     );
+    // Повтор после 503: у каждой попытки свой срок — таймаут попытки от её начала.
+    seen.length = 0;
+    const down: ModelDef = { ...m, headers: { 'X-Fake-Fail': 'judge' }, params: { ...m.params, retries: 1, timeoutMs: 5000 } };
+    await assert.rejects(createProvider(down, env).complete({ ...judgeReq, label: 'LLM-оценка · проба', onExchange }));
+    assert.deepEqual(
+      seen.map((x) => x.label),
+      ['LLM-оценка · проба', 'LLM-оценка · проба · повтор 1'],
+    );
+    assert.ok(seen.every((x) => Date.parse(x.deadline) - Date.parse(x.startedAt) === 5000));
+    assert.ok(Date.parse(seen[1].startedAt) >= Date.parse(seen[0].finishedAt), 'срок повтора отсчитан от его начала');
   } finally {
     await plain.close();
   }

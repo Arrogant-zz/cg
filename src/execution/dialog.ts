@@ -3,7 +3,7 @@ import type { BasketType, CaseDef, ContractDef, Limits } from '../config/types.j
 import type { ConfirmDecision, Execution } from './execution.js';
 import type { AgentChannel } from './channel.js';
 import type { DecisionEvent, MessageEvent, NoteEvent, ToolCallEvent } from './events.js';
-import { MODE_MARK, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../operator/operator.js';
+import { MODE_MARK, decisionLabel, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../operator/operator.js';
 import { StructuredError } from '../llm/structured.js';
 import { renderLines } from '../util/template.js';
 import { previewStub } from '../stubs/engine.js';
@@ -119,6 +119,9 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     return { status: 'operator_error', reason: errorMessage(e) };
   };
 
+  // Решение после хода — не меньше 30 с, даже если срок решения по подтверждению короче.
+  const turnDecisionMs = Math.max(30_000, deps.confirmationTimeoutMs);
+
   // HTTP-обмены вызова оператора привязываются к его решению после ответа: решение появляется в журнале только тогда.
   const decide = async (event: OperatorEvent, timeoutMs: number, log: ReturnType<Execution['llmLog']>) => {
     exec.operatorCalls++;
@@ -168,7 +171,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
       return { action: 'reject', by: 'auto' };
     }
     const event: OperatorEvent = { type: 'confirmation', call };
-    const log = exec.llmLog();
+    const log = exec.llmLog({ label: decisionLabel(event), title: 'решает LLM-оператор', timeoutMs: deps.confirmationTimeoutMs, callId: call.callId });
     try {
       const res = await decide(event, deps.confirmationTimeoutMs, log);
       const d = res.value;
@@ -231,7 +234,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
 
     if (exec.operatorCalls >= limits.maxOperatorCalls) return end('limit_operator_calls', `Исчерпан лимит ${limits.maxOperatorCalls} запросов оператора`);
     const event: OperatorEvent = { type: 'turn_end', agentReply: r.reply.text };
-    const log = exec.llmLog();
+    const log = exec.llmLog({ label: decisionLabel(event), title: 'LLM-оператор решает, что ответить', timeoutMs: turnDecisionMs });
     let res;
     try {
       res = await decideTurn(event, log);
@@ -249,6 +252,6 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
   }
 
   async function decideTurn(event: OperatorEvent, log: ReturnType<Execution['llmLog']>) {
-    return decide(event, Math.max(30_000, deps.confirmationTimeoutMs), log);
+    return decide(event, turnDecisionMs, log);
   }
 }

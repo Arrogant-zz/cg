@@ -1,5 +1,5 @@
 // Ручная сессия: чат с заглушками, ответ вместо инструмента, подтверждения, команды, разметка (MAN-02–04, CASE-03).
-import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural, removeSession, fmtShare, finalVerdict } from '../lib.js';
+import { html, icon, get, post, feed, legend, toolPill, checksBlock, exchangesView, mk, fmtDur, hint, toast, plural, removeSession, fmtShare, finalVerdict, headWait, waitBadge } from '../lib.js';
 
 export const title = (ctx) => `Ручной кейс ${ctx.params[0]}`;
 
@@ -17,6 +17,9 @@ function toolActions(e, closed) {
 function statusOf(s) {
   const pending = s.execution?.pending ?? [];
   if (s.status === 'closed') return html`<span class="st"><span class="dot done"></span>Сессия закрыта</span>`;
+  // Текущее ожидание со временем; ждут вас — с остатком до отказа вызова.
+  const w = headWait(s.waits);
+  if (w) return waitBadge(w);
   if (pending.some((p) => p.kind === 'confirmation')) return html`<span class="st"><span class="dot live"></span>Ждёт вашего решения</span>`;
   if (pending.some((p) => p.kind === 'answer')) return html`<span class="st"><span class="dot live"></span>Агент ждёт ответ инструмента</span>`;
   if (s.busy) return html`<span class="st"><span class="dot live"></span>${s.busy}</span>`;
@@ -135,12 +138,13 @@ export async function render(ctx) {
   const body = view === 'http'
     ? exchangesView(http, {
         filter: ctx.state.httpFilter ?? 'all',
+        live: !closed,
         download: `/api/manual/${id}/http?download=1`,
         empty: s.execution && n === undefined ? 'Обмены этой сессии не записаны: она прошла до того, как стенд начал сохранять HTTP-обмены.' : 'HTTP-обменов пока нет.',
         note: 'Каждый запрос ClawGym к агенту, каждый запрос агента к MCP-серверу ClawGym в этой сессии и вызовы LLM-оценки при завершении: заголовки (авторизация скрыта), тело, статус и время. Висящий вызов MCP виден сразу, ответ появляется после вашего решения.',
       })
     : s.execution
-      ? feed(s.execution.events, { full: true, toolActions: (e) => toolActions(e, closed), httpLinks: true })
+      ? feed(s.execution.events, { full: true, toolActions: (e) => toolActions(e, closed), httpLinks: true, waits: s.waits })
       : html`<p class="loading">Подготовка…</p>`;
   return html`<div id="m-head">${head(s)}</div>
 <div class="split">

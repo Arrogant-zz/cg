@@ -101,6 +101,9 @@ export function operatorUserPrompt(ctx: Record<string, unknown>): string {
   return `Событие: ${ev.type}. Контекст кейса и диалога:\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\`\nВерни решение оператора по схеме.`;
 }
 
+/** Подпись вызова оператора в журнале HTTP: роль и повод. */
+export const decisionLabel = (event: OperatorEvent): string => (event.type === 'confirmation' ? `LLM-оператор · подтверждение ${event.call.tool}` : 'LLM-оператор · конец хода');
+
 export class LlmOperator {
   constructor(
     public model: ModelDef,
@@ -110,7 +113,7 @@ export class LlmOperator {
   async decide(exec: Execution, event: OperatorEvent, mode: BasketType, limits: OperatorLimits, signal?: AbortSignal, onExchange?: LlmRequest['onExchange']): Promise<StructuredResult<OperatorDecision>> {
     const ctx = operatorContext(exec, event, mode, limits, !!this.model.params.devHints);
     const known = new Set(lessonCatalog(exec).map((l) => l.id));
-    const label = event.type === 'confirmation' ? `LLM-оператор · подтверждение ${event.call.tool}` : 'LLM-оператор · конец хода';
+    const label = decisionLabel(event);
     return structuredCall<OperatorDecision>(
       this.provider,
       { system: OPERATOR_SYSTEM, user: operatorUserPrompt(ctx), schema: OPERATOR_SCHEMA, schemaName: 'operator_decision', signal, label, onExchange },

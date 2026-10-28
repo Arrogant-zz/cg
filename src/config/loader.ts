@@ -1,7 +1,7 @@
 // Загрузка и проверка файловых настроек (CFG-01, CFG-02). Ошибка указывает файл, строку, поле и причину.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import YAML, { LineCounter, isNode } from 'yaml';
+import YAML, { LineCounter, isNode, visit, type Alias } from 'yaml';
 import AjvModule from 'ajv';
 import type { ErrorObject, ValidateFunction } from 'ajv';
 import {
@@ -219,9 +219,18 @@ async function parseFile(c: Collector, configDir: string, rel: string): Promise<
   try {
     data = doc.toJS({ maxAliasCount: 100 });
   } catch (e) {
-    // Алиасы раскрываются только здесь: «бомба» алиасов или алиас без якоря — ошибка этого файла, а не всей загрузки.
-    const { reason, line } = aliasIssue(e, doc, lc);
-    c.error(rel, `Ошибка YAML: ${reason}`, { line, action: 'Исправьте синтаксис файла' });
+    // Синтаксис верен, а данные не собираются: ссылка *имя без якоря — так YAML читает маску карты ****2208 без кавычек —
+    // или «бомба» алиасов. Это ошибка этого файла, а не всей загрузки.
+    const alias = unresolvedAlias(doc);
+    if (alias) {
+      const value = `*${alias.source}`;
+      c.error(rel, `Значение «${value}» YAML читает как ссылку на якорь, а якоря с таким именем выше нет`, {
+        line: alias.range ? lc.linePos(alias.range[0]).line : undefined,
+        action: `Если это значение, а не ссылка, возьмите его в кавычки: "${value}"`,
+      });
+    } else if (/Excessive alias count/.test(errorMessage(e))) {
+      c.error(rel, 'Ошибка YAML: слишком много раскрытий алиасов — файл похож на «бомбу» алиасов', { action: 'Раскройте значения явно или уберите вложенные ссылки *имя' });
+    } else c.error(rel, `Ошибка YAML: ${errorMessage(e).split('\n')[0]}`, { action: 'Исправьте синтаксис файла' });
     return null;
   }
   if (!isPlainObject(data)) {
@@ -231,21 +240,17 @@ async function parseFile(c: Collector, configDir: string, rel: string): Promise<
   return { rel, text, data, doc, lc };
 }
 
-/** Ошибка раскрытия алиасов: позиции у неё нет, поэтому строку алиаса без якоря ищем сами. */
-function aliasIssue(e: unknown, doc: YAML.Document.Parsed, lc: LineCounter): { reason: string; line?: number } {
-  const m = errorMessage(e);
-  if (/Excessive alias count/.test(m)) return { reason: 'слишком много раскрытий алиасов — файл похож на «бомбу» алиасов' };
-  const name = /^Unresolved alias[^:]*: (.+)$/.exec(m)?.[1];
-  if (!name) return { reason: m };
-  let line: number | undefined;
-  YAML.visit(doc, {
+/** Первая ссылка `*имя`, для которой выше по файлу нет якоря `&имя`. */
+function unresolvedAlias(doc: YAML.Document.Parsed): Alias | null {
+  let found: Alias | null = null;
+  visit(doc, {
     Alias(_key, node) {
-      if (node.source !== name || node.resolve(doc) || !node.range) return;
-      line = lc.linePos(node.range[0]).line;
-      return YAML.visit.BREAK;
+      if (node.resolve(doc)) return;
+      found = node;
+      return visit.BREAK;
     },
   });
-  return { reason: `алиас *${name} без якоря &${name} перед ним`, line };
+  return found;
 }
 
 /**

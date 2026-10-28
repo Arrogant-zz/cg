@@ -1,5 +1,5 @@
 // Экран «Разбор кейса»: журнал с ролями, вызовы и заглушки, решения оператора, оценка, режим «что видел агент» (SOL-02–06, RES-01).
-import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH, fmtShare, finalVerdict } from '../lib.js';
+import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH, fmtShare, finalVerdict, headWait, waitBadge } from '../lib.js';
 
 export const title = (ctx) => `Разбор ${ctx.params[1]}`;
 
@@ -108,7 +108,7 @@ export async function render(ctx) {
 <nav class="crumbs" aria-label="Путь"><a href="/">Прогоны</a>${icon('chevRight', 's14')}<a href="/runs/${id}">#${id} ${run.title}</a>${icon('chevRight', 's14')}<span>Позиция ${item?.pos ?? '—'}</span></nav>
 <header class="ph">
 <div class="ph-t">
-<div class="row" style="gap: 12px">${ex.basketType ? typeBadge(ex.basketType) : ''}${item ? outcomePill(item) : ''}${st ? html`<span class="cap num">${fmtDur(st.durationMs)} · ${st.turns} ${st.turns === 1 ? 'ход' : st.turns < 5 ? 'хода' : 'ходов'}</span>` : ''}<span class="ref">x-task-id: ${ex.taskIds[ex.taskIds.length - 1]}</span>${ex.live ? html`<span class="pill live">идёт</span>` : ''}</div>
+<div class="row" style="gap: 12px">${ex.basketType ? typeBadge(ex.basketType) : ''}${item ? outcomePill(item) : ''}${st ? html`<span class="cap num">${fmtDur(st.durationMs)} · ${st.turns} ${st.turns === 1 ? 'ход' : st.turns < 5 ? 'хода' : 'ходов'}</span>` : ''}<span class="ref">x-task-id: ${ex.taskIds[ex.taskIds.length - 1]}</span>${ex.live ? (headWait(ex.waits) ? waitBadge(headWait(ex.waits)) : html`<span class="pill live">идёт</span>`) : ''}</div>
 <h1 class="h1"><span class="mono" style="font-size: 28px; letter-spacing: -.02em">${ex.case.id}</span>${ex.solution ? ` · ${ex.solution.title}` : ''}</h1>
 <p class="lede">${ex.case.title}. ${TECH.has(ex.status) ? `Статус выполнения: ${STATUS_TITLES[ex.status] ?? ex.status}.` : ''}</p>
 </div>
@@ -129,11 +129,12 @@ ${view === 'agent' ? hint('Так диалог выглядел для аген�
 ${view === 'http'
     ? exchangesView(http, {
         filter: ctx.state.httpFilter ?? 'all',
+        live: ex.live,
         download: `/api/runs/${id}/executions/${name}/http?download=1`,
         empty: ex.httpCount === undefined ? 'Обмены этого кейса не записаны: прогон выполнен до того, как стенд начал сохранять HTTP-обмены.' : 'HTTP-обменов пока нет.',
         note: 'Каждый запрос ClawGym к агенту, каждый запрос агента к MCP-серверу ClawGym с этим x-task-id и каждый вызов LLM-оператора и судьи — с повторами и переспросом формата: заголовки (авторизация скрыта), тело, статус и время. Запросы MCP без x-task-id — initialize, tools/list — относятся к сессии MCP, а не к кейсу: они в журнале стенда на странице «Прогоны».',
       })
-    : feed(ex.events, { full, httpLinks: true })}
+    : feed(ex.events, { full, httpLinks: true, waits: ex.waits })}
 </section>
 <aside class="sd" style="gap: 32px">
 ${verdict(item, ex)}

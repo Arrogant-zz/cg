@@ -23,6 +23,8 @@ import {
   later,
   feed,
   exchangeCard,
+  waitRow,
+  waitTime,
   toast,
   STATUS_TITLES,
   removeRun,
@@ -95,14 +97,33 @@ function curatorResult(p) {
   return p.reply && p.status !== 'running' ? html`<span class="cap">строка результата не распознана — ответ в HTTP-обменах</span>` : '';
 }
 
+/** Ожидание прохода curator — по его обмену без ответа: /reset перед curator или /skill-curator. Обмен в записи с момента отправки. */
+function passWait(p) {
+  const x = p.status === 'running' ? (p.http ?? []).find((h) => !h.response && !h.error) : null;
+  return x ? { scope: 'turn', who: 'command', text: x.label, detail: null, startedAt: x.startedAt, deadline: x.deadline ?? null, remaining: false, hidden: false, blocked: null, callId: null, httpId: x.id } : null;
+}
+
 function curatorPass(p) {
   const title = p.reason === 'final' ? 'финальный' : `curator ${p.pass}`;
-  const st = p.status === 'running' ? html`<span class="st"><span class="dot live"></span>выполняется</span>` : p.status === 'ok' ? '' : p.status === 'skipped' ? html`<span class="cap">очередь пуста</span>` : html`<span class="pill tech">${icon('bolt')}${p.error ?? p.status}</span>`;
+  const w = passWait(p);
+  const st = p.status === 'running' ? html`<span class="st"><span class="dot live"></span>выполняется${w ? html` · ${w.text} ${waitTime(w)}` : ''}</span>` : p.status === 'ok' ? '' : p.status === 'skipped' ? html`<span class="cap">очередь пуста</span>` : html`<span class="pill tech">${icon('bolt')}${p.error ?? p.status}</span>`;
   return html`<div class="col" style="gap: 4px">
-<span class="row m5" style="gap: 8px; padding-bottom: 6px"><span class="pb cu" style="height: 24px; padding: 0 8px">${icon('curator')}${title}</span>после позиции ${p.afterPos}${p.durationMs ? ` · ${fmtDur(p.durationMs)}` : ''}${st}</span>
+<span class="row m5" style="gap: 8px; padding-bottom: 6px; flex-wrap: wrap"><span class="pb cu" style="height: 24px; padding: 0 8px">${icon('curator')}${title}</span>после позиции ${p.afterPos}${p.durationMs ? ` · ${fmtDur(p.durationMs)}` : ''}${st}</span>
 ${curatorResult(p)}
-${p.http?.length ? html`<details class="raw" id="cur-http-${p.pass}-${p.startedAt}"><summary>HTTP-обмены прохода · ${p.http.length}</summary><div class="col" style="gap: 8px; padding: 8px 0">${p.http.map(exchangeCard)}</div></details>` : ''}
+${p.http?.length ? html`<details class="raw" id="cur-http-${p.pass}-${p.startedAt}"><summary>HTTP-обмены прохода · ${p.http.length}</summary><div class="col" style="gap: 8px; padding: 8px 0">${p.http.map((x) => exchangeCard(x, { live: p.status === 'running' }))}</div></details>` : ''}
 </div>`;
+}
+
+/** «Сейчас» во время прохода curator: кейса нет, а ход держит агент — /reset перед curator, затем /skill-curator. */
+function curatorNow(line) {
+  const p = line.curatorPasses.find((x) => x.status === 'running');
+  if (!p) return '';
+  const w = passWait(p);
+  const reset = p.reset ? html`<div class="cmd"><span class="ref">${icon('reset')}/reset перед curator</span><span>${p.reset.status === 'ok' ? `контекст сброшен · ${fmtDur(p.reset.durationMs)}` : `сбой: ${p.reset.error ?? p.reset.status}`}</span></div>` : '';
+  return html`<section class="sec" aria-labelledby="cur-h">
+<div class="sec-h"><h2 class="h2" id="cur-h">Сейчас: ${p.reason === 'final' ? 'финальный проход curator' : `проход curator ${p.pass}`}, после позиции ${p.afterPos}</h2></div>
+<div class="feed">${reset}${w ? waitRow(w) : ''}</div>
+</section>`;
 }
 
 function liveAside(run, line) {
@@ -129,10 +150,10 @@ function currentSection(run, line, live) {
   const events = live.events.slice(-8);
   return html`<section class="sec" aria-labelledby="cur-h">
 <div class="sec-h"><h2 class="h2" id="cur-h">Сейчас: позиция ${it?.pos ?? '—'}</h2><a class="btn" href="/runs/${run.id}/cases/${live.name}">Открыть разбор${icon('chevRight')}</a></div>
-${feed(events, { full: true })}
+${feed(events, { full: true, waits: live.waits })}
 <div class="row cap" style="gap: 20px; padding-top: 4px">
 <span>Ходы: <span class="num t2">${live.turns} из ${lim.maxTurns}</span></span>
-<span>Время кейса: <span class="num t2"><span data-since="${live.startedAt}">—</span> из ${fmtClock(lim.maxDurationSec * 1000)}</span></span>
+<span><span class="tip" title="Лимит времени кейса проверяется между ходами: идущий ход он не прерывает, ход ограничен своим таймаутом">Время кейса</span>: <span class="num t2"><span data-since="${live.startedAt}">—</span> из ${fmtClock(lim.maxDurationSec * 1000)}</span></span>
 <span>Запросы оператора: <span class="num t2">${live.operatorCalls} из ${lim.maxOperatorCalls}</span></span>
 </div>
 </section>`;
@@ -290,7 +311,7 @@ export async function render(ctx) {
   if (running && line.current?.execName) {
     try {
       const ex = await get(`/api/runs/${id}/executions/${line.current.execName}`);
-      live = { name: line.current.execName, events: ex.events, turns: ex.turns, operatorCalls: ex.operatorCalls, startedAt: ex.startedAt };
+      live = { name: line.current.execName, events: ex.events, turns: ex.turns, operatorCalls: ex.operatorCalls, startedAt: ex.startedAt, waits: ex.waits };
     } catch {
       live = null;
     }
@@ -320,7 +341,7 @@ ${prepSection(line)}
 ${planView(run.plan, { items: line.items, passes: line.curatorPasses })}
 ${itemsList(run, line, live)}
 </section>
-${currentSection(run, line, live)}
+${live ? currentSection(run, line, live) : curatorNow(line)}
 </div>
 ${liveAside(run, line)}
 </div>`;

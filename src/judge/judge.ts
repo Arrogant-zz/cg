@@ -40,6 +40,10 @@ export function judgeContext(exec: Execution, uptoSeq: number, devHints: boolean
   };
 }
 
+/** Подписи вызовов оценки в журнале HTTP; у сверки с эталоном к подписи добавляется номер прогона. */
+export const JUDGE_LABEL = 'LLM-оценка · критерии ответа';
+export const ANSWER_LABEL = 'LLM-оценка · эталонный текст';
+
 export class LlmJudge {
   constructor(
     public model: ModelDef,
@@ -52,7 +56,7 @@ export class LlmJudge {
     const user = `Оцени результат агента по критериям.\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\``;
     return structuredCall<JudgeVerdict>(
       this.provider,
-      { system: JUDGE_SYSTEM, user, schema: JUDGE_SCHEMA, schemaName: 'judge_verdict', signal, label: 'LLM-оценка · критерии ответа', onExchange },
+      { system: JUDGE_SYSTEM, user, schema: JUDGE_SCHEMA, schemaName: 'judge_verdict', signal, label: JUDGE_LABEL, onExchange },
       (v) => {
         const got = new Set(v.criteria.map((c) => c.id));
         const errs: string[] = [];
@@ -79,6 +83,6 @@ export class LlmJudge {
       runs,
     };
     const user = `Сравни итоговый текст агента с эталонным.\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\``;
-    return structuredCall<TextVerdict>(this.provider, { system: ANSWER_JUDGE_SYSTEM, user, schema: ANSWER_JUDGE_SCHEMA, schemaName: 'answer_match', signal, label: `LLM-оценка · эталонный текст, прогон ${n} из ${runs}`, onExchange }, () => [], 1);
+    return structuredCall<TextVerdict>(this.provider, { system: ANSWER_JUDGE_SYSTEM, user, schema: ANSWER_JUDGE_SCHEMA, schemaName: 'answer_match', signal, label: `${ANSWER_LABEL}, прогон ${n} из ${runs}`, onExchange }, () => [], 1);
   }
 }

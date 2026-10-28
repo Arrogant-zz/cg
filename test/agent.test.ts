@@ -2,11 +2,15 @@
 // Если стенд перестал ждать, а агент продолжил ход, следующий запрос ждёт в его очереди, а не падает через RESET_TIMEOUT_MS.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { AgentClient, type AgentError } from '../src/agent/client.js';
+import type { HttpExchange } from '../src/util/httplog.js';
 import { loadRegistry } from '../src/config/loader.js';
-import { CONFIG, startStand } from './helpers.js';
+import { sessionKey } from '../src/results/store.js';
+import { CONFIG, startStand, until } from './helpers.js';
 
 const failure = (p: Promise<unknown>) => p.then(() => assert.fail('ожидалась ошибка'), (e: AgentError) => e);
 
@@ -28,7 +32,9 @@ test('запрос к агенту: без fetch и его потолка 300 с
   const port = (server.address() as AddressInfo).port;
   const clientAt = (p: number) => new AgentClient(reg.agents.get('fake-agent')!, { FAKE_AGENT_URL: `http://127.0.0.1:${p}` }, ['127.0.0.1']);
   const client = clientAt(port);
-  const send = (o: { timeoutMs?: number; waitMs?: number; signal?: AbortSignal } = {}) => client.send({ text: 'Привет', taskId: 't-1', senderId: 'lab-test', timeoutMs: 1000, ...o });
+  const started: HttpExchange[] = [];
+  const send = (o: { timeoutMs?: number; waitMs?: number; signal?: AbortSignal } = {}) =>
+    client.send({ text: 'Привет', taskId: 't-1', senderId: 'lab-test', timeoutMs: 1000, onExchange: (x, phase) => phase === 'start' && started.push(x), ...o });
   const realFetch = globalThis.fetch;
   try {
     // fetch под запретом: ответ после паузы приходит, срок — свой таймаут плюс ожидание в очереди за прерванным запросом.
@@ -38,6 +44,7 @@ test('запрос к агенту: без fetch и его потолка 300 с
     const ok = await send({ waitMs: 1000 });
     assert.equal(ok.text, 'Готово');
     assert.ok(ok.durationMs >= 1100);
+    assert.equal(Date.parse(started[0].deadline!) - Date.parse(started[0].startedAt), 2000, 'срок обмена — таймаут вместе с ожиданием за прерванным');
     globalThis.fetch = realFetch;
 
     const late = await failure(send());
@@ -120,6 +127,68 @@ test('прерванный ход: агент не освободил сесси
     const sent = s.agentRequests.find((r) => r.text.includes(SLOW_ON))!;
     const left = Date.parse(sent.ts) + slowMs + 500 - Date.now();
     if (left > 0) await new Promise((r) => setTimeout(r, left));
+  } finally {
+    await s.close();
+  }
+});
+
+test('проход curator: обмен /skill-curator виден в записи прохода до ответа агента, со сроком CURATOR_TIMEOUT_MS', async () => {
+  const s = await startStand({ CURATOR_TIMEOUT_MS: '20000', FAKE_AGENT_SLOW_ON: '^/skill-curator$', FAKE_AGENT_SLOW_MS: '2000' });
+  try {
+    const { data } = await s.api('POST', '/api/runs', { config: 'demo-train' });
+    const held = await until(async () => {
+      const run = (await s.api('GET', `/api/runs/${data.id}`)).data;
+      return run.lines[0].curatorPasses.find((p: any) => p.status === 'running')?.http?.find((x: any) => x.label === '/skill-curator' && !x.response);
+    }, 60_000, 'висящий /skill-curator в записи прохода');
+    assert.equal(Date.parse(held.deadline) - Date.parse(held.startedAt), 20_000);
+    const run = await s.waitRun(data.id);
+    // Каждый обмен прохода записан один раз и с ответом.
+    for (const p of run.lines[0].curatorPasses) {
+      assert.deepEqual(
+        p.http.map((x: any) => [x.label, x.response?.status]),
+        [
+          ['/reset', 200],
+          ['/skill-curator', 200],
+        ],
+      );
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test('ожидания в API: ход агента со сроком TURN_TIMEOUT_MS, пока выполнение идёт; после ответа и в записях их нет', async () => {
+  const s = await startStand({ TURN_TIMEOUT_MS: '20000', FAKE_AGENT_SLOW_ON: '^Новое обращение', FAKE_AGENT_SLOW_MS: '1500' });
+  try {
+    // Прогон: на стартовое сообщение агент отвечает медленно.
+    const { data } = await s.api('POST', '/api/runs', { config: 'demo-check' });
+    const seen = await until(async () => {
+      const name = (await s.api('GET', `/api/runs/${data.id}`)).data.lines[0].current?.execName;
+      const ex = name ? (await s.api('GET', `/api/runs/${data.id}/executions/${name}`)).data : null;
+      const w = ex?.waits.find((x: any) => x.text === 'Ход агента' && x.detail === 'Pagurus отвечает на стартовое сообщение');
+      return w ? { name, w } : null;
+    }, 30_000, 'ход агента в ожиданиях кейса');
+    assert.equal(Date.parse(seen.w.deadline) - Date.parse(seen.w.startedAt), 20_000);
+    await s.waitRun(data.id);
+    const after = (await s.api('GET', `/api/runs/${data.id}/executions/${seen.name}`)).data;
+    assert.deepEqual(after.waits, [], 'агент ответил — ожиданий нет');
+    assert.ok(!('waits' in (await s.app.store.loadExecution(data.id, seen.name))!), 'в журнал кейса ожидания не входят');
+
+    // Ручная сессия: ожидания — в ответе API. Вызовы без заглушки получают ошибку от человека, пока ход не закончится.
+    const m = await s.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent' });
+    const id = m.data.id;
+    const turn = await until(async () => (await s.api('GET', `/api/manual/${id}`)).data.waits.find((x: any) => x.text === 'Ход агента'), 20_000, 'ход агента в ожиданиях сессии');
+    assert.equal(Date.parse(turn.deadline) - Date.parse(turn.startedAt), 20_000);
+    await until(async () => {
+      const cur = (await s.api('GET', `/api/manual/${id}`)).data;
+      for (const h of cur.waits.filter((x: any) => x.who === 'human')) {
+        await s.api('POST', `/api/manual/${id}/tool/${h.callId}`, h.text === 'Ждёт вашего решения' ? { action: 'reject' } : { action: 'error', message: 'нет данных' });
+      }
+      return !cur.busy && cur.waits.length === 0 && cur.execution?.events.some((e: any) => e.type === 'agent_message');
+    }, 30_000, 'ход агента в сессии закончился');
+    const file = path.join(s.app.store.sessionsDir, `${sessionKey(id)}.json`);
+    const saved = await until(async () => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null), 5000, 'запись сессии');
+    assert.ok(!('waits' in saved) && !('waits' in saved.execution), 'в запись сессии ожидания не входят');
   } finally {
     await s.close();
   }
