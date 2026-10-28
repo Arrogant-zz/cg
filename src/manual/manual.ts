@@ -228,6 +228,8 @@ export class ManualManager {
 
   async message(id: number, body: { text: string; correction?: boolean; lessonId?: string | null; lessonNote?: string | null }): Promise<void> {
     const l = this.activeLive(id);
+    // Кейс закрыт терминальным инструментом: в закрытое обращение оператор не пишет, команды и завершение остаются.
+    if (l.exec.closedBy) throw new HttpError(409, `Кейс закрыт терминальным инструментом ${l.exec.closedBy.tool}: реплики больше не принимаются`);
     this.ensureIdle(id, l);
     const text = String(body.text ?? '').trim();
     if (!text) throw new HttpError(400, 'Пустое сообщение');
@@ -255,8 +257,9 @@ export class ManualManager {
     rec.busy = name === 'reset' ? '/reset' : name === 'capture' ? '/case-capture' : '/skill-curator';
     void this.background(id, async () => {
       if (name === 'reset') {
-        // После /reset кейс начинается заново с теми же заглушками: состояние выполнения сбрасывается.
+        // После /reset кейс начинается заново с теми же заглушками: состояние выполнения и закрытие кейса сбрасываются.
         l.exec.stub = new StubState(l.exec.caseDef.state);
+        l.exec.reopen();
         await this.startCaseFromReset(id, l);
         return;
       }
@@ -322,9 +325,12 @@ export class ManualManager {
         judge = new LlmJudge(m, createProvider(m, this.app.env.raw));
       }
       for (const p of l.exec.pendingList()) l.exec.resolvePending(p.callId, { action: 'stopped' });
-      const resultSeq = l.exec.events[l.exec.events.length - 1]?.seq ?? 0;
-      l.exec.setStatus('completed', 'Ручная сессия завершена');
-      l.exec.add<StatusEvent>({ type: 'status', status: 'completed', reason: 'Ручная сессия завершена человеком' });
+      // Кейс закрыт терминальным инструментом — оценка до конца терминального хода: команды после закрытия в неё не входят.
+      const resultSeq = l.exec.closedTurnEndSeq ?? l.exec.events[l.exec.events.length - 1]?.seq ?? 0;
+      const closedBy = l.exec.closedBy;
+      l.exec.endedBy = closedBy ? 'terminal' : 'human';
+      l.exec.setStatus('completed', closedBy ? `Выполнен терминальный инструмент ${closedBy.tool}` : 'Ручная сессия завершена');
+      l.exec.add<StatusEvent>({ type: 'status', status: 'completed', reason: closedBy ? `Выполнен терминальный инструмент ${closedBy.tool}; сессия завершена человеком` : 'Ручная сессия завершена человеком' });
       // Ручной сеанс: метрики аналитика по всем определениям из metrics/.
       const ev = await evaluate(l.exec, resultSeq, judge, undefined, scoringOf([...this.app.registry.metrics.values()]));
       rec.evaluation = { ...ev, stats: execStats(l.exec) };

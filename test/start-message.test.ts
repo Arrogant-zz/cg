@@ -62,10 +62,11 @@ test('стартовое сообщение в формате оркестрат
 
 test('импорт tools/list: поля MCP из ответа, пометки ClawGym сохраняются, расхождения видны', async () => {
   const current = JSON.parse(fs.readFileSync(path.join(CONFIG, 'contracts/tools.json'), 'utf8')).tools;
-  const listed = current.map(({ requiresConfirmation: _c, kind: _k, enabled: _e, ...t }: any) => t);
+  const listed = current.map(({ requiresConfirmation: _c, kind: _k, enabled: _e, terminal: _t, ...t }: any) => t);
   const same = mergeTools(current, toolsFromJson({ jsonrpc: '2.0', id: 1, result: { tools: listed } }));
   assert.deepEqual([same.added, same.removed, same.changed], [[], [], []]);
-  assert.deepEqual(same.tools, current, 'пометки kind и requiresConfirmation перенесены');
+  assert.deepEqual(same.tools, current, 'пометки kind, requiresConfirmation и terminal перенесены');
+  assert.deepEqual(same.tools.find((t) => t.name === 'change_stage')!.terminal, { when: { 'request.keepOnSelf': false } }, 'условие terminal сохранено');
   const edited = listed.filter((t: any) => t.name !== 'get_unified_list').map((t: any) => (t.name === 'cases_postpone' ? { ...t, description: 'Отложить кейс (новое описание)' } : t));
   edited.push({ name: 'get_new_tool', title: 'get_new_tool', description: 'Новый инструмент', inputSchema: { type: 'object', properties: {}, required: [] } });
   const diff = mergeTools(current, toolsFromJson(edited));
@@ -73,6 +74,8 @@ test('импорт tools/list: поля MCP из ответа, пометки Cl
   assert.deepEqual(diff.removed, ['get_unified_list']);
   assert.deepEqual(diff.changed, [{ name: 'cases_postpone', fields: ['description'] }]);
   assert.equal(diff.tools.find((t) => t.name === 'cases_postpone')!.requiresConfirmation, true);
+  assert.equal(diff.tools.find((t) => t.name === 'cases_postpone')!.terminal, true);
+  assert.equal(diff.tools.find((t) => t.name === 'get_new_tool')!.terminal, undefined, 'новый инструмент — без пометок, не терминальный');
 });
 
 test('tools/list как у оркестратора; выключенный инструмент — только для старта; x-task-id старта — в тексте, заголовке и capture', async () => {
@@ -91,6 +94,7 @@ test('tools/list как у оркестратора; выключенный ин
     assert.ok(!tools.some((t: any) => t.name === 'get_cases_assigned'));
     const close = tools.find((t: any) => t.name === 'get_close_with_answer');
     assert.deepEqual(Object.keys(close), ['name', 'title', 'description', 'inputSchema', 'annotations'], 'поля MCP как у оркестратора, без пометок ClawGym');
+    assert.ok(!tools.some((t: any) => 'terminal' in t || 'requiresConfirmation' in t), 'пометка terminal агенту не уходит');
     assert.equal(close.annotations.destructiveHint, true);
 
     const created = await s.api('POST', '/api/manual', { case: 'spasibo-bonus-missing', agent: 'fake-agent' });

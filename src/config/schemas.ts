@@ -369,6 +369,7 @@ export const contractSchema = {
         unknownTask: str,
         timeout: str,
         stopped: str,
+        closed: str,
       },
       additionalProperties: false,
     },
@@ -391,6 +392,8 @@ export const contractSchema = {
           requiresConfirmation: { type: 'boolean' },
           kind: { enum: ['info', 'action'] },
           enabled: { type: 'boolean' },
+          // true — терминальный всегда, { when } — при условии на аргументы, на языке условий заглушек.
+          terminal: { type: ['boolean', 'object'], required: ['when'], properties: { when: { type: 'object' } }, additionalProperties: false },
         },
         additionalProperties: false,
       },

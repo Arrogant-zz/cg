@@ -1,7 +1,7 @@
 {
   "version": "orchestrator-photo-2026-10-27",
   "conditional": true,
-  "note": "Инструменты — ответ tools/list стенда оркестратора, расшифрованный с фото 27.10.2026: возможны опечатки. Точный список снимите командой import-tools (README). Обёртка результата, тексты ошибок и requiresConfirmation (подтверждение — у активных действий) — условные.",
+  "note": "Инструменты — ответ tools/list стенда оркестратора, расшифрованный с фото 27.10.2026: возможны опечатки. Точный список снимите командой import-tools (README). Обёртка результата, тексты ошибок и requiresConfirmation (подтверждение — у активных действий) — условные. Терминальные инструменты (terminal) — решение владельца от 28.10.2026: закрытие, откладывание и передача на другой этап с keepOnSelf: false.",
   "result": {
     "mode": "text"
   },
@@ -11,7 +11,8 @@
     "unknownTool": "Инструмент {{tool}} не найден.",
     "unknownTask": "Вызов не привязан к обращению: неизвестный или отсутствующий x-task-id.",
     "timeout": "Время ожидания решения по вызову {{tool}} истекло.",
-    "stopped": "Обращение остановлено на стенде."
+    "stopped": "Обращение остановлено на стенде.",
+    "closed": "Обращение уже закрыто: инструмент {{tool}} недоступен."
   },
   "startMessage": "contracts/start-message.txt",
   "tools": [
@@ -138,7 +139,12 @@
         "openWorldHint": true
       },
       "kind": "action",
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "terminal": {
+        "when": {
+          "request.keepOnSelf": false
+        }
+      }
     },
     {
       "name": "check_assigned_case",
@@ -251,7 +257,8 @@
         "openWorldHint": true
       },
       "kind": "action",
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "terminal": true
     },
     {
       "name": "get_channels_answer",
@@ -546,7 +553,8 @@
         "openWorldHint": true
       },
       "kind": "action",
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "terminal": true
     },
     {
       "name": "cases_postpone",
@@ -586,7 +594,8 @@
         "openWorldHint": true
       },
       "kind": "action",
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "terminal": true
     },
     {
       "name": "card_info",
@@ -1174,7 +1183,12 @@
         "openWorldHint": true
       },
       "kind": "action",
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "terminal": {
+        "when": {
+          "request.keepOnSelf": false
+        }
+      }
     },
     {
       "name": "create_expertise",

@@ -1,9 +1,10 @@
 // Импорт и сверка контракта инструментов с tools/list настоящего MCP-сервера оркестратора (AG-03, drift-check).
-// Поля MCP берутся из ответа как есть; пометки ClawGym (requiresConfirmation, kind, enabled) переносятся из текущего контракта.
+// Поля MCP берутся из ответа как есть; пометки ClawGym (requiresConfirmation, kind, enabled, terminal) переносятся из текущего контракта.
 import fsp from 'node:fs/promises';
 import { stableStringify } from '../util/core.js';
 
-export const CLAWGYM_TOOL_FIELDS = ['requiresConfirmation', 'kind', 'enabled'] as const;
+/** Пометки ClawGym в определении инструмента: агенту не отдаются, import-tools переносит их из текущего контракта. */
+export const CLAWGYM_TOOL_FIELDS = ['requiresConfirmation', 'kind', 'enabled', 'terminal'] as const;
 
 type Tool = Record<string, any>;
 
@@ -72,7 +73,7 @@ export interface ToolsDiff {
 
 /**
  * Новый список в порядке оркестратора: поля MCP — из ответа, пометки ClawGym — из текущего контракта.
- * Новые инструменты без пометок: информационные, без подтверждения.
+ * Новые инструменты без пометок: информационные, без подтверждения, не терминальные.
  */
 export function mergeTools(current: Tool[], incoming: Tool[]): ToolsDiff {
   const byName = new Map(current.map((t) => [t.name, t]));

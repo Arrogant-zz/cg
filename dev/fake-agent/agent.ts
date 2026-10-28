@@ -44,6 +44,10 @@ export const PHRASEBOOK: Phrase[] = [
   },
   // Закрытие с ответом клиенту
   { re: /закрыть кейс с ответом/iu, rule: { kind: 'call', tool: 'get_close_with_answer', args: { request: { shortAnswer: '{{answer}}', extendedAnswer: '{{answer}}' } } } },
+  // Действия после закрытия в том же ходе — сценарий проверки терминальных инструментов: чтение, действие с подтверждением, второй финал.
+  { re: /истори\S* решения кейса/iu, rule: { kind: 'call', tool: 'get_cases_history', args: { size: 10, page: 0 } } },
+  { re: /заметк\S* (в|на) кейс/iu, rule: { kind: 'call', tool: 'add_note_in_case', args: { request: { comment: 'Клиенту отправлен ответ' } } } },
+  { re: /отложить кейс до ответа клиента/iu, rule: { kind: 'call', tool: 'cases_postpone', args: { request: { comment: 'Ждём ответа клиента', postponeDateTime: '2026-11-01T10:00:00Z' } } } },
 ];
 
 export function rulesOf(text: string): Rule[] {

@@ -61,7 +61,7 @@ async function importTools(configDir: string): Promise<number> {
   const contract = JSON.parse(await fsp.readFile(target, 'utf8'));
   const diff = mergeTools(contract.tools ?? [], incoming);
   console.log(`Инструментов у оркестратора: ${incoming.length}, в контракте: ${(contract.tools ?? []).length}`);
-  for (const n of diff.added) console.log(`  + ${n} — новый: информационный, без подтверждения; проверьте пометки`);
+  for (const n of diff.added) console.log(`  + ${n} — новый: информационный, без подтверждения, не терминальный; проверьте пометки`);
   for (const n of diff.removed) console.log(`  − ${n} — нет у оркестратора`);
   for (const c of diff.changed) console.log(`  ~ ${c.name}: ${c.fields.join(', ')}`);
   const same = !diff.added.length && !diff.removed.length && !diff.changed.length;
@@ -71,7 +71,7 @@ async function importTools(configDir: string): Promise<number> {
   }
   const stamp = new Date().toISOString().slice(0, 10);
   contract.version = `imported-${stamp}`;
-  contract.note = `Инструменты сняты из tools/list ${url ?? path.basename(file!)} ${stamp} командой import-tools. Пометки requiresConfirmation, kind и enabled — ClawGym.`;
+  contract.note = `Инструменты сняты из tools/list ${url ?? path.basename(file!)} ${stamp} командой import-tools. Пометки requiresConfirmation, kind, enabled и terminal — ClawGym.`;
   contract.tools = diff.tools;
   await fsp.writeFile(target, JSON.stringify(contract, null, 2) + '\n', 'utf8');
   console.log(`${same ? 'Изменений нет. ' : ''}Записано: ${target}`);

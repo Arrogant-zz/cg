@@ -20,6 +20,7 @@ function statusOf(s) {
   if (pending.some((p) => p.kind === 'confirmation')) return html`<span class="st"><span class="dot live"></span>Ждёт вашего решения</span>`;
   if (pending.some((p) => p.kind === 'answer')) return html`<span class="st"><span class="dot live"></span>Агент ждёт ответ инструмента</span>`;
   if (s.busy) return html`<span class="st"><span class="dot live"></span>${s.busy}</span>`;
+  if (s.execution?.closedBy) return html`<span class="st"><span class="dot done"></span>Кейс закрыт: выполнен ${s.execution.closedBy.tool}</span>`;
   return html`<span class="st"><span class="dot done"></span>Ход агента завершён</span>`;
 }
 
@@ -48,12 +49,20 @@ ${s.prep?.length ? html`<div class="col" style="gap: 0">${s.prep.map((p) => html
 function composer(s, lessons) {
   const closed = s.status === 'closed';
   const busy = closed || !!s.busy || (s.execution?.pending ?? []).length > 0;
-  const placeholder = closed ? 'Сессия закрыта' : s.busy ? `${s.busy} — реплика уйдёт после конца хода` : 'Например: срок возврата в данных не указан, не обещайте его клиенту';
-  return html`<div class="composer ${busy ? 'busy' : ''}">
-<label class="field"><span class="lbl">Сообщение агенту</span><textarea class="input" rows="2" id="msg-text" data-keep data-enter="send" placeholder="${placeholder}" ${busy ? 'disabled' : ''}></textarea></label>
+  // Кейс закрыт терминальным инструментом: реплики закрыты, команды и завершение остаются.
+  const caseClosed = closed ? null : (s.execution?.closedBy ?? null);
+  const noReply = busy || !!caseClosed;
+  const placeholder = closed ? 'Сессия закрыта' : caseClosed ? `Кейс закрыт: выполнен ${caseClosed.tool}. Реплики больше не принимаются` : s.busy ? `${s.busy} — реплика уйдёт после конца хода` : 'Например: срок возврата в данных не указан, не обещайте его клиенту';
+  const note = busy && !closed
+    ? 'Реплики и команды доступны после конца хода агента: в одной сессии один ход за раз.'
+    : caseClosed
+      ? 'Кейс закрыт терминальным инструментом: в закрытое обращение оператор не пишет. Доступны /case-capture, /skill-curator и «Завершить и сохранить»; /reset начнёт кейс заново.'
+      : 'Enter — отправить, Shift+Enter — новая строка. Команда и её ответ сохранятся в истории; после /reset кейс начнётся заново с теми же заглушками.';
+  return html`<div class="composer ${noReply ? 'busy' : ''}">
+<label class="field"><span class="lbl">Сообщение агенту</span><textarea class="input" rows="2" id="msg-text" data-keep data-enter="send" placeholder="${placeholder}" ${noReply ? 'disabled' : ''}></textarea></label>
 <div class="row" style="gap: 16px">
-<label class="chk" style="min-height: 0; padding: 0"><input type="checkbox" id="msg-corr" data-keep ${busy ? 'disabled' : ''}><span class="sm">Это поправка</span></label>
-<select class="input" id="msg-lesson" data-keep style="width: auto; min-height: 36px; padding-top: 6px; padding-bottom: 6px" ${busy ? 'disabled' : ''}><option value="">урок не указан</option>${lessons.map((l) => html`<option value="${l.id}">${l.id} · ${l.rule.slice(0, 60)}</option>`)}</select>
+<label class="chk" style="min-height: 0; padding: 0"><input type="checkbox" id="msg-corr" data-keep ${noReply ? 'disabled' : ''}><span class="sm">Это поправка</span></label>
+<select class="input" id="msg-lesson" data-keep style="width: auto; min-height: 36px; padding-top: 6px; padding-bottom: 6px" ${noReply ? 'disabled' : ''}><option value="">урок не указан</option>${lessons.map((l) => html`<option value="${l.id}">${l.id} · ${l.rule.slice(0, 60)}</option>`)}</select>
 </div>
 <div class="row" style="justify-content: space-between; gap: 12px">
 <div class="row" style="gap: 6px">
@@ -61,9 +70,9 @@ function composer(s, lessons) {
 <button class="btn ${busy ? 'off' : ''}" type="button" data-action="cmd" data-name="capture" ${busy ? 'disabled' : ''}>${icon('capture')}/case-capture</button>
 <button class="btn ${busy ? 'off' : ''}" type="button" data-action="cmd" data-name="curator" ${busy ? 'disabled' : ''}>${icon('curator')}/skill-curator</button>
 </div>
-<button class="btn ${busy ? 'off' : 'pri'}" type="button" data-action="send" ${busy ? 'disabled' : ''}>${icon('send')}Отправить</button>
+<button class="btn ${noReply ? 'off' : 'pri'}" type="button" data-action="send" ${noReply ? 'disabled' : ''}>${icon('send')}Отправить</button>
 </div>
-<span class="cap">${busy && !closed ? 'Реплики и команды доступны после конца хода агента: в одной сессии один ход за раз.' : 'Enter — отправить, Shift+Enter — новая строка. Команда и её ответ сохранятся в истории; после /reset кейс начнётся заново с теми же заглушками.'}</span>
+<span class="cap">${note}</span>
 </div>`;
 }
 

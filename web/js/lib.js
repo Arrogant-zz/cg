@@ -372,6 +372,7 @@ export function toolPill(e) {
   if (e.outcome === 'timeout') return html`<span class="pill tech" style="margin-left: auto">${icon('clock')}Отклонено по таймауту</span>`;
   if (e.outcome === 'stopped' && e.late) return html`<span class="pill tech" style="margin-left: auto" title="Ход, который стенд перестал ждать: агент сразу получил ошибку">После завершения кейса</span>`;
   if (e.outcome === 'stopped') return html`<span class="pill tech" style="margin-left: auto">Остановлено</span>`;
+  if (e.outcome === 'closed') return html`<span class="pill na" style="margin-left: auto" title="Кейс уже закрыт терминальным инструментом: агент сразу получил ошибку, решения не запрашивались">кейс закрыт</span>`;
   if (e.outcome === 'unknown_tool') return html`<span class="pill na" style="margin-left: auto">${e.disabled ? 'выключен в контракте' : 'неизвестный инструмент'}</span>`;
   if (e.outcome === 'no_stub') return html`<span class="pill na" style="margin-left: auto">нет заглушки · ошибка инструмента</span>`;
   if (e.outcome === 'manual') return html`<span class="pill" style="margin-left: auto">${icon('user')}ответ человека${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''}</span>`;
@@ -392,11 +393,13 @@ export function toolCard(e, { full = true, actions = null, http = false } = {}) 
   const cls = e.awaiting === 'confirmation' ? 'wait' : e.awaiting === 'answer' || e.outcome === 'no_stub' || e.outcome === 'unknown_tool' ? 'miss' : '';
   const stub = full && e.stub ? html`<span class="cap">заглушка <span class="mono">${e.stub.id}</span>${e.stub.origin === 'default' ? ' · по умолчанию' : ''}${e.stub.candidates > 1 ? ` · из ${e.stub.candidates} подходящих` : ''}${e.effect ? ` · ${Object.entries(e.effect).map(([k, v]) => `${k} → ${v}`).join(', ')}` : ''}</span>` : '';
   const conf = e.requiresConfirmation && !e.awaiting && !e.confirmation ? html`<span class="cap">требует подтверждения</span>` : '';
+  // Закрытие кейса — не неуспех агента: пометка без цвета.
+  const term = e.closedCase ? html`<span class="pill" title="Терминальный инструмент выполнен: кейс закрыт">${icon('lock')}закрыл кейс</span>` : e.afterClose ? html`<span class="cap">после терминального вызова</span>` : '';
   const deadline = e.deadline ? html`<span class="row mono t2" style="margin-left: auto; gap: 6px">${icon('clock')}<span data-deadline="${e.deadline}">—</span></span>` : '';
   const body = [`→ ${JSON.stringify(e.args)}`];
   if (e.outcome !== 'pending' && !e.awaiting) body.push(`← ${typeof e.result === 'string' ? e.result : JSON.stringify(e.result)}`);
   return html`<div class="tool ${cls}" id="ev-${e.seq}">
-<div class="tool-h">${icon('tool')}<span class="nm">${e.tool}</span>${stub}${conf}${e.awaiting ? toolPill(e) : ''}${deadline}${!e.awaiting ? toolPill(e) : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>
+<div class="tool-h">${icon('tool')}<span class="nm">${e.tool}</span>${stub}${conf}${term}${e.awaiting ? toolPill(e) : ''}${deadline}${!e.awaiting ? toolPill(e) : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>
 <div class="tool-b">${body.join('\n')}</div>
 ${actions ?? ''}
 ${full && e.yaml ? html`<details class="raw"><summary>YAML-фрагмент для файла кейса</summary><pre>${e.yaml}</pre></details>` : ''}
@@ -480,6 +483,8 @@ export function decisionBlock(e, { http = false } = {}) {
   if (d.lessonNote && !d.lessonId) kv.push(html`<span>урок вне каталога: ${d.lessonNote}</span>`);
   if ('finish' in d) kv.push(html`<span>завершение: ${d.finish ? 'да' : 'нет'}</span>`);
   if (d.approval) kv.push(html`<span>одобрение</span>`);
+  if (e.moot) kv.push(html`<span>кейс уже закрыт: решение не применено</span>`);
+  if (e.replyDropped) kv.push(html`<span>реплика не отправлена: кейс закрыт</span>`);
   const meta = e.forced ? e.forced : `${e.model}${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''}${e.attempts?.length > 1 ? ` · попыток ${e.attempts.length}` : ''}`;
   return html`<div class="hid" id="ev-${e.seq}"><div class="hid-h">${icon('hidden')}Решение оператора · скрыто от агента<span class="cap">${meta}</span><span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
 ${e.error ? html`<span class="pill tech" style="align-self: flex-start">${e.error}</span>` : ''}

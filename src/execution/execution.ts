@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import type { BasketType, CaseDef, ContractDef, SolutionDef } from '../config/types.js';
 import type { Env } from '../env.js';
-import { StubState, matchStub, renderResponse, templateContext, yamlSnippet } from '../stubs/engine.js';
+import { StubState, matchStub, renderResponse, templateContext, terminalMatches, yamlSnippet } from '../stubs/engine.js';
 import { renderString } from '../util/template.js';
 import { isAbortError, nowIso, randomHex, sleep } from '../util/core.js';
 import type { ExecEvent, MessageEvent, ToolCallEvent } from './events.js';
@@ -22,7 +22,8 @@ type Resolution =
   | { action: 'answer'; json?: unknown; text?: string }
   | { action: 'error'; message: string }
   | { action: 'timeout' }
-  | { action: 'stopped' };
+  | { action: 'stopped' }
+  | { action: 'closed' };
 
 interface Pending {
   ev: ToolCallEvent;
@@ -74,6 +75,12 @@ export class Execution {
   turns = 0;
   operatorCalls = 0;
   flags = { operatorTimeout: false, stopped: false, closed: false };
+  /** Кейс закрыт терминальным инструментом: после этого ничто не ждёт решения человека или оператора. */
+  closedBy: { seq: number; tool: string } | null = null;
+  /** Последнее событие хода, в котором кейс закрыт: ответ агента или заметка о сбое хода. */
+  closedTurnEndSeq: number | null = null;
+  /** Кто завершил кейс; null — лимит, технический статус или запись до терминальных инструментов. */
+  endedBy: 'operator' | 'human' | 'terminal' | null = null;
   pending = new Map<string, Pending>();
   /** HTTP-обмены выполнения: запросы к агенту и запросы агента к MCP. В toJSON не входят — отдаются отдельно. */
   http: HttpExchange[] = [];
@@ -233,8 +240,31 @@ export class Execution {
     ev.awaiting = null;
     ev.deadline = null;
     ev.durationMs = Date.now() - t0;
+    if (ev.executed && ev.terminal && !this.closedBy) this.close(ev);
     this.update(ev);
     return this.toMcp(ev.isError, ev.result);
+  }
+
+  /** Выполнен терминальный вызов: кейс закрыт, ждущие вызовы сразу получают ошибку — решать по ним больше некому. */
+  private close(ev: ToolCallEvent): void {
+    this.closedBy = { seq: ev.seq, tool: ev.tool };
+    ev.closedCase = true;
+    // Пометка ставится сразу: решение оператора по такому вызову, пришедшее позже, — запоздалое.
+    for (const p of [...this.pending.values()]) {
+      p.ev.afterClose = true;
+      p.resolve({ action: 'closed' });
+    }
+  }
+
+  /** Ход агента закончился: если в нём закрыт кейс, запоминается конец терминального хода. */
+  endTurn(): void {
+    if (this.closedBy && this.closedTurnEndSeq === null) this.closedTurnEndSeq = this.events[this.events.length - 1]?.seq ?? null;
+  }
+
+  /** /reset в ручной сессии: кейс начинается заново, закрытие снимается. */
+  reopen(): void {
+    this.closedBy = null;
+    this.closedTurnEndSeq = null;
   }
 
   private waitPending(ev: ToolCallEvent, kind: 'confirmation' | 'answer', timeoutMs: number): Promise<Resolution> {
@@ -260,8 +290,8 @@ export class Execution {
   resolvePending(callId: string, r: Resolution): boolean {
     const p = this.pending.get(callId);
     if (!p) return false;
-    if (p.kind === 'confirmation' && !['approve', 'reject', 'timeout', 'stopped'].includes(r.action)) return false;
-    if (p.kind === 'answer' && !['answer', 'error', 'timeout', 'stopped'].includes(r.action)) return false;
+    if (p.kind === 'confirmation' && !['approve', 'reject', 'timeout', 'stopped', 'closed'].includes(r.action)) return false;
+    if (p.kind === 'answer' && !['answer', 'error', 'timeout', 'stopped', 'closed'].includes(r.action)) return false;
     p.resolve(r);
     return true;
   }
@@ -295,6 +325,8 @@ export class Execution {
       taskId,
       requiresConfirmation: !!tool?.requiresConfirmation,
       ...(def && !def.enabled ? { disabled: true } : {}),
+      ...(terminalMatches(tool, args) ? { terminal: true as const } : {}),
+      ...(this.closedBy ? { afterClose: true as const } : {}),
       stub: null,
       confirmation: null,
       awaiting: null,
@@ -315,6 +347,11 @@ export class Execution {
     if (!tool) return this.finish(ev, { outcome: 'unknown_tool', isError: true, result: this.errText('unknownTool', name), unexpected: true }, t0);
     if (this.flags.closed) return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name), late: true }, t0);
     if (this.flags.stopped) return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name) }, t0);
+    // Кейс закрыт терминальным инструментом: подтверждать некому — вызов с подтверждением сразу получает ошибку закрытого кейса.
+    if (this.closedBy && tool.requiresConfirmation) {
+      ev.confirmation = { decision: 'reject', by: 'closed', waitedMs: 0, deadline: null, decisionSeq: null };
+      return this.finish(ev, { outcome: 'closed', isError: true, result: this.errText('closed', name) }, t0);
+    }
 
     if (tool.requiresConfirmation) {
       const auto = this.mode === 'auto';
@@ -342,6 +379,9 @@ export class Execution {
       } else if (r.action === 'stopped') {
         ev.confirmation = { ...ev.confirmation, decision: 'reject', by: 'stopped', waitedMs };
         return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name) }, t0);
+      } else if (r.action === 'closed') {
+        ev.confirmation = { ...ev.confirmation, decision: 'reject', by: 'closed', waitedMs };
+        return this.finish(ev, { outcome: 'closed', isError: true, result: this.errText('closed', name) }, t0);
       } else {
         if (auto) this.flags.operatorTimeout = true;
         ev.confirmation = { ...ev.confirmation, decision: 'reject', by: 'timeout', waitedMs };
@@ -375,7 +415,8 @@ export class Execution {
       );
     }
 
-    if (this.mode === 'manual' && this.env.unmatchedMode === 'manual') {
+    // После закрытия кейса вызов без заглушки ответа человека не ждёт.
+    if (this.mode === 'manual' && this.env.unmatchedMode === 'manual' && !this.closedBy) {
       const deadline = new Date(Date.now() + this.env.agentMcpTimeoutMs).toISOString();
       ev.awaiting = 'answer';
       ev.deadline = deadline;
@@ -393,6 +434,7 @@ export class Execution {
         return this.finish(ev, { outcome: 'manual_error', isError: true, result: r.message, unexpected: true, yaml: yamlSnippet(name, args, { error: r.message }) }, t0);
       }
       if (r.action === 'stopped') return this.finish(ev, { outcome: 'stopped', isError: true, result: this.errText('stopped', name), unexpected: true }, t0);
+      if (r.action === 'closed') return this.finish(ev, { outcome: 'no_stub', isError: true, result: this.errText('noStub', name), unexpected: true }, t0);
       return this.finish(ev, { outcome: 'timeout', isError: true, result: this.errText('timeout', name), unexpected: true }, t0);
     }
     // Предложение из дизайна: без заглушки в автоматическом режиме агент получает ошибку инструмента.
@@ -421,6 +463,9 @@ export class Execution {
       finishedAt: this.finishedAt,
       turns: this.turns,
       operatorCalls: this.operatorCalls,
+      closedBy: this.closedBy,
+      closedTurnEndSeq: this.closedTurnEndSeq,
+      endedBy: this.endedBy,
       state: this.stub.snapshot(),
       events: this.events,
       pending: this.pendingList(),

@@ -90,6 +90,8 @@ export function operatorContext(exec: Execution, event: OperatorEvent, mode: Bas
             tool: event.call.tool,
             args: event.call.args,
             description: exec.contract.tools.find((t) => t.name === event.call.tool)?.description ?? '',
+            // Терминальное действие: выполненный вызов закрывает кейс, поправить агента после него нельзя.
+            terminal: !!event.call.terminal,
           },
   };
 }

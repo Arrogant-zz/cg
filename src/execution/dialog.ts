@@ -1,6 +1,6 @@
 // Автоматический диалог кейса с LLM-оператором (SOL-04, SOL-05, BASK-05).
 import type { BasketType, CaseDef, ContractDef, Limits } from '../config/types.js';
-import type { Execution } from './execution.js';
+import type { ConfirmDecision, Execution } from './execution.js';
 import type { AgentChannel } from './channel.js';
 import type { DecisionEvent, MessageEvent, NoteEvent, ToolCallEvent } from './events.js';
 import { MODE_MARK, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../operator/operator.js';
@@ -77,8 +77,9 @@ function marksOf(d: OperatorDecision, prior: Set<string>): NonNullable<MessageEv
 export async function runDialog(exec: Execution, deps: DialogDeps): Promise<DialogOutcome> {
   const { channel, operator, mode, limits } = deps;
   const lastSeq = () => exec.events[exec.events.length - 1]?.seq ?? 0;
-  const end = (status: string, reason: string): DialogOutcome => {
+  const end = (status: string, reason: string, by: Execution['endedBy'] = null): DialogOutcome => {
     exec.confirmationHandler = null;
+    exec.endedBy = by;
     return { status, reason, resultSeq: lastSeq() };
   };
   const failure: { status: string; reason: string } = { status: '', reason: '' };
@@ -119,6 +120,26 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     return operator.decide(exec, event, mode, limits, signal, log.onExchange);
   };
 
+  // Кейс закрыли, пока оператор решал: вызов уже получил ошибку закрытого кейса, решение ни на что не влияет — ни репликой, ни сбоем.
+  const moot = (dec: DecisionEvent): ConfirmDecision => {
+    dec.moot = true;
+    exec.update(dec);
+    return { action: 'reject', by: 'auto', decisionSeq: dec.seq };
+  };
+
+  // Кейс закрыт терминальным инструментом: реплики, решённые в этом ходе, агенту уже не уходят.
+  const dropQueued = (tool: string): void => {
+    const q = queued.splice(0, queued.length);
+    if (!q.length) return;
+    for (const x of q) {
+      const dec = exec.events.find((e): e is DecisionEvent => e.seq === x.decisionSeq && e.type === 'operator_decision');
+      if (!dec) continue;
+      dec.replyDropped = true;
+      exec.update(dec);
+    }
+    exec.add<NoteEvent>({ type: 'note', hidden: true, text: `Реплика оператора не отправлена: кейс закрыт терминальным инструментом ${tool}`, data: { decisions: q.map((x) => x.decisionSeq), text: q.map((x) => x.text) } });
+  };
+
   exec.confirmationHandler = async (call: ToolCallEvent) => {
     if (mode === 'checking' && deps.checkingConfirmations === 'approve') {
       const d = exec.add<DecisionEvent>({
@@ -147,11 +168,14 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
       const d = res.value;
       const dec = recordDecision(event, res, null, call.callId);
       log.attach(dec);
+      if (call.afterClose) return moot(dec);
       if (d.reply) queued.push({ text: d.reply, marks: marksOf(d, deps.priorLessons), decisionSeq: dec.seq });
       return { action: d.confirmation ?? 'reject', by: 'operator', decisionSeq: dec.seq };
     } catch (e) {
       const err = e instanceof StructuredError ? e : null;
-      log.attach(recordDecision(event, null, err, call.callId));
+      const dec = recordDecision(event, null, err, call.callId);
+      log.attach(dec);
+      if (call.afterClose) return moot(dec);
       const f = classify(e);
       failure.status = failure.status || f.status;
       failure.reason = failure.reason || f.reason;
@@ -181,7 +205,12 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     exec.turns++;
     if (failure.status) return end(failure.status, failure.reason);
     if (exec.flags.operatorTimeout) return end('operator_timeout', 'Оператор не решил по подтверждению до таймаута MCP-вызова; вызов отклонён автоматически');
-    if (finishAfterTurn) return end('completed', 'Оператор завершил кейс');
+    // Терминальный инструмент выполнен: агент договорил ход, оператор больше не вызывается и не пишет. Лимиты — после: закрытие в последнем ходе — «Завершён».
+    if (exec.closedBy) {
+      dropQueued(exec.closedBy.tool);
+      return end('completed', `Выполнен терминальный инструмент ${exec.closedBy.tool}`, 'terminal');
+    }
+    if (finishAfterTurn) return end('completed', 'Оператор завершил кейс', 'operator');
 
     if (queued.length) {
       // Реплика, решённая при отклонении вызова, уходит после конца хода агента.
@@ -208,7 +237,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     const dec = recordDecision(event, res, null);
     log.attach(dec);
     const d = res.value;
-    if (d.finish && !d.reply) return end('completed', 'Оператор завершил кейс');
+    if (d.finish && !d.reply) return end('completed', 'Оператор завершил кейс', 'operator');
     if (d.finish) finishAfterTurn = true;
     next = { text: d.reply!, kind: 'operator', extra: { marks: marksOf(d, deps.priorLessons), decisionSeq: dec.seq } };
   }

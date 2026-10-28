@@ -36,7 +36,9 @@ export type ToolOutcome =
   | 'unknown_tool'
   | 'rejected'
   | 'timeout'
-  | 'stopped';
+  | 'stopped'
+  /** Вызов с подтверждением после закрытия кейса терминальным инструментом: агент сразу получил errors.closed. */
+  | 'closed';
 
 export interface ToolCallEvent extends BaseEvent {
   type: 'tool_call';
@@ -48,7 +50,7 @@ export interface ToolCallEvent extends BaseEvent {
   stub: { id: string; origin: 'case' | 'default'; candidates: number; call: number } | null;
   confirmation: null | {
     decision: 'approve' | 'reject' | 'pending';
-    by: 'operator' | 'human' | 'auto' | 'timeout' | 'stopped' | null;
+    by: 'operator' | 'human' | 'auto' | 'timeout' | 'stopped' | 'closed' | null;
     waitedMs: number | null;
     deadline: string | null;
     decisionSeq: number | null;
@@ -68,6 +70,12 @@ export interface ToolCallEvent extends BaseEvent {
   disabled?: boolean;
   /** Вызов пришёл после завершения кейса — от хода, который стенд перестал ждать: агент сразу получил ошибку. */
   late?: boolean;
+  /** Вызов подходит под пометку terminal контракта: выполненный, он закрывает кейс. Его видит оператор при подтверждении. */
+  terminal?: true;
+  /** Этот вызов закрыл кейс. */
+  closedCase?: true;
+  /** Вызов пришёл после закрытия кейса в том же ходе или ждал решения в момент закрытия. */
+  afterClose?: true;
 }
 
 export interface MessageEvent extends BaseEvent {
@@ -109,6 +117,10 @@ export interface DecisionEvent extends BaseEvent {
   attempts: { n: number; ok: boolean; kind?: string; error?: string; durationMs: number }[];
   error?: string;
   forced?: string;
+  /** Решение пришло, когда вызов уже получил ошибку закрытого кейса: на кейс оно не влияет. */
+  moot?: true;
+  /** Реплика к решению не ушла агенту: кейс закрыт терминальным инструментом в том же ходе. */
+  replyDropped?: true;
 }
 
 export interface JudgeEvent extends BaseEvent {

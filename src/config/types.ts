@@ -32,6 +32,8 @@ export interface ToolDef {
   kind: 'info' | 'action';
   /** false — инструмента нет в tools/list, вызов получает ошибку «не найден»; заглушки кейсов остаются доступны шаблону стартового сообщения. */
   enabled: boolean;
+  /** Терминальный инструмент: выполненный вызов закрывает кейс. when — условие на аргументы на языке условий заглушек, null — любой вызов. */
+  terminal: { when: Record<string, unknown> | null } | null;
 }
 
 export interface ContractDef {
@@ -47,6 +49,8 @@ export interface ContractDef {
     unknownTask: string;
     timeout: string;
     stopped: string;
+    /** Вызов с подтверждением после закрытия кейса терминальным инструментом. */
+    closed: string;
   };
   tools: ToolDef[];
   startMessage: { file: string; text: string; hash: string };

@@ -139,13 +139,14 @@ export function execStats(exec: Execution): ExecStats {
   const agentMsgs = ev.filter((e): e is MessageEvent => e.type === 'agent_message');
 
   // Поправки — по разметке реплик и отклонений; один урок в кейсе считается один раз (MET-03).
+  // Считается то, что дошло до агента: реплика к отклонению, не ушедшая из-за закрытия кейса, — поправка по решению; запоздалое решение — нет.
   const lessonSet = new Set<string>();
   const repeated = new Set<string>();
   let unknown = 0;
   const corrected = [
     ...msgs.filter((m) => m.marks?.correction).map((m) => ({ lessonId: m.marks!.lessonId, repeated: !!m.marks!.repeated })),
     ...decisions
-      .filter((d) => d.event === 'confirmation' && d.decision?.correction && !d.decision?.reply)
+      .filter((d) => d.event === 'confirmation' && d.decision?.correction && !d.moot && (!d.decision?.reply || (d.replyDropped && d.decision?.confirmation === 'reject')))
       .map((d) => ({ lessonId: typeof d.decision?.lessonId === 'string' ? d.decision.lessonId : null, repeated: false })),
   ];
   for (const c of corrected) {

@@ -41,6 +41,7 @@ import {
 } from './types.js';
 import { isPlainObject, shortHash } from '../util/core.js';
 import { whenRegexErrors } from '../stubs/engine.js';
+import { mcpPart } from './tools-import.js';
 import { walkFiles } from '../util/fsx.js';
 
 const Ajv: any = (AjvModule as any).default ?? AjvModule;
@@ -70,7 +71,10 @@ export const DEFAULT_ERRORS = {
   unknownTask: 'Вызов не привязан к обращению: неизвестный или отсутствующий x-task-id.',
   timeout: 'Время ожидания решения по вызову {{tool}} истекло.',
   stopped: 'Обращение остановлено на стенде.',
+  closed: 'Обращение уже закрыто: инструмент {{tool}} недоступен.',
 };
+
+const REGEX_ACTION = 'Исправьте выражение: ClawGym проверяет его с флагом u, где, например, дефис в классе символов ставится последним — [\\w.-]';
 
 export const DEFAULT_COMMANDS = {
   reset: '/reset',
@@ -189,12 +193,17 @@ async function parseFile(c: Collector, configDir: string, rel: string): Promise<
   }
   c.files++;
   if (rel.endsWith('.json')) {
+    let data: unknown;
     try {
-      return { rel, text, data: JSON.parse(text) };
+      data = JSON.parse(text);
     } catch (e: any) {
       c.error(rel, `Некорректный JSON: ${e.message}`, { action: 'Исправьте синтаксис файла' });
       return null;
     }
+    // JSON — подмножество YAML: документ нужен только для строк в ошибках, данные — из JSON.parse.
+    const lc = new LineCounter();
+    const doc = YAML.parseDocument(text, { lineCounter: lc, prettyErrors: false });
+    return doc.errors.length ? { rel, text, data } : { rel, text, data, doc, lc };
   }
   const lc = new LineCounter();
   const doc = YAML.parseDocument(text, { lineCounter: lc, prettyErrors: false, uniqueKeys: true });
@@ -260,15 +269,20 @@ async function loadContract(c: Collector, configDir: string): Promise<ContractDe
   (d.tools ?? []).forEach((t: any, i: number) => {
     if (names.has(t.name)) c.error(rel, `Инструмент «${t.name}» описан дважды`, { field: `tools[${i}].name` });
     names.add(t.name);
-    const { requiresConfirmation: _c, kind: _k, enabled: _e, ...listed } = t;
+    for (const bad of isPlainObject(t.terminal?.when) ? whenRegexErrors(t.terminal.when) : []) {
+      const at = ['tools', i, 'terminal', 'when', ...bad.path];
+      c.error(rel, `Регулярное выражение не компилируется: ${bad.error}`, { field: fieldFromPath(at), line: lineOf(p, at), action: REGEX_ACTION });
+    }
     tools.push({
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,
-      listed,
+      // Пометки ClawGym вычитаются по тому же списку, что переносит import-tools: агенту они не уходят.
+      listed: mcpPart(t),
       requiresConfirmation: !!t.requiresConfirmation,
       kind: t.kind ?? (t.requiresConfirmation ? 'action' : 'info'),
       enabled: t.enabled !== false,
+      terminal: t.terminal === true ? { when: null } : isPlainObject(t.terminal) ? { when: t.terminal.when } : null,
     });
   });
   const smRel = d.startMessage ?? 'contracts/start-message.txt';
@@ -327,11 +341,7 @@ async function normalizeStubs(
       const line = lineOf(p, [base, tool, i]);
       for (const bad of isPlainObject(s.when) ? whenRegexErrors(s.when) : []) {
         const at = [base, tool, i, 'when', ...bad.path];
-        c.error(p.rel, `Регулярное выражение не компилируется: ${bad.error}`, {
-          field: fieldFromPath(at),
-          line: lineOf(p, at),
-          action: 'Исправьте выражение: ClawGym проверяет его с флагом u, где, например, дефис в классе символов ставится последним — [\\w.-]',
-        });
+        c.error(p.rel, `Регулярное выражение не компилируется: ${bad.error}`, { field: fieldFromPath(at), line: lineOf(p, at), action: REGEX_ACTION });
       }
       if (!s.result && !s.error && !s.sequence) {
         c.error(p.rel, 'Заглушка без ответа: нужен result, error или sequence', { field, line });

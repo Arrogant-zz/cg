@@ -3,6 +3,14 @@ import { html, icon, get, ref, hint, later, mk, issuesBox, warningsList } from '
 
 export const title = 'Справочники';
 
+/** Пометка terminal: «да», условие на аргументы — «при request.keepOnSelf = false», иначе «—». */
+function terminalCell(terminal) {
+  if (!terminal) return html`<span class="t3">—</span>`;
+  if (!terminal.when) return html`<span class="pill">да</span>`;
+  const cond = Object.entries(terminal.when).map(([k, v]) => (v !== null && typeof v === 'object' ? `${k}: ${JSON.stringify(v)}` : `${k} = ${v}`)).join(', ');
+  return html`<span class="sm">при <span class="mono">${cond}</span></span>`;
+}
+
 function agentSection(a) {
   const health = !a.health ? '' : a.health.ok === null ? html`<span class="pill na">${a.health.note}</span>` : html`<span class="pill ${a.health.ok ? 'pass' : 'tech'}">${a.health.ok ? icon('check') : icon('bolt')}${a.health.note}</span>`;
   return html`<section class="sec" id="agent-${a.id}" aria-labelledby="ag-${a.id}" style="gap: 22px">
@@ -68,8 +76,9 @@ ${hint('Здесь модели LLM-оператора и судьи. Модел
 <section class="sec" id="tools" aria-labelledby="to-h">
 <div class="sec-h"><h2 class="h2" id="to-h">Инструменты MCP</h2>${d.contract ? html`<span class="row cap" style="gap: 8px"><span class="mono">${d.contract.file} · ${d.contract.version}</span>${d.contract.conditional ? html`<span class="pill na">условный контракт</span>` : ''}</span>` : ''}</div>
 ${d.contract?.conditional ? hint('Имена, описания и схемы инструментов, обёртка результата и тексты ошибок условные: их нужно снять с кода Java-оркестратора (plan.md, этап 0; docs/CONTRACTS.md).', 'warn') : ''}
-<div class="tw"><table class="tbl"><thead><tr><th>Инструмент</th><th>Описание</th><th>Тип</th><th>Подтверждение</th><th>В tools/list</th></tr></thead>
-<tbody>${d.tools.map((t) => html`<tr${t.enabled ? '' : html` class="t3"`}><td class="mono m5">${t.name}</td><td class="t2">${t.description}</td><td>${t.kind === 'action' ? 'активный' : 'информационный'}</td><td>${t.requiresConfirmation ? html`<span class="pill live">требует</span>` : html`<span class="t3">—</span>`}</td><td>${t.enabled ? mk(true) : html`<span class="pill na">выключен</span>`}</td></tr>`)}</tbody></table></div>
+<div class="tw"><table class="tbl"><thead><tr><th>Инструмент</th><th>Описание</th><th>Тип</th><th>Подтверждение</th><th>Терминальный</th><th>В tools/list</th></tr></thead>
+<tbody>${d.tools.map((t) => html`<tr${t.enabled ? '' : html` class="t3"`}><td class="mono m5">${t.name}</td><td class="t2">${t.description}</td><td>${t.kind === 'action' ? 'активный' : 'информационный'}</td><td>${t.requiresConfirmation ? html`<span class="pill live">требует</span>` : html`<span class="t3">—</span>`}</td><td>${terminalCell(t.terminal)}</td><td>${t.enabled ? mk(true) : html`<span class="pill na">выключен</span>`}</td></tr>`)}</tbody></table></div>
+${d.tools.some((t) => t.terminal) ? hint('Терминальный инструмент (terminal в контракте) закрывает кейс, как только вызов выполнен. Агент договаривает ход, но ни LLM-оператор, ни человек ему больше не пишут; дальше идут /case-capture и /skill-curator. Вызов с подтверждением после закрытия сразу получает ошибку closed.') : ''}
 ${d.tools.some((t) => !t.enabled) ? hint('Выключенный инструмент (enabled: false в контракте) агенту не предъявляется, вызов получает ошибку «не найден». Его заглушки в кейсах остаются и доступны шаблону стартового сообщения как {{tools.<имя>}}.') : ''}
 ${d.contract ? html`<div class="col" style="gap: 6px"><span class="lbl">Тексты ошибок для агента</span><dl class="kvs sm">${Object.entries(d.contract.errors).map(([k, v]) => html`<dt class="mono">${k}</dt><dd>${v}</dd>`)}</dl></div><div class="col" style="gap: 6px"><span class="lbl">Шаблон стартового сообщения · ${d.contract.startMessage.file}</span><pre class="diff">${d.contract.startMessage.text}</pre></div>` : ''}
 </section>`;

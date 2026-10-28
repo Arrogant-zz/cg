@@ -1,5 +1,5 @@
 // Заглушки инструментов (CASE-02–04): условия на аргументы, последовательности, состояние выполнения.
-import type { CaseDef, StubDef, StubResponse } from '../config/types.js';
+import type { CaseDef, StubDef, StubResponse, ToolDef } from '../config/types.js';
 import { getDotted, setDotted } from '../util/jsonpath.js';
 import { deepClone, errorMessage, isPlainObject, stableStringify } from '../util/core.js';
 import { renderDeep, type TemplateContext } from '../util/template.js';
@@ -74,6 +74,11 @@ export function whenRegexErrors(when: Record<string, unknown>): { path: (string 
 export function whenMatches(when: Record<string, unknown> | undefined, args: Record<string, unknown>): boolean {
   if (!when) return true;
   return Object.entries(when).every(([k, v]) => condMatches(getDotted(args, k), v));
+}
+
+/** Вызов подходит под пометку terminal инструмента: её условие when — на те же аргументы, что подбор заглушки. */
+export function terminalMatches(def: Pick<ToolDef, 'terminal'> | undefined, args: Record<string, unknown>): boolean {
+  return !!def?.terminal && whenMatches(def.terminal.when ?? undefined, args);
 }
 
 /**

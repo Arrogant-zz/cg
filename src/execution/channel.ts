@@ -131,12 +131,14 @@ export class AgentChannel {
         const ev = exec.add<MessageEvent>({ type: 'agent_message', text: r.text, turn, durationMs: r.durationMs, usage: r.usage, taskId, httpId: r.exchange.id });
         r.exchange.replySeq = ev.seq;
         exec.updateHttp(r.exchange);
+        exec.endTurn();
         return { ok: true as const, reply: ev, raw: r };
       } catch (e) {
         const err = e instanceof AgentError ? e : new AgentError('network', errorMessage(e));
         this.settle(exec.senderId, LABELS[kind], taskId, sentAt, err, waited);
         err.message = this.busyError(err, waited) ?? err.message;
         exec.add<NoteEvent>({ type: 'note', text: `Агент: ${err.message}`, httpId: err.exchange?.id ?? null, data: { kind: err.kind, httpStatus: err.httpStatus, body: err.body } });
+        exec.endTurn();
         return { ok: false as const, error: err };
       }
     });
