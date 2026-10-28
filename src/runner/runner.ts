@@ -15,6 +15,7 @@ import { createProvider } from '../llm/provider.js';
 import { resolveRun, type ResolvedItem, type ResolvedRun, type RunOverrides } from './resolve.js';
 import { runStep, stepLabel, stepsAfter, type OperatorHold } from './operators.js';
 import type { CuratorPassRecord, ItemRecord, LineRecord, RunRecord, SnapshotFile } from './types.js';
+import type { HttpExchange } from '../util/httplog.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { runKey } from '../results/store.js';
 import { HttpError } from '../util/http.js';
@@ -533,10 +534,14 @@ export class RunManager {
     this.scheduleSave(run);
     const taskId = `cg-${run.id}-${line.index}-cur${pass}-${randomHex(2)}`;
     const t0 = Date.now();
+    // Обмен — в записи прохода с момента отправки: страница прогона видит и висящий /skill-curator.
+    const track = (x: HttpExchange, phase: 'start' | 'end') => {
+      if (phase === 'start') (rec.http ??= []).push(x);
+      this.scheduleSave(run);
+    };
     if (run.settings.basket.curator.resetBefore) {
-      const rs = await channel.rawCommand(line.senderId, taskId, 'reset', signal);
+      const rs = await channel.rawCommand(line.senderId, taskId, 'reset', signal, track);
       rec.reset = { status: rs.status, durationMs: rs.durationMs, error: rs.error };
-      rec.http = [...rs.http];
       if (rs.status !== 'ok') {
         rec.status = 'failed';
         rec.error = `Сбой /reset перед curator: ${rs.error ?? rs.status}`;
@@ -546,8 +551,8 @@ export class RunManager {
         return;
       }
     }
-    const c = await channel.rawCommand(line.senderId, taskId, 'curator', signal);
-    Object.assign(rec, { text: c.text, reply: c.reply, parsed: c.parsed, status: c.status, error: c.error, durationMs: Date.now() - t0, http: [...(rec.http ?? []), ...c.http] });
+    const c = await channel.rawCommand(line.senderId, taskId, 'curator', signal, track);
+    Object.assign(rec, { text: c.text, reply: c.reply, parsed: c.parsed, status: c.status, error: c.error, durationMs: Date.now() - t0 });
     line.counter = 0;
     const p: any = c.parsed;
     rec.report = p?.kind === 'complete' ? (p.report ?? null) : null;

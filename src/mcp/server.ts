@@ -104,6 +104,8 @@ export class McpServer {
       req.method ?? 'POST',
       { method: req.method ?? 'POST', url: req.url ?? this.env.mcpPath, headers: maskedHeaders(req.headers), body: '' },
       { taskId: typeof taskHeader === 'string' ? taskHeader : null, mcpSessionId: typeof req.headers['mcp-session-id'] === 'string' ? req.headers['mcp-session-id'] : null },
+      // Столько агент ждёт ответа MCP.
+      this.env.agentMcpTimeoutMs,
     );
     this.traffic.push(x);
     if (this.traffic.length > TRAFFIC_LIMIT) this.traffic.shift();

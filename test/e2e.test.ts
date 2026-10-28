@@ -248,6 +248,8 @@ test('вызов MCP с неизвестным x-task-id получает оши
   assert.ok(entry);
   const unbound = (await s.api('GET', '/api/mcp/traffic?unbound=1')).data as any[];
   assert.ok(unbound.some((x) => x.id === entry.data.httpId && x.execId === null), 'вызов без привязки — в общем журнале MCP');
+  const x = unbound.find((u) => u.id === entry.data.httpId);
+  assert.equal(Date.parse(x.deadline) - Date.parse(x.startedAt), 60_000, 'срок обмена MCP — AGENT_MCP_TIMEOUT_MS');
 });
 
 test('удаление: завершённый прогон и закрытая сессия удаляются с файлами, идущий прогон — нет, история оператора у продолжений остаётся', async () => {

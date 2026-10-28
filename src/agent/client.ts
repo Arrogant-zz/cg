@@ -135,11 +135,13 @@ export class AgentClient {
     const hostErr = checkAllowedHost(req.url, this.allowedHosts);
     if (hostErr) throw new AgentError('config', hostErr);
     const bodyText = JSON.stringify(req.body);
+    const limitMs = (this.def.request.timeoutMs ?? opts.timeoutMs) + (opts.waitMs ?? 0);
     const x = startExchange(
       'agent',
       opts.label ?? 'Запрос к агенту',
       { method: this.def.request.method, url: req.url, headers: maskHeaders(req.headers, req.envHeaders), body: bodyText },
       { taskId: opts.taskId, senderId: opts.senderId },
+      limitMs,
     );
     opts.onExchange?.(x, 'start');
     const fail = (err: AgentError): AgentError => {
@@ -149,7 +151,6 @@ export class AgentClient {
       return err;
     };
     const started = Date.now();
-    const limitMs = (this.def.request.timeoutMs ?? opts.timeoutMs) + (opts.waitMs ?? 0);
     const timeout = AbortSignal.timeout(limitMs);
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let res: HttpReply;

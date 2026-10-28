@@ -99,10 +99,35 @@ export function plural(n, one, few, many) {
 }
 export const jsonText = (v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 0));
 
+/** Время ожидания: когда ждём машину — сколько прошло из срока, когда ждём человека — сколько осталось. */
+export function waitClock(w, now = standNow()) {
+  const end = w.deadline ? Date.parse(w.deadline) : null;
+  if (w.remaining) return `осталось ${fmtClock(end === null ? null : Math.max(0, end - now))}`;
+  const passed = Math.max(0, now - Date.parse(w.startedAt));
+  if (end === null) return fmtClock(passed);
+  const total = end - Date.parse(w.startedAt);
+  return `${fmtClock(Math.min(passed, total))} из ${fmtClock(total)}`;
+}
+/** Тикающее время ожидания: его обновляет тикер оболочки. */
+export const waitTime = (w) => html`<span class="num" data-wait="${w.startedAt}"${w.deadline ? html` data-until="${w.deadline}"` : ''}${w.remaining ? raw(' data-left') : ''}>${waitClock(w)}</span>`;
+
 // ----------------------------------------------------------------- API и события
+
+// Время ожиданий и отсчётов — по часам стенда: часы браузера в закрытом контуре могут расходиться с ними на минуты.
+/** Смещение часов стенда относительно браузера по заголовку Date ответа (точность — секунда); null — заголовка нет. */
+export const clockSkew = (dateHeader, now = Date.now()) => {
+  const t = Date.parse(dateHeader ?? '');
+  return Number.isNaN(t) ? null : t - now;
+};
+/** Смещение меняется, только если новое отличается от прежнего на 2 с и больше: иначе время прыгало бы от погрешности заголовка. */
+export const nextSkew = (prev, measured) => (measured === null || Math.abs(measured - prev) < 2000 ? prev : measured);
+let skew = 0;
+/** Сейчас по часам стенда. */
+export const standNow = () => Date.now() + skew;
 
 export async function api(method, path, body) {
   const res = await fetch(path, { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  skew = nextSkew(skew, clockSkew(res.headers.get('date')));
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
@@ -389,17 +414,18 @@ export function toolPill(e) {
 /** Ссылка из события журнала на его HTTP-обмен. */
 export const httpLink = (e) => (e.httpId ? html`<a class="ev" href="#http-${e.httpId}" data-action="showHttp" data-http="${e.httpId}" title="Запрос и ответ HTTP">HTTP</a>` : '');
 
-export function toolCard(e, { full = true, actions = null, http = false } = {}) {
+/** wait — решение LLM-оператора по этому вызову: время решения без срока, отсчёт до отказа уже есть в карточке. */
+export function toolCard(e, { full = true, actions = null, http = false, wait = null } = {}) {
   const cls = e.awaiting === 'confirmation' ? 'wait' : e.awaiting === 'answer' || e.outcome === 'no_stub' || e.outcome === 'unknown_tool' ? 'miss' : '';
   const stub = full && e.stub ? html`<span class="cap">заглушка <span class="mono">${e.stub.id}</span>${e.stub.origin === 'default' ? ' · по умолчанию' : ''}${e.stub.candidates > 1 ? ` · из ${e.stub.candidates} подходящих` : ''}${e.effect ? ` · ${Object.entries(e.effect).map(([k, v]) => `${k} → ${v}`).join(', ')}` : ''}</span>` : '';
   const conf = e.requiresConfirmation && !e.awaiting && !e.confirmation ? html`<span class="cap">требует подтверждения</span>` : '';
   // Закрытие кейса — не неуспех агента: пометка без цвета.
   const term = e.closedCase ? html`<span class="pill" title="Терминальный инструмент выполнен: кейс закрыт">${icon('lock')}закрыл кейс</span>` : e.afterClose ? html`<span class="cap">после терминального вызова</span>` : '';
-  const deadline = e.deadline ? html`<span class="row mono t2" style="margin-left: auto; gap: 6px">${icon('clock')}<span data-deadline="${e.deadline}">—</span></span>` : '';
+  const deadline = e.deadline ? html`<span class="row t2" style="margin-left: auto; gap: 6px">${icon('clock')}осталось <span class="mono" data-deadline="${e.deadline}">—</span></span>` : '';
   const body = [`→ ${JSON.stringify(e.args)}`];
   if (e.outcome !== 'pending' && !e.awaiting) body.push(`← ${typeof e.result === 'string' ? e.result : JSON.stringify(e.result)}`);
   return html`<div class="tool ${cls}" id="ev-${e.seq}">
-<div class="tool-h">${icon('tool')}<span class="nm">${e.tool}</span>${stub}${conf}${term}${e.awaiting ? toolPill(e) : ''}${deadline}${!e.awaiting ? toolPill(e) : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>
+<div class="tool-h">${icon('tool')}<span class="nm">${e.tool}</span>${stub}${conf}${term}${e.awaiting ? toolPill(e) : ''}${wait ? html`<span class="row cap" style="gap: 6px"><span class="dot live"></span>${wait.text} ${waitTime({ ...wait, deadline: null })}</span>` : ''}${deadline}${!e.awaiting ? toolPill(e) : ''}${http ? httpLink(e) : ''}<span class="ev">#${e.seq}</span></div>
 <div class="tool-b">${body.join('\n')}</div>
 ${actions ?? ''}
 ${full && e.yaml ? html`<details class="raw"><summary>YAML-фрагмент для файла кейса</summary><pre>${e.yaml}</pre></details>` : ''}
@@ -550,10 +576,26 @@ ${f.text || a.reference ? html`<div style="display: grid; grid-template-columns:
 </div>`;
 }
 
-/** Лента событий выполнения. full=false — только то, что видел агент. */
-export function feed(events, { full = true, toolActions = null, httpLinks = false } = {}) {
+/** Кто держит ход диалога: строка в конце ленты. */
+export const turnWait = (waits = []) => waits.find((w) => w.scope === 'turn') ?? null;
+/** Ожидание для шапки: если ждут вас — оно, иначе тот, кто держит ход. */
+export const headWait = (waits = []) => waits.find((w) => w.who === 'human') ?? turnWait(waits);
+
+/** Строка ожидания в конце ленты: кто держит ход, сколько прошло из срока и на чём ход стоит. Текст без времени объявляет диктор. */
+export function waitRow(w, { http = false } = {}) {
+  return html`<div class="wait-row${w.blocked === 'human' ? ' you' : ''}" data-announce="${[w.text, w.detail].filter(Boolean).join(' — ')}"><span class="dot live"></span><span class="m5">${w.text}</span>${waitTime(w)}${w.detail ? html`<span class="t2">${w.detail}</span>` : ''}${w.hidden ? html`<span class="row cap" style="gap: 4px">${icon('hidden', 's14')}скрыто от агента</span>` : ''}${http ? httpLink(w) : ''}</div>`;
+}
+
+/** Текущее ожидание в шапке: то же время, что в строке ожидания; когда ждут вас — остаток. */
+export const waitBadge = (w) => html`<span class="st"><span class="dot live"></span>${w.text}${w.who === 'human' && w.detail ? `: ${w.detail}` : ''}<span class="t2" style="font-weight: 400">${waitTime(w)}</span></span>`;
+
+/** Лента событий выполнения. full=false — только то, что видел агент. waits — ожидания идущего выполнения. */
+export function feed(events, { full = true, toolActions = null, httpLinks = false, waits = [] } = {}) {
   const out = [];
   const http = full && httpLinks;
+  // Ожидания — только в полном журнале: вид «что видел агент» показывает полученное агентом, а не состояние стенда.
+  const shown = full ? waits : [];
+  const byCall = new Map(shown.filter((w) => w.scope === 'call' && w.who === 'llm').map((w) => [w.callId, w]));
   for (const e of events) {
     if (e.hidden && !full) continue;
     switch (e.type) {
@@ -567,7 +609,7 @@ export function feed(events, { full = true, toolActions = null, httpLinks = fals
         out.push(messageView(e, { full, http }));
         break;
       case 'tool_call':
-        out.push(toolCard(e, { full, actions: toolActions ? toolActions(e) : null, http }));
+        out.push(toolCard(e, { full, actions: toolActions ? toolActions(e) : null, http, wait: byCall.get(e.callId) ?? null }));
         break;
       case 'operator_decision':
         out.push(decisionBlock(e, { http }));
@@ -592,6 +634,8 @@ export function feed(events, { full = true, toolActions = null, httpLinks = fals
         break;
     }
   }
+  const turn = turnWait(shown);
+  if (turn) out.push(waitRow(turn, { http }));
   return html`<div class="feed">${out}</div>`;
 }
 
@@ -645,8 +689,11 @@ ${part.truncated ? html`<span class="cap">Показаны первые ${kb(par
 </div>`;
 }
 
-/** Обмен целиком: кто кого вызвал, запрос и ответ с заголовками и телом. */
-export function exchangeCard(x) {
+/**
+ * Обмен целиком: кто кого вызвал, запрос и ответ с заголовками и телом.
+ * live — выполнение идёт: у обмена без ответа тикает время из срока. Иначе ответа уже не будет — стенд перезапустили посреди запроса.
+ */
+export function exchangeCard(x, { live = false } = {}) {
   const out = x.kind !== 'mcp';
   const dir =
     x.kind === 'llm'
@@ -661,30 +708,33 @@ export function exchangeCard(x) {
   } catch {
     /* оставить как есть */
   }
+  const lost = !x.response && !x.error && !live;
   const status = x.response
     ? html`<span class="pill ${x.response.status < 400 ? 'pass' : 'tech'}">HTTP ${x.response.status}</span>`
     : x.error
       ? html`<span class="pill tech">${icon('bolt')}${x.error}</span>`
-      : html`<span class="pill live">${icon('clock')}ждёт ответа</span>`;
+      : lost
+        ? html`<span class="pill na">ответ не получен: стенд перезапущен до ответа</span>`
+        : html`<span class="pill live">${icon('clock')}ждёт ответа ${waitTime({ startedAt: x.startedAt, deadline: x.deadline ?? null })}</span>`;
   const links = [x.eventSeq ? html`<a class="ev" href="#ev-${x.eventSeq}" data-action="toEvent" data-seq="${x.eventSeq}">#${x.eventSeq}</a>` : '', x.replySeq ? html`<a class="ev" href="#ev-${x.replySeq}" data-action="toEvent" data-seq="${x.replySeq}">ответ #${x.replySeq}</a>` : ''];
   return html`<details class="tool xch" id="http-${x.id}">
 <summary class="tool-h">${dir}<span class="nm">${x.request.method} ${path}</span><span class="cap">${x.label}</span>${status}<span class="cap num">${x.durationMs === null ? '' : x.durationMs < 1000 ? `${x.durationMs} мс` : fmtDur(x.durationMs)}</span><span class="row" style="gap: 8px; margin-left: auto">${links}</span></summary>
 <div class="xch-meta cap">${fmtDate(x.startedAt)} · ${[x.kind === 'llm' ? 'вызов модели: агент его не видит' : '', x.taskId ? `x-task-id ${x.taskId}` : out ? '' : 'без x-task-id', x.senderId ? `x-a2a-sender-id ${x.senderId}` : '', x.mcpSessionId ? `Mcp-Session-Id ${x.mcpSessionId.slice(0, 8)}…` : ''].filter(Boolean).join(' · ')}</div>
 <div class="xch-b">
 ${httpPart(`http-${x.id}-req`, 'Запрос', `${x.request.method} ${x.request.url}`, x.request)}
-${x.response ? httpPart(`http-${x.id}-res`, `Ответ · HTTP ${x.response.status}`, '', x.response) : html`<div class="xch-part"><span class="lbl">Ответ</span><span class="cap">${x.error ?? 'Ещё не получен: соединение удерживается'}</span></div>`}
+${x.response ? httpPart(`http-${x.id}-res`, `Ответ · HTTP ${x.response.status}`, '', x.response) : html`<div class="xch-part"><span class="lbl">Ответ</span><span class="cap">${x.error ?? (lost ? 'Не получен: стенд перезапустили, пока запрос ждал ответа' : 'Ещё не получен: соединение удерживается')}</span></div>`}
 </div>
 </details>`;
 }
 
-/** Список обменов с фильтром по направлению. */
-export function exchangesView(list, { filter = 'all', download = null, note = '', empty = 'HTTP-обменов пока нет.' } = {}) {
+/** Список обменов с фильтром по направлению. live — выполнение идёт. */
+export function exchangesView(list, { filter = 'all', download = null, note = '', empty = 'HTTP-обменов пока нет.', live = false } = {}) {
   const shown = list.filter((x) => filter === 'all' || x.kind === filter).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   const n = (k) => list.filter((x) => k === 'all' || x.kind === k).length;
   const seg = (k, label) => html`<button type="button" class="${filter === k ? 'on' : ''}" data-action="httpFilter" data-filter="${k}" aria-pressed="${filter === k}">${label} · ${n(k)}</button>`;
   return html`<div class="col" style="gap: 14px">
 <div class="row" style="justify-content: space-between; gap: 12px"><div class="seg" role="group" aria-label="Направление">${seg('all', 'Все')}${seg('agent', 'ClawGym → агент')}${seg('mcp', 'Агент → MCP')}${seg('llm', 'ClawGym → LLM')}</div>${download && list.length ? html`<a class="btn ghost" href="${download}" download>${icon('download')}Скачать JSON</a>` : ''}</div>
 ${note ? html`<p class="hint">${icon('info')}<span>${note}</span></p>` : ''}
-${shown.length ? html`<div class="col" style="gap: 10px">${shown.map(exchangeCard)}</div>` : html`<div class="empty">${list.length ? 'В этом направлении обменов нет.' : empty}</div>`}
+${shown.length ? html`<div class="col" style="gap: 10px">${shown.map((x) => exchangeCard(x, { live }))}</div>` : html`<div class="empty">${list.length ? 'В этом направлении обменов нет.' : empty}</div>`}
 </div>`;
 }

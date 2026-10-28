@@ -63,10 +63,11 @@ export function buildRoutes(app: App): Router {
     const run = app.runs.get(id);
     const live = app.runs.liveExecution(id, params.name);
     const item = run.lines.flatMap((l) => l.items).find((i) => i.execName === params.name) ?? null;
-    if (live) return { ...live.toJSON(), item, live: true };
+    // Ожидания — только у идущего выполнения: в запись они не входят.
+    if (live) return { ...live.toJSON(), item, live: true, waits: live.waits() };
     const saved = await app.store.loadExecution(id, params.name);
     if (!saved) throw new HttpError(404, 'Журнал кейса не найден');
-    return { ...saved, item: item ?? saved.item, live: false };
+    return { ...saved, item: item ?? saved.item, live: false, waits: [] };
   });
   r.get('/api/runs/:id/executions/:name/http', async ({ params, query, res }) => {
     const id = num(params.id);
@@ -107,7 +108,10 @@ export function buildRoutes(app: App): Router {
     const rec = await app.manual.create(await body());
     return { id: rec.id, key: rec.key };
   });
-  r.get('/api/manual/:id', ({ params }) => app.manual.get(num(params.id)));
+  r.get('/api/manual/:id', ({ params }) => {
+    const id = num(params.id);
+    return { ...app.manual.get(id), waits: app.manual.liveExec(id)?.waits() ?? [] };
+  });
   r.post('/api/manual/:id/message', async ({ params, body }) => {
     await app.manual.message(num(params.id), await body());
     return { ok: true };

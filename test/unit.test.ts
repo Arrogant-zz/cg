@@ -253,6 +253,10 @@ test('журнал HTTP: авторизация скрыта, большое т�
   const x = startExchange('agent', 't', { method: 'POST', url: 'https://user:pa55word@stand.local/a2a?api_key=k-123456789&lang=ru', headers: {}, body: '{}' });
   assert.ok(!x.request.url.includes('pa55word') && !x.request.url.includes('k-123456789') && x.request.url.includes('lang=ru'));
   assert.equal(startExchange('mcp', 't', { method: 'POST', url: '/mcp', headers: {}, body: '' }).request.url, '/mcp');
+  // Срок обмена — таймаут запроса от начала; без таймаута срока нет.
+  const timed = startExchange('agent', 't', { method: 'POST', url: '/a2a', headers: {}, body: '{}' }, {}, 1500);
+  assert.equal(Date.parse(timed.deadline!) - Date.parse(timed.startedAt), 1500);
+  assert.equal(x.deadline, null);
   for (const ch of ['я', '€', '😀']) {
     const big = clip(ch.repeat(BODY_LIMIT));
     assert.equal(big.truncated, true);

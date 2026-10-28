@@ -1,5 +1,5 @@
 // Оболочка интерфейса: маршруты, навигация, обновления по SSE, обратный отсчёт.
-import { get, html, onEvent, toast, fmtTime, fmtClock } from './lib.js';
+import { get, html, onEvent, toast, fmtTime, fmtClock, standNow, waitClock } from './lib.js';
 
 const routes = [
   [/^\/$/, 'runs', () => import('./pages/runs.js')],
@@ -102,6 +102,7 @@ async function render(ctx, mod, my, keepScroll) {
       }
     }
     tick();
+    announce();
   } catch (e) {
     if (my !== token) return;
     if (!keepScroll) main.innerHTML = String(html`<h1 class="h1">Не удалось открыть страницу</h1><p class="lede">${e.message}</p>`);
@@ -238,14 +239,25 @@ main.addEventListener('submit', async (ev) => {
   }
 });
 
-// Обратный отсчёт удерживаемых вызовов и длительность выполняющихся шагов.
+// Смену ожидания объявляет диктор: одна живая область на страницу, вне перерисовываемой ленты. Тикающее время в неё не попадает.
+const announcer = document.createElement('div');
+announcer.className = 'sr';
+announcer.setAttribute('role', 'status');
+document.body.appendChild(announcer);
+function announce() {
+  const text = main.querySelector('[data-announce]')?.dataset.announce ?? '';
+  if (announcer.textContent !== text) announcer.textContent = text;
+}
+
+// Обратный отсчёт удерживаемых вызовов, длительность выполняющихся шагов и время ожиданий — по часам стенда.
 function tick() {
-  const now = Date.now();
+  const now = standNow();
   for (const el of document.querySelectorAll('[data-deadline]')) {
     const left = Date.parse(el.dataset.deadline) - now;
     el.textContent = left > 0 ? fmtClock(left) : '0:00';
   }
   for (const el of document.querySelectorAll('[data-since]')) el.textContent = fmtClock(now - Date.parse(el.dataset.since));
+  for (const el of document.querySelectorAll('[data-wait]')) el.textContent = waitClock({ startedAt: el.dataset.wait, deadline: el.dataset.until ?? null, remaining: el.hasAttribute('data-left') }, now);
 }
 setInterval(tick, 1000);
 

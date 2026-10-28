@@ -146,7 +146,7 @@ async function postWithRetries(model: ModelDef, r: Resolved, body: unknown, sign
     const timeout = AbortSignal.timeout(timeoutMs);
     const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
     // Журнал HTTP: запрос — до отправки, ответ или ошибка — по факту. Сертификат в заголовки не попадает, токен маскируется.
-    const x = log ? startExchange('llm', attempt ? `${log.label} · повтор ${attempt}` : log.label, { method: 'POST', url, headers: maskHeaders(h, log.envHeaders), body: text }) : null;
+    const x = log ? startExchange('llm', attempt ? `${log.label} · повтор ${attempt}` : log.label, { method: 'POST', url, headers: maskHeaders(h, log.envHeaders), body: text }, {}, timeoutMs) : null;
     if (x) log!.onExchange(x, 'start');
     const done = (reply: { status: number; headers: Record<string, string>; body: string } | null, error: string | null) => {
       if (!x) return;

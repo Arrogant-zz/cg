@@ -3,7 +3,7 @@ import type { Execution } from './execution.js';
 import type { CheckItem, ChecksEvent, CommandEvent, DecisionEvent, JudgeEvent, MessageEvent, ScoresEvent, ToolCallEvent } from './events.js';
 import { LIMIT_STATUSES, TECH_STATUSES } from './events.js';
 import { runActionChecks } from '../checks/actions.js';
-import { frozenResult, type LlmJudge } from '../judge/judge.js';
+import { ANSWER_LABEL, JUDGE_LABEL, frozenResult, type LlmJudge } from '../judge/judge.js';
 import { StructuredError, sumUsage } from '../llm/structured.js';
 import { DEFAULT_SCORING, caseScore, finalAction, toolsF1, type AnswerMatch, type CaseScores, type FinalAction, type Scoring } from '../metrics/scoring.js';
 import type { LlmRequest } from '../llm/provider.js';
@@ -37,7 +37,7 @@ export async function evaluate(exec: Execution, resultSeq: number, judge: LlmJud
     j = { status: 'skipped', passed: 0, total: criteria.length, failed: [], error: 'модель оценки не выбрана' };
   } else {
     // HTTP-обмены судьи привязываются к событию оценки, когда оно появится.
-    const log = exec.llmLog();
+    const log = exec.llmLog({ label: JUDGE_LABEL, title: 'LLM-оценка: критерии ответа' });
     try {
       const r = await judge.evaluate(exec, resultSeq, signal, log.onExchange);
       const byId = new Map(r.value.criteria.map((c) => [c.id, c]));
@@ -74,7 +74,7 @@ export async function evaluate(exec: Execution, resultSeq: number, judge: LlmJud
   // Метрики аналитика не меняют итог кейса: это отдельные M1 и M2.
   const final = finalAction(exec.caseDef, exec.status, calls, frozenResult(exec, resultSeq).finalReply, scoring);
   const tools = toolsF1(exec.caseDef.reference.tools, calls, scoring.tools);
-  const answerLog = exec.llmLog();
+  const answerLog = exec.llmLog({ label: ANSWER_LABEL, title: 'LLM-оценка: эталонный текст' });
   const answer = await answerMatch(exec, final, judge, scoring, signal, answerLog.onExchange);
   const scores: CaseScores = { final, tools, answer, caseScore: caseScore(tools.f1, answer.score, scoring.weights), weights: scoring.weights };
   answerLog.attach(exec.add<ScoresEvent>({ type: 'scores', hidden: true, ...scores }));

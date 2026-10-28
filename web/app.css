@@ -205,3 +205,12 @@ dialog.confirm::backdrop{background:rgba(23,28,25,.32)}
 .md-sw:hover{color:#A84A16}
 .md-sw[aria-pressed="true"]{background:#171C19;color:#FFFFFF;box-shadow:none}
 
+/* Строка ожидания в конце ленты: кто держит ход, время из срока, на чём ход стоит. Ждут вас — пояснение темнее. */
+.wait-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:13px;line-height:20px;color:#4A524D}
+.wait-row .num{color:#171C19}
+.wait-row.you .t2{color:#171C19;font-weight:500}
+.wait-row a.ev{padding:0 4px;border-radius:5px;box-shadow:inset 0 0 0 1px #E4E6E1}
+/* Подсказка по наведению: подпись с пунктиром. */
+.tip{text-decoration:underline dotted #A6ADA7;text-underline-offset:3px;cursor:help}
+/* Только для экранного диктора. */
+.sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
