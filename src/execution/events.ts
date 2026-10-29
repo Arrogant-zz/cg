@@ -87,6 +87,7 @@ export interface MessageEvent extends BaseEvent {
   taskId?: string;
   marks?: { correction: boolean; lessonId: string | null; lessonNote: string | null; explanation: boolean; approval: boolean; finish: boolean; manual?: boolean; repeated?: boolean };
   decisionSeq?: number;
+  /** Склеенные реплики к подтверждениям, ушедшие после хода, — только в прежних записях: теперь их пересматривает решение на конец хода. */
   queued?: boolean;
 }
 
@@ -119,8 +120,10 @@ export interface DecisionEvent extends BaseEvent {
   forced?: string;
   /** Решение пришло, когда вызов уже получил ошибку закрытого кейса: на кейс оно не влияет. */
   moot?: true;
-  /** Реплика к решению не ушла агенту: кейс закрыт терминальным инструментом в том же ходе. */
+  /** Реплика к решению не ушла агенту: кейс завершился раньше, чем оператор её пересмотрел, — терминальным инструментом, решением оператора, лимитом или сбоем. */
   replyDropped?: true;
+  /** Номер решения на конец хода, которое пересмотрело реплику к подтверждению: сама реплика агенту не уходит. */
+  replyReviewed?: number;
 }
 
 export interface JudgeEvent extends BaseEvent {

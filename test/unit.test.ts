@@ -451,8 +451,8 @@ test('перечень входных данных: стартовый шабл�
       ['agents/fake-agent.yaml', 'agent'],
       ['templates/aefclaw-a2a-message.json', 'agent'],
       ['models/fake-operator.yaml', 'models'],
-      ['prompts/operator-v2.txt', 'prompts'],
-      ['prompts/operator-v2.schema.json', 'prompts'],
+      ['prompts/operator-v3.txt', 'prompts'],
+      ['prompts/operator-v3.schema.json', 'prompts'],
     ]) {
       assert.equal(files.get(file), group, file);
     }

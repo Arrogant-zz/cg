@@ -83,13 +83,40 @@ function marksOf(d: OperatorDecision, prior: Set<string>): NonNullable<MessageEv
 export async function runDialog(exec: Execution, deps: DialogDeps): Promise<DialogOutcome> {
   const { channel, operator, mode, limits } = deps;
   const lastSeq = () => exec.events[exec.events.length - 1]?.seq ?? 0;
+  // Реплики к подтверждениям текущего хода: агенту сами не уходят, их пересматривает решение на конец хода.
+  const unsent: { text: string; decisionSeq: number }[] = [];
+  const decisionAt = (seq: number) => exec.events.find((e): e is DecisionEvent => e.seq === seq && e.type === 'operator_decision');
+
+  // Кейс завершился раньше, чем оператор пересмотрел реплики хода: агенту они не уходят.
+  const dropUnsent = (reason: string): void => {
+    const q = unsent.splice(0, unsent.length);
+    if (!q.length) return;
+    for (const x of q) {
+      const dec = decisionAt(x.decisionSeq);
+      if (!dec) continue;
+      dec.replyDropped = true;
+      exec.update(dec);
+    }
+    exec.add<NoteEvent>({ type: 'note', hidden: true, text: `Реплика оператора не отправлена: ${reason}`, data: { decisions: q.map((x) => x.decisionSeq), text: q.map((x) => x.text) } });
+  };
+
+  // Решение на конец хода пересмотрело реплики хода: агенту уходит только его реплика.
+  const reviewed = (seq: number): void => {
+    for (const x of unsent.splice(0, unsent.length)) {
+      const dec = decisionAt(x.decisionSeq);
+      if (!dec) continue;
+      dec.replyReviewed = seq;
+      exec.update(dec);
+    }
+  };
+
   const end = (status: string, reason: string, by: Execution['endedBy'] = null): DialogOutcome => {
     exec.confirmationHandler = null;
     exec.endedBy = by;
+    dropUnsent(`кейс завершён до решения на конец хода (${reason})`);
     return { status, reason, resultSeq: lastSeq() };
   };
   const failure: { status: string; reason: string } = { status: '', reason: '' };
-  const queued: { text: string; marks: MessageEvent['marks']; decisionSeq: number }[] = [];
 
   const recordDecision = (event: OperatorEvent, res: Awaited<ReturnType<LlmOperator['decide']>> | null, err: StructuredError | null, callId?: string): DecisionEvent =>
     exec.add<DecisionEvent>({
@@ -136,19 +163,6 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     return { action: 'reject', by: 'auto', decisionSeq: dec.seq };
   };
 
-  // Кейс закрыт терминальным инструментом: реплики, решённые в этом ходе, агенту уже не уходят.
-  const dropQueued = (tool: string): void => {
-    const q = queued.splice(0, queued.length);
-    if (!q.length) return;
-    for (const x of q) {
-      const dec = exec.events.find((e): e is DecisionEvent => e.seq === x.decisionSeq && e.type === 'operator_decision');
-      if (!dec) continue;
-      dec.replyDropped = true;
-      exec.update(dec);
-    }
-    exec.add<NoteEvent>({ type: 'note', hidden: true, text: `Реплика оператора не отправлена: кейс закрыт терминальным инструментом ${tool}`, data: { decisions: q.map((x) => x.decisionSeq), text: q.map((x) => x.text) } });
-  };
-
   exec.confirmationHandler = async (call: ToolCallEvent) => {
     if (mode === 'checking' && deps.checkingConfirmations === 'approve') {
       const d = exec.add<DecisionEvent>({
@@ -170,7 +184,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
       failure.reason = failure.reason || 'Исчерпан лимит запросов оператора';
       return { action: 'reject', by: 'auto' };
     }
-    const event: OperatorEvent = { type: 'confirmation', call };
+    const event: OperatorEvent = { type: 'confirmation', call, unsent: unsent.map((x) => x.decisionSeq) };
     const log = exec.llmLog({ label: decisionLabel(event), title: 'решает LLM-оператор', timeoutMs: deps.confirmationTimeoutMs, callId: call.callId });
     try {
       const res = await decide(event, deps.confirmationTimeoutMs, log);
@@ -178,7 +192,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
       const dec = recordDecision(event, res, null, call.callId);
       log.attach(dec);
       if (call.afterClose) return moot(dec);
-      if (d.reply) queued.push({ text: d.reply, marks: marksOf(d, deps.priorLessons), decisionSeq: dec.seq });
+      if (d.reply) unsent.push({ text: d.reply, decisionSeq: dec.seq });
       return { action: d.confirmation ?? 'reject', by: 'operator', decisionSeq: dec.seq };
     } catch (e) {
       const err = e instanceof StructuredError ? e : null;
@@ -216,24 +230,14 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     if (exec.flags.operatorTimeout) return end('operator_timeout', 'Оператор не решил по подтверждению до таймаута MCP-вызова; вызов отклонён автоматически');
     // Терминальный инструмент выполнен: агент договорил ход, оператор больше не вызывается и не пишет. Лимиты — после: закрытие в последнем ходе — «Завершён».
     if (exec.closedBy) {
-      dropQueued(exec.closedBy.tool);
+      dropUnsent(`кейс закрыт терминальным инструментом ${exec.closedBy.tool}`);
       return end('completed', `Выполнен терминальный инструмент ${exec.closedBy.tool}`, 'terminal');
     }
     if (finishAfterTurn) return end('completed', 'Оператор завершил кейс', 'operator');
 
-    if (queued.length) {
-      // Реплика, решённая при отклонении вызова, уходит после конца хода агента.
-      const q = queued.splice(0, queued.length);
-      next = {
-        text: q.map((x) => x.text).join('\n\n'),
-        kind: 'operator',
-        extra: { marks: q.find((x) => x.marks?.correction)?.marks ?? q[0].marks, decisionSeq: q[0].decisionSeq, queued: true },
-      };
-      continue;
-    }
-
+    // Реплики к подтверждениям этого хода оператор видит в решении на конец хода и сам решает, что из них написать агенту.
     if (exec.operatorCalls >= limits.maxOperatorCalls) return end('limit_operator_calls', `Исчерпан лимит ${limits.maxOperatorCalls} запросов оператора`);
-    const event: OperatorEvent = { type: 'turn_end', agentReply: r.reply.text };
+    const event: OperatorEvent = { type: 'turn_end', agentReply: r.reply.text, unsent: unsent.map((x) => x.decisionSeq) };
     const log = exec.llmLog({ label: decisionLabel(event), title: 'LLM-оператор решает, что ответить', timeoutMs: turnDecisionMs });
     let res;
     try {
@@ -245,6 +249,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     }
     const dec = recordDecision(event, res, null);
     log.attach(dec);
+    reviewed(dec.seq);
     const d = res.value;
     if (d.finish && !d.reply) return end('completed', 'Оператор завершил кейс', 'operator');
     if (d.finish) finishAfterTurn = true;

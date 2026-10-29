@@ -512,7 +512,7 @@ test('сравнение по снимку входных данных: друг
     await t.api('POST', '/api/config/reload');
     const b = await run();
     const file = (r: any, f: string) => r.snapshot.files.find((x: any) => x.file === f);
-    for (const f of ['contracts/start-message.txt', 'contracts/tool-defaults.yaml', 'templates/aefclaw-a2a-message.json', 'prompts/operator-v2.txt']) {
+    for (const f of ['contracts/start-message.txt', 'contracts/tool-defaults.yaml', 'templates/aefclaw-a2a-message.json', 'prompts/operator-v3.txt']) {
       assert.match(file(a, f)?.sha256 ?? '', /^[0-9a-f]{64}$/, f);
       assert.equal(file(a, f).hash, file(a, f).sha256.slice(0, 4), 'короткая метка — начало полного хеша');
     }
@@ -534,9 +534,9 @@ test('сравнение по снимку входных данных: друг
     // Прогон на прежней подсказке оператора operator-v1: сравнение показывает, что подсказки различаются.
     const v1 = structuredClone(t.app.runs.get(b.id));
     v1.settings.prompts.operator = 'operator-v1';
-    Object.assign(v1.snapshot.files.find((f: any) => f.file === 'prompts/operator-v2.txt')!, { file: 'prompts/operator-v1.txt', sha256: '0'.repeat(64), hash: '0000' });
+    Object.assign(v1.snapshot.files.find((f: any) => f.file === 'prompts/operator-v3.txt')!, { file: 'prompts/operator-v1.txt', sha256: '0'.repeat(64), hash: '0000' });
     const prompts = compareRuns(v1, t.app.runs.get(b.id)).rows.find((r) => r.key === 'prompts')!;
-    assert.deepEqual([prompts.same, prompts.a.split(' · ')[0], prompts.b.split(' · ')[0]], [false, 'operator-v1', 'operator-v2']);
+    assert.deepEqual([prompts.same, prompts.a.split(' · ')[0], prompts.b.split(' · ')[0]], [false, 'operator-v1', 'operator-v3']);
 
     // Запись до 28.10.2026 — без перечня входных данных: совпадение коротких меток сопоставимость не подтверждает.
     const legacy = structuredClone(t.app.runs.get(b.id));

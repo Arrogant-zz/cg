@@ -13,7 +13,8 @@ interface Ctx {
   style: string | null;
   lessons: { id: string; rule: string }[];
   transcript: any[];
-  event: { type: 'turn_end'; agentReply: string; looksLikeQuestion: boolean } | { type: 'confirmation'; tool: string; args: any };
+  /** unsentReplies — номера неотправленных реплик к подтверждениям этого хода: в журнале они с sent: false. */
+  event: { type: 'turn_end'; agentReply: string; looksLikeQuestion: boolean; unsentReplies?: number[] } | { type: 'confirmation'; tool: string; args: any };
 }
 
 const decision = (d: Partial<Record<string, unknown>>) => ({
@@ -34,7 +35,8 @@ export function fakeOperator(ctx: Ctx) {
   const ev = ctx.event;
   const rule = (id: string | null) => ctx.lessons.find((l) => l.id === id)?.rule ?? null;
   const executed = (tool: string) => ctx.transcript.some((t) => t.role === 'tool' && t.tool === tool && t.executed);
-  const corrections = ctx.transcript.filter((t) => t.role === 'operator' && t.correction);
+  // Поправки, которые дошли до агента: неотправленные реплики хода не в счёт.
+  const corrections = ctx.transcript.filter((t) => t.role === 'operator' && t.correction && t.sent !== false);
   const timesCorrected = (lesson: string | null) => corrections.filter((t) => t.lessonId === lesson).length;
   const agentText = ctx.transcript.filter((t) => t.role === 'agent').map((t) => t.text).join('\n');
 
@@ -58,6 +60,24 @@ export function fakeOperator(ctx: Ctx) {
       return decision({ confirmation: 'reject', correction: true, lessonId: req.lesson, ...c, reason: `до ${ev.tool} нужен ${req.tool}` });
     }
     return decision({ confirmation: 'approve', reason: 'действие соответствует эталону' });
+  }
+
+  // Реплики к подтверждениям этого хода агент не видел. Реплика к отклонению устарела, если нужный до вызова инструмент агент уже выполнил сам.
+  const stale = (t: any) => {
+    const c = ctx.transcript.find((x) => x.role === 'tool' && x.seq === t.call);
+    const req = c?.confirmation === 'reject' ? ctx.reference.required.find((r) => r.before === c.tool) : undefined;
+    return !!req && executed(req.tool);
+  };
+  const fresh = ctx.transcript.filter((t) => t.sent === false && ev.unsentReplies?.includes(t.seq) && !stale(t));
+  if (fresh.length) {
+    const first = fresh.find((t) => t.correction) ?? fresh[0];
+    return decision({
+      reply: fresh.map((t) => t.text).join('\n\n'),
+      correction: !!first.correction,
+      lessonId: first.lessonId ?? null,
+      explanation: !!first.lessonId && first.text === rule(first.lessonId),
+      reason: 'неотправленные реплики хода ещё нужны агенту',
+    });
   }
 
   const text = ev.agentReply;

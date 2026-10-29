@@ -7,39 +7,16 @@ import path from 'node:path';
 import { loadRegistry } from '../src/config/loader.js';
 import { loadEnv } from '../src/env.js';
 import { terminalMatches } from '../src/stubs/engine.js';
-import { Execution, type ExecutionInit } from '../src/execution/execution.js';
-import { runDialog, type DialogDeps } from '../src/execution/dialog.js';
+import type { Execution } from '../src/execution/execution.js';
+import { runDialog } from '../src/execution/dialog.js';
 import { execStats } from '../src/execution/evaluate.js';
-import type { AgentChannel } from '../src/execution/channel.js';
-import type { CommandEvent, DecisionEvent, MessageEvent, NoteEvent } from '../src/execution/events.js';
-import { operatorContext, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../src/operator/operator.js';
+import type { DecisionEvent, NoteEvent } from '../src/execution/events.js';
+import { operatorContext } from '../src/operator/operator.js';
 import { OPERATOR_PROMPT_VERSION, OPERATOR_SYSTEM } from '../src/operator/prompts.js';
 import { StructuredError } from '../src/llm/structured.js';
 import { CONFIG, REPO, startStand, until, type Stand } from './helpers.js';
+import { agent, approveAll, call, deps, execution, held, operator, whenTrue } from './dialog-helpers.js';
 
-/** Выполнение кейса notifications-channel-change: заглушка закрытия есть, у get_smsbank_notifications и cases_postpone заглушек нет. */
-async function execution(overrides: Partial<ExecutionInit> = {}): Promise<Execution> {
-  const reg = await loadRegistry(CONFIG);
-  return new Execution({
-    id: 'terminal', mode: 'manual', caseDef: reg.cases.get('notifications-channel-change')!,
-    contract: reg.contract!, solution: null, basketType: null, senderId: 'terminal-local',
-    caseNumber: 'CG-TERM', requestRef: 'terminal-ref', taskIdScope: 'execution',
-    env: loadEnv({ AGENT_MCP_TIMEOUT_MS: '20000', OPERATOR_DECISION_MARGIN_MS: '1000' }, REPO), run: null,
-    ...overrides,
-  });
-}
-
-/** Удерживаемый вызов инструмента: ждёт, пока он появится, — после решения по подтверждению вызов может ждать ответа человека. */
-async function held(exec: Execution, tool: string, kind: 'confirmation' | 'answer'): Promise<string> {
-  for (let i = 0; i < 200; i++) {
-    const p = exec.pendingList().find((x) => x.tool === tool && x.kind === kind);
-    if (p) return p.callId;
-    await new Promise((r) => setImmediate(r));
-  }
-  throw new Error(`${tool} не ждёт ${kind}`);
-}
-
-const call = (exec: Execution, tool: string, args: Record<string, unknown> = {}) => exec.handleToolCall(tool, args, exec.currentTaskId);
 const last = (exec: Execution, tool: string) => exec.toolCalls().filter((c) => c.tool === tool).at(-1)!;
 const close = { request: { shortAnswer: 'Уведомления будут приходить в SMS', extendedAnswer: 'Канал уведомлений изменён на SMS.' } };
 
@@ -227,64 +204,6 @@ test('ответ человека вместо терминального инс
 
 // ---------------------------------------------------------------- автоматический диалог
 
-/** Ход агента-сценария: вызывает инструменты и возвращает текст ответа или сбой хода. */
-type Turn = (exec: Execution) => Promise<string | { error: 'timeout' | 'agent' }>;
-
-/** Канал к агенту-сценарию: события журнала — как у настоящего канала, ход заканчивается endTurn(). */
-function agent(turns: Turn[]): AgentChannel {
-  let n = 0;
-  return {
-    async command(exec: Execution, name: 'reset' | 'capture' | 'curator') {
-      return exec.add<CommandEvent>({ type: 'command', name, text: `/${name}`, status: 'ok', reply: 'ok', parsed: null, durationMs: 0, by: 'runner' });
-    },
-    async sendMessage(exec: Execution, text: string, kind: 'start' | 'operator' | 'human', extra: Partial<MessageEvent> = {}) {
-      exec.add<MessageEvent>({ type: kind === 'start' ? 'start_message' : kind === 'operator' ? 'operator_message' : 'human_message', text, ...extra });
-      const out = n < turns.length ? await turns[n++](exec) : 'Жду указаний.';
-      if (typeof out !== 'string') {
-        exec.add<NoteEvent>({ type: 'note', text: `Агент: ${out.error}` });
-        exec.endTurn();
-        return { ok: false, error: { kind: out.error, message: `Агент: ${out.error}` } };
-      }
-      const reply = exec.add<MessageEvent>({ type: 'agent_message', text: out, turn: exec.turns + 1 });
-      exec.endTurn();
-      return { ok: true, reply, raw: {} };
-    },
-  } as unknown as AgentChannel;
-}
-
-/** LLM-оператор по сценарию; seen — какие решения у него спрашивали. */
-function operator(decide: (event: OperatorEvent, exec: Execution) => Promise<Partial<OperatorDecision>>): { op: LlmOperator; seen: string[] } {
-  const seen: string[] = [];
-  const op = {
-    model: { id: 'fake-operator' },
-    async decide(exec: Execution, event: OperatorEvent) {
-      seen.push(event.type === 'confirmation' ? `confirmation ${event.call.tool}` : 'turn_end');
-      const value = { reply: null, confirmation: null, correction: false, lessonId: null, lessonNote: null, explanation: false, approval: false, finish: false, reason: 'сценарий теста', ...(await decide(event, exec)) };
-      return { value, attempts: [{ n: 1, ok: true, durationMs: 1 }], usage: null, durationMs: 1, model: 'fake-operator' };
-    },
-  };
-  return { op: op as unknown as LlmOperator, seen };
-}
-
-const deps = (channel: AgentChannel, op: LlmOperator, over: Partial<DialogDeps> = {}): DialogDeps => ({
-  channel,
-  operator: op,
-  mode: 'training',
-  checkingConfirmations: 'approve',
-  limits: { maxTurns: 6, maxDurationSec: 60, maxOperatorCalls: 20 },
-  confirmationTimeoutMs: 5000,
-  priorLessons: new Set(),
-  signal: new AbortController().signal,
-  ...over,
-});
-
-const approveAll = async (e: OperatorEvent): Promise<Partial<OperatorDecision>> => (e.type === 'confirmation' ? { confirmation: 'approve' } : { reply: 'Продолжайте' });
-
-async function whenTrue(fn: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 2000 && !fn(); i++) await new Promise((r) => setImmediate(r));
-  assert.ok(fn(), what);
-}
-
 test('диалог: после терминального вызова агент договаривает ход, оператор не вызывается; закрытие в последнем ходе — «Завершён», а не лимит', async (t) => {
   const exec = await execution({ mode: 'auto' });
   t.after(() => exec.stop('cleanup'));
@@ -404,7 +323,7 @@ test('поправки: учитывается то, что дошло до аг
   assert.deepEqual([stats.corrections, stats.lessons], [1, ['L-dropped']]);
 });
 
-test('LLM-оператор: в событии подтверждения видно, закроет ли вызов кейс; подсказка operator-v2 объясняет терминальное действие', async (t) => {
+test('LLM-оператор: в событии подтверждения видно, закроет ли вызов кейс; подсказка operator-v3 объясняет терминальное действие и неотправленные реплики', async (t) => {
   const exec = await execution();
   t.after(() => exec.stop('cleanup'));
   const limits = { maxTurns: 6, maxDurationSec: 60, maxOperatorCalls: 20 };
@@ -416,9 +335,11 @@ test('LLM-оператор: в событии подтверждения вид�
   assert.equal(ctx('get_close_with_answer', close), true);
   assert.equal(ctx('change_stage', { request: { comment: 'на себе', keepOnSelf: true, stageId: 'ST-2' } }), false);
   assert.equal(ctx('change_notifications_channel_for_case', { request: { channelCode: 'SMS' } }), false);
-  assert.equal(OPERATOR_PROMPT_VERSION, 'operator-v2');
-  assert.match(OPERATOR_SYSTEM, /подсказка operator-v2/);
+  assert.equal(OPERATOR_PROMPT_VERSION, 'operator-v3');
+  assert.match(OPERATOR_SYSTEM, /подсказка operator-v3/);
   assert.match(OPERATOR_SYSTEM, /terminal=true/);
+  assert.match(OPERATOR_SYSTEM, /unsentReplies/);
+  assert.match(OPERATOR_SYSTEM, /sent=false/);
 });
 
 // ---------------------------------------------------------------- ручная сессия на fake-agent

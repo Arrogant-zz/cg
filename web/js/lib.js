@@ -510,11 +510,15 @@ export function decisionBlock(e, { http = false } = {}) {
   if ('finish' in d) kv.push(html`<span>завершение: ${d.finish ? 'да' : 'нет'}</span>`);
   if (d.approval) kv.push(html`<span>одобрение</span>`);
   if (e.moot) kv.push(html`<span>кейс уже закрыт: решение не применено</span>`);
-  if (e.replyDropped) kv.push(html`<span>реплика не отправлена: кейс закрыт</span>`);
+  if (e.replyDropped) kv.push(html`<span>реплика не отправлена: кейс завершён</span>`);
+  if (e.replyReviewed) kv.push(html`<span>реплика не отправлена как есть: её пересмотрело решение <a class="ev" href="#ev-${e.replyReviewed}" data-action="toEvent" data-seq="${e.replyReviewed}">#${e.replyReviewed}</a></span>`);
+  // Реплика к подтверждению сама агенту не уходит: её текст виден только здесь. Реплику решения на конец хода показывает сообщение оператора.
+  const reply = e.event === 'confirmation' && d.reply ? html`<div class="bub sys" style="white-space: pre-wrap">${d.reply}</div>` : '';
   const meta = e.forced ? e.forced : `${e.model}${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''}${e.attempts?.length > 1 ? ` · попыток ${e.attempts.length}` : ''}`;
   return html`<div class="hid" id="ev-${e.seq}"><div class="hid-h">${icon('hidden')}Решение оператора · скрыто от агента<span class="cap">${meta}</span><span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
 ${e.error ? html`<span class="pill tech" style="align-self: flex-start">${e.error}</span>` : ''}
 ${kv.length ? html`<div class="kvh">${kv}</div>` : ''}
+${reply}
 ${d.reason ? html`<span>${d.reason}</span>` : ''}
 ${e.attempts?.some((a) => !a.ok) ? html`<span class="cap">${e.attempts.filter((a) => !a.ok).map((a) => `попытка ${a.n}: ${a.kind === 'format' ? 'ошибка формата' : 'ошибка LLM'} — ${a.error}`).join(' · ')}</span>` : ''}
 </div>`;

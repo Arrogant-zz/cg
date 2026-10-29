@@ -21,9 +21,10 @@ export interface OperatorDecision {
   reason: string;
 }
 
+/** unsent — номера решений, чьи реплики к подтверждениям этого хода ещё не пересмотрены: агент их не видел. */
 export type OperatorEvent =
-  | { type: 'turn_end'; agentReply: string }
-  | { type: 'confirmation'; call: ToolCallEvent };
+  | { type: 'turn_end'; agentReply: string; unsent?: number[] }
+  | { type: 'confirmation'; call: ToolCallEvent; unsent?: number[] };
 
 export interface OperatorLimits {
   maxTurns: number;
@@ -38,15 +39,24 @@ export function lessonCatalog(exec: Execution): LessonDef[] {
   return [...map.values()];
 }
 
-/** Что известно оператору: журнал без скрытых событий ClawGym; результаты инструментов — по настройке решения. */
-export function transcript(exec: Execution): unknown[] {
+/**
+ * Что известно оператору: журнал без скрытых событий ClawGym; результаты инструментов — по настройке решения.
+ * unsent — решения, чьи реплики к подтверждениям этого хода ещё не пересмотрены: они стоят после своих вызовов с sent: false.
+ */
+export function transcript(exec: Execution, unsent: readonly number[] = []): unknown[] {
   const sees = exec.solution?.operator.seesToolResults !== false;
+  const pending = new Set(unsent);
+  const calls = new Map<string, number>();
   const out: unknown[] = [];
   for (const e of exec.events) {
     if (e.type === 'start_message') out.push({ seq: e.seq, role: 'clawgym', kind: 'start', text: e.text });
     else if (e.type === 'agent_message') out.push({ seq: e.seq, role: 'agent', text: e.text });
     else if (e.type === 'operator_message' || e.type === 'human_message') out.push({ seq: e.seq, role: 'operator', text: e.text, correction: e.marks?.correction ?? false, lessonId: e.marks?.lessonId ?? null });
-    else if (e.type === 'tool_call') {
+    else if (e.type === 'operator_decision' && pending.has(e.seq)) {
+      const d = e.decision ?? {};
+      out.push({ seq: e.seq, role: 'operator', text: d.reply, sent: false, call: e.callId ? (calls.get(e.callId) ?? null) : null, correction: d.correction === true, lessonId: d.lessonId ?? null });
+    } else if (e.type === 'tool_call') {
+      calls.set(e.callId, e.seq);
       out.push({
         seq: e.seq,
         role: 'tool',
@@ -80,10 +90,16 @@ export function operatorContext(exec: Execution, event: OperatorEvent, mode: Bas
     style: exec.solution?.operator.style ?? null,
     lessons: lessonCatalog(exec),
     limits: { turnsUsed: exec.turns, maxTurns: limits.maxTurns, operatorCallsUsed: exec.operatorCalls, maxOperatorCalls: limits.maxOperatorCalls },
-    transcript: transcript(exec),
+    transcript: transcript(exec, event.unsent),
     event:
       event.type === 'turn_end'
-        ? { type: 'turn_end', agentReply: event.agentReply, looksLikeQuestion: /\?\s*$/.test(event.agentReply.trim()) }
+        ? {
+            type: 'turn_end',
+            agentReply: event.agentReply,
+            looksLikeQuestion: /\?\s*$/.test(event.agentReply.trim()),
+            // Реплики к подтверждениям этого хода, которых агент не видел: что из них ещё нужно, оператор пишет в reply.
+            ...(event.unsent?.length ? { unsentReplies: event.unsent } : {}),
+          }
         : {
             type: 'confirmation',
             seq: event.call.seq,
