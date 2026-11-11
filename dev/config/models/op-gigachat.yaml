@@ -1,0 +1,20 @@
+# LLM-оператор через GigaChat API v1: POST {baseUrl}/v1/chat/completions. Адрес, сертификат и имя модели — из окружения.
+# С сертификатом: https-адрес и файлы GIGACHAT_CERT_FILE, GIGACHAT_KEY_FILE — ClawGym сам делает mTLS.
+# Без сертификата: http-адрес внутри Istio, файлы не задаются — mTLS до GigaChat делает sidecar или egress-шлюз.
+id: op-gigachat
+title: op-gigachat · GigaChat v1
+roles: [operator]
+provider: gigachat-v1
+baseUrl: ${env:GIGACHAT_BASE_URL}              # корень API без версии: https://gigachat.devices.sberbank.ru/api или http://… внутри Istio
+model: ${env:GIGACHAT_OPERATOR_MODEL:-GigaChat-2-Max}
+tls:
+  cert: ${env:GIGACHAT_CERT_FILE:-}            # клиентский сертификат, PEM; не задан — вызов без сертификата
+  key: ${env:GIGACHAT_KEY_FILE:-}              # закрытый ключ, PEM
+  passphrase: ${env:GIGACHAT_KEY_PASSPHRASE:-} # пароль ключа, если он зашифрован
+  ca: ${env:GIGACHAT_CA_FILE:-}                # корневой сертификат сервера, если его нет в системном хранилище
+params:
+  temperature: 0.3
+  maxTokens: 4000
+  timeoutMs: 120000
+  retries: 2
+  responseFormat: json_schema

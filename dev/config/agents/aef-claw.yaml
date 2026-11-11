@@ -1,0 +1,51 @@
+id: aef-claw
+title: AEFClaw
+
+request:
+  # Полный адрес A2A. Локальный шлюз (scripts/local-stack.sh) слушает 18789;
+  # дефолт шлюза агента — 8080 (openclaw.template.json), на нём ClawGym не запускать.
+  url: ${env:AEF_CLAW_URL:-http://127.0.0.1:18789/a2a}
+  method: POST
+  headers:
+    # assertSupportedA2aVersion принимает 1.0 или отсутствие заголовка.
+    a2a-version: "1.0"
+    # Если шлюз стенда требует токен, раскомментируйте и задайте AEF_CLAW_AUTHORIZATION:
+    # Authorization: ${env:AEF_CLAW_AUTHORIZATION}
+  # Тело — A2A SendMessage: contextId = x-task-id, часть с mediaType text/plain.
+  body: templates/aefclaw-a2a-message.json
+  # Оба заголовка оркестратор передаёт на /a2a; senderId задаёт сессию агента.
+  taskIdHeader: x-task-id
+  senderIdHeader: X-A2A-Sender-Id
+  # contextId = taskId на всё обращение: один кейс — одна задача и один набор вызовов.
+  taskIdScope: execution
+
+response:
+  mode: sync
+  # OpenClawRestAdapter.extractResponseText — текст из result.task.status.message.parts.
+  replyPath: $.result.task.status.message.parts[*].text
+  statusPath: $.result.task.status.state
+  # Ошибка приходит как JSON-RPC error: поля result в таком ответе нет.
+  errorPath: $.error.message
+
+commands:
+  # В оркестраторе request_ref стартового сообщения равен taskId — тот же идентификатор уходит в capture.
+  capture: /case-capture request_ref={{taskId}} category={{topic}}
+
+mcp:
+  # Контракт, который ClawGym предъявляет агенту: tools/list стенда оркестратора.
+  # Точный список снимается командой import-tools (README).
+  contract: contracts/tools.json
+  # Версию протокола и поиск x-task-id MCP-сервер стенда выбирает сам для всех агентов: docs/CONTRACTS.md, раздел 4.
+
+# Модель и стартовые скиллы задаются сборкой и развёртыванием AEFClaw: ClawGym их не переключает,
+# не устанавливает и не выгружает (решение владельца от 27.10.2026). Метка — для снимка прогона и сравнения.
+model: задана развёртыванием AEFClaw
+
+sessions:
+  # Лимит одновременных сессий стенда; у агента своего лимита нет.
+  max: 3
+
+learningKit: learning-scripts (в сборке AEFClaw не найден — установить отдельно)
+build: openclaw 2026.6.10 (версия из package.json репозитория; на стенде уточнить)
+# Отдельная переменная: AEF_CLAW_URL — полный адрес A2A с /a2a, к нему /readyz не добавить.
+healthUrl: ${env:AEF_CLAW_HEALTH_URL:-http://127.0.0.1:18789/readyz}

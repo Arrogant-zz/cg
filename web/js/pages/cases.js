@@ -109,18 +109,22 @@ export async function render(ctx) {
   const allCollapsed = folders.every((f) => collapsed.has(f));
   const c = sel ? await get(`/api/cases/${encodeURIComponent(sel)}`).catch(() => null) : null;
   const ok = !list.errors;
+  // В cases/ нет ни одного кейса: это не поиск без совпадений — экран называет каталог и что сделать.
+  const noCases = !list.cases.length;
   return html`<header class="ph">
 <div class="ph-t"><h1 class="h1">Кейсы и решения</h1><p class="lede">Кейс хранит ситуацию, заглушки и общий эталон. Решение — сценарий LLM-оператора для этого кейса: заглушки и эталон в него не копируются.</p></div>
 <div class="ph-a"><span class="row cap" style="gap: 8px">${mk(ok ? true : false)}${list.cases.length} ${plural(list.cases.length, 'кейс', 'кейса', 'кейсов')} · ${list.solutions} ${plural(list.solutions, 'решение', 'решения', 'решений')} · ${ok ? 'ошибок нет' : `${list.errors} ${plural(list.errors, 'ошибка', 'ошибки', 'ошибок')}`}</span><button class="btn" type="button" data-action="reload">${icon('refresh')}Перечитать файлы</button></div>
 </header>
 <div class="split">
 <div class="lst">
-<label class="field" style="padding-bottom: 8px"><span class="lbl">Поиск по кейсам</span><input class="input" type="search" placeholder="Название, тема, тег или папка" value="${ctx.state.q ?? ''}" data-change="search"></label>
+${noCases
+    ? html`<div class="empty">В cases/ нет кейсов.</div>`
+    : html`<label class="field" style="padding-bottom: 8px"><span class="lbl">Поиск по кейсам</span><input class="input" type="search" placeholder="Название, тема, тег или папка" value="${ctx.state.q ?? ''}" data-change="search"></label>
 ${grouped && folders.length > 1 && !q ? html`<button type="button" class="fold all" data-action="toggleAll" data-mode="${allCollapsed ? 'expand' : 'collapse'}" data-folders="${JSON.stringify(folders)}">${allCollapsed ? 'Развернуть все папки' : 'Свернуть все папки'}</button>` : ''}
 ${filtered.map(
     (x, i) => html`${grouped && (i === 0 || filtered[i - 1].folder !== x.folder) ? folderHeader(x.folder, shown.get(x.folder), totals.get(x.folder), hidden(x.folder), i === 0) : ''}${grouped && hidden(x.folder) ? '' : html`<a class="li ${x.id === sel ? 'on' : ''}" href="/cases/${x.id}" ${x.id === sel ? 'aria-current="true"' : ''}><span class="mono sm m5">${x.id}</span><span class="sm">${x.title}</span><span class="row cap" style="gap: 6px">${x.topic} · ${x.solutions ? `${x.solutions} ${plural(x.solutions, 'решение', 'решения', 'решений')}` : html`<span class="pill na" style="min-height: 20px">только вручную</span>`}${x.errors ? html`<span class="pill fail" style="min-height: 20px">ошибка</span>` : ''}</span></a>`}`,
   )}
-${filtered.length ? '' : html`<span class="cap" style="padding: 8px 16px">Ничего не найдено</span>`}
+${filtered.length ? '' : html`<span class="cap" style="padding: 8px 16px">Ничего не найдено</span>`}`}
 </div>
 ${c
     ? html`<article class="det" aria-labelledby="case-h">
@@ -163,7 +167,7 @@ ${c.solutions.length ? html`<div style="display: grid; grid-template-columns: re
 ${hint(html`Кейс и решения правятся в файлах; ClawGym перечитывает их по кнопке проверки. Редактор кейсов и решений — ${later()}`, 'file')}
 </section>
 </article>`
-    : html`<div class="det"><div class="empty">Выберите кейс.</div></div>`}
+    : html`<div class="det"><div class="empty">${noCases ? 'Добавьте файл кейса в cases/ и нажмите «Перечитать файлы».' : 'Выберите кейс.'}</div></div>`}
 </div>`;
 }
 

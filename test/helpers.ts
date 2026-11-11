@@ -8,8 +8,8 @@ import { startFakeAgent } from '../dev/fake-agent/server.js';
 import { startFakeGigaChat } from '../dev/fake-gigachat/server.js';
 
 export const REPO = path.resolve(process.cwd());
-/** Справочники стенда — CLAWGYM_CONFIG по умолчанию. */
-export const CONFIG = path.join(REPO, 'config');
+/** Демонстрационный набор справочников. Тесты читают только его: рабочие справочники config/ на них не влияют. */
+export const CONFIG = path.join(REPO, 'dev/config');
 
 export interface Stand {
   app: App;

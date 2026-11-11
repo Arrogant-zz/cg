@@ -14,6 +14,8 @@ function caseOptions(list, pre) {
 export async function render(ctx) {
   const [cases, dir, sessions, { runs }] = await Promise.all([get('/api/cases'), get('/api/directory'), get('/api/manual'), get('/api/runs')]);
   const pre = ctx.state.case ?? ctx.query.get('case') ?? cases.cases[0]?.id;
+  // В cases/ нет ни одного кейса: начинать нечего — на месте выбора кейса причина, кнопка недоступна.
+  const noCases = !cases.cases.length;
   const agent = dir.agents.find((a) => a.id === ctx.state.agent) ?? dir.agents[0];
   // Поле x-a2a-sender-id нужно только существующему оператору: новый получает идентификатор от ClawGym.
   const existing = ctx.state.senderMode === 'existing';
@@ -29,7 +31,9 @@ export async function render(ctx) {
 <form class="mn sec" data-submit="start" aria-labelledby="new-h" style="gap: 20px">
 <h2 class="h2" id="new-h">Новый ручной кейс</h2>
 <div class="form-grid">
-<label class="field"><span class="lbl">Кейс</span><select class="input" name="case" data-change="field" data-key="case">${caseOptions(cases.cases, pre)}</select></label>
+${noCases
+    ? html`<div class="field"><span class="lbl">Кейс</span><div class="empty" style="padding: 10px 14px">В cases/ нет кейсов. Добавьте файл кейса и нажмите «Перечитать файлы» на странице «Кейсы и решения».</div></div>`
+    : html`<label class="field"><span class="lbl">Кейс</span><select class="input" name="case" data-change="field" data-key="case">${caseOptions(cases.cases, pre)}</select></label>`}
 <label class="field"><span class="lbl">Агент</span><select class="input" name="agent" data-change="field" data-key="agent">${dir.agents.map((a) => html`<option value="${a.id}" ${a.id === agent?.id ? 'selected' : ''}>${a.title}${a.health?.ok === false ? ` · ${a.health.note}` : ''}</option>`)}</select></label>
 <label class="field"><span class="lbl">Тестовый оператор</span><select class="input" name="senderMode" data-change="field" data-key="senderMode"><option value="new" ${existing ? '' : 'selected'}>новый — стартовые скиллы сборки</option><option value="existing" ${existing ? 'selected' : ''}>существующий — его накопленные скиллы</option></select></label>
 ${existing
@@ -37,7 +41,7 @@ ${existing
     : ''}
 </div>
 ${hint(`Модель и стартовые скиллы задаёт сборка агента${agent?.model ? ` (${agent.model})` : ''}: ClawGym их не переключает и не устанавливает. Чтобы проверить вручную результат обучения, выберите существующего оператора — например, оператора обучающего прогона.`, 'info')}
-<div class="row"><button class="btn pri" type="submit">${icon('play')}Начать кейс</button><span class="cap">Займёт одну сессию агента до завершения</span></div>
+<div class="row"><button class="btn pri" type="submit" ${noCases ? 'disabled' : ''}>${icon('play')}Начать кейс</button><span class="cap">${noCases ? 'Недоступно: в cases/ нет кейсов' : 'Займёт одну сессию агента до завершения'}</span></div>
 </form>
 <aside class="sd" aria-labelledby="ses-h">
 <h2 class="h3" id="ses-h">Сессии · ${sessions.length}</h2>
@@ -67,6 +71,8 @@ export const actions = {
   },
   async start(form, ctx) {
     const f = new FormData(form);
+    // Без кейса начинать нечего: форма без выбора кейса показана, когда в cases/ пусто.
+    if (!f.get('case')) return;
     const body = {
       case: f.get('case'),
       agent: f.get('agent'),

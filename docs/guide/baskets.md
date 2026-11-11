@@ -199,10 +199,10 @@ sequenceDiagram
 
 - на странице «Корзины» — разделы «Команды», «План команд» и «Состав · фиксированный порядок»;
 - на «Запуске прогона» — вместе с тестовым оператором и доступностью метрик;
-- в командной строке:
+- в командной строке. Пример — на настройке из демонстрационного набора, поэтому каталог справочников задан явно:
 
 ```bash
-node dist/src/cli.js preview demo-train
+CLAWGYM_CONFIG=dev/config node dist/src/cli.js preview demo-train
 ```
 
 ```text
@@ -300,7 +300,7 @@ flowchart LR
 ## Примеры
 
 <details>
-<summary><b>Обучающая корзина</b> — <code>baskets/second-line-train.yaml</code></summary>
+<summary><b>Обучающая корзина</b> — <code>dev/config/baskets/second-line-train.yaml</code></summary>
 
 ```yaml
 id: second-line-train
@@ -325,7 +325,7 @@ items:
 </details>
 
 <details>
-<summary><b>Проверяющая корзина</b> — <code>baskets/second-line-check.yaml</code></summary>
+<summary><b>Проверяющая корзина</b> — <code>dev/config/baskets/second-line-check.yaml</code></summary>
 
 ```yaml
 id: second-line-check

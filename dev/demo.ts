@@ -5,9 +5,11 @@ import { loadEnv } from '../src/env.js';
 import { App } from '../src/app.js';
 import { startFakeAgent } from './fake-agent/server.js';
 import { startFakeGigaChat } from './fake-gigachat/server.js';
+import { demoEnv } from './demo-env.js';
 
 async function main() {
   // Корень репозитория — от расположения скрипта (dist/dev/demo.js): относительные CLAWGYM_CONFIG, CLAWGYM_VAR, CLAWGYM_WEB считаются от него.
+  // Без этих переменных демо читает демонстрационный набор dev/config и пишет данные в .dev/var — см. demoEnv.
   const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
   const port = Number(process.env.PORT ?? 8080);
   const llm = await startFakeGigaChat({ port: Number(process.env.FAKE_GIGACHAT_PORT ?? 8092) });
@@ -24,7 +26,7 @@ async function main() {
   process.env.FAKE_GIGACHAT_URL = llm.url;
   process.env.FAKE_AGENT_URL = agent.url;
   // Окружение — после адресов fake-сервисов: на них ссылаются ${env:…} в agents/ и models/.
-  const env = loadEnv({ ...process.env, PORT: String(port), HOST: process.env.HOST ?? '127.0.0.1' }, repo);
+  const env = loadEnv(demoEnv({ ...process.env, PORT: String(port), HOST: process.env.HOST ?? '127.0.0.1' }), repo);
   console.log(`ClawGym demo: справочники ${env.configDir} · данные ${env.varDir}`);
   const app = new App(env);
   await app.init();
