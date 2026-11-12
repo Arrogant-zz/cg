@@ -322,6 +322,8 @@ export interface RunConfigDef {
   metrics: string[];
   limits: Limits;
   repetitions: number;
+  /** Повторов на месте после технического сбоя LLM-оператора, /reset или агента; по умолчанию 1, 0 — выключено. */
+  retries: number;
   startAt: string | null;
   source: Source;
 }
@@ -343,3 +345,6 @@ export interface Registry {
 }
 
 export const DEFAULT_LIMITS: Limits = { maxTurns: 20, maxDurationSec: 900, maxOperatorCalls: 30, maxReminders: 2 };
+
+/** Повтор на месте по умолчанию — одна повторная попытка (решение владельца от 12.11.2026). */
+export const DEFAULT_RETRIES = 1;

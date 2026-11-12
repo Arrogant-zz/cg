@@ -249,7 +249,9 @@ export interface AnswerMatch {
   status: 'ok' | 'failed' | 'skipped';
   /** A_judge — доля прогонов судьи с вердиктом «соответствует»: при трёх прогонах 0, ⅓, ⅔ или 1. */
   score: number | null;
-  runs: { n: number; match: boolean | null; reason: string; durationMs: number | null; error?: string }[];
+  runs: { n: number; match: boolean | null; reason: string; durationMs: number | null; error?: string; repeat?: 'inline' | 'after' }[];
+  /** Сбои прогонов судьи, которые заменил повторный вызов: в A не входят. Нет в записях до 12.11.2026. */
+  retried?: { n: number; error: string; durationMs: number | null }[];
   model: string | null;
   reference: string;
   durationMs: number | null;

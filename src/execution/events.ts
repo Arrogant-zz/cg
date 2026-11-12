@@ -141,6 +141,10 @@ export interface JudgeEvent extends BaseEvent {
   durationMs: number | null;
   usage: { input: number | null; output: number | null } | null;
   error?: string;
+  /** Повторный вызов судьи: сразу после сбоя (inline) или переоценка после прогона (after). */
+  repeat?: 'inline' | 'after';
+  /** Сбой этого вызова заменил повторный вызов с таким номером события. */
+  replacedBy?: number;
 }
 
 export interface CheckItem {
@@ -162,6 +166,8 @@ export interface ChecksEvent extends BaseEvent {
 export interface ScoresEvent extends BaseEvent, CaseScores {
   type: 'scores';
   hidden: true;
+  /** Метрики пересчитаны переоценкой после прогона: прежнее событие scores остаётся в журнале. */
+  reevaluation?: boolean;
 }
 
 export interface StatusEvent extends BaseEvent {
@@ -192,6 +198,16 @@ export const TECH_STATUSES = new Set([
   'internal_error',
   'prepare_failed',
 ]);
+
+/**
+ * Технические статусы, после которых кейс сразу повторяется на месте (решение владельца от 12.11.2026): сбои LLM-оператора,
+ * /reset и ошибка агента. Таймаут агента не повторяется — агент ещё доделывает прерванный ход, новый запрос ждал бы его;
+ * «агент занят», остановка и внутренняя ошибка стенда останавливают линию.
+ */
+export const RETRYABLE_STATUSES = new Set(['operator_error', 'operator_format_error', 'operator_timeout', 'operator_mode_violation', 'reset_failed', 'agent_error']);
+
+/** Технические итоги LLM-оператора: метрика «Сбои LLM-оператора». */
+export const OPERATOR_FAILURES = new Set(['operator_error', 'operator_format_error', 'operator_timeout', 'operator_mode_violation']);
 
 export const LIMIT_STATUSES = new Set(['limit_turns', 'limit_duration', 'limit_operator_calls', 'limit_reminders']);
 

@@ -20,18 +20,52 @@ export interface PrepItem {
   ts: string;
 }
 
+/** Прежняя попытка позиции: её заменила повторная попытка на месте или перезапуск. Журнал попытки остаётся в executions/. */
+export interface AttemptRecord {
+  n: number;
+  execName: string;
+  status: string;
+  outcome: Outcome | null;
+  reason: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/** Дозапуск завершённого прогона: перезапуск позиций проверки, продолжение обучающих линий или переоценка (решение владельца от 12.11.2026). */
+export interface RerunRecord {
+  n: number;
+  kind: 'rerun' | 'resume' | 'reevaluate';
+  /** Позиции (L1-P04) — у перезапуска и переоценки; линии — у продолжения. */
+  items: string[];
+  lines: number[];
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  status: RunStatus;
+  error: string | null;
+  /** Статус и ошибки прогона и линий до дозапуска: после него они не висят на прогоне, а дозапуск, убранный из очереди, их возвращает. */
+  previous: { status: RunStatus; run: string | null; lines: { line: number; error: string }[] };
+}
+
 export interface ItemRecord {
   index: number;
   kind: 'case' | 'curator';
   pos: number | null;
   solution: { id: string; title: string; style: string | null; file: string; hash: string } | null;
   case: { id: string; title: string; topic: string; file: string; hash: string } | null;
+  /** Журнал итоговой попытки: L1-P07 у первой, L1-P07-2 у второй. */
   execName: string | null;
   status: string;
   outcome: Outcome | null;
   reason: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Прежние попытки позиции; поля выше — итоговая попытка. Пусто в записях до 12.11.2026. */
+  attempts: AttemptRecord[];
+  /** Граница результата итоговой попытки: судья и проверки смотрят события не дальше неё. null — нет в записях до 12.11.2026. */
+  resultSeq: number | null;
+  /** Итог оценки получен повторным вызовом судьи — на месте или переоценкой после прогона. */
+  reevaluated: boolean;
   steps: {
     reset: string | null;
     dialog: string | null;
@@ -125,6 +159,8 @@ export interface RunRecord {
     metrics: { id: string; title: string; builtin: string; version: string; params?: Record<string, unknown> }[];
     limits: RecordLimits;
     repetitions: number;
+    /** Повторов на месте после технического сбоя; нет в записях до 12.11.2026 — тогда повтора не было. */
+    retries?: number;
     /** operatorCheck — подсказка конца хода в проверяющей корзине; в записях до 12.11.2026 её нет. */
     prompts: { operator: string; operatorCheck?: string; judge: string; answerJudge?: string };
     contract: { file: string; hash: string; version: string; conditional: boolean };
@@ -136,5 +172,7 @@ export interface RunRecord {
   metricsAvailability: MetricAvailability[];
   warnings: Issue[];
   lines: LineRecord[];
+  /** Дозапуски после первого завершения; пусто в записях до 12.11.2026. */
+  reruns: RerunRecord[];
   summary: unknown;
 }

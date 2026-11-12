@@ -58,6 +58,8 @@ export interface ResolvedRun {
   metrics: MetricDef[];
   limits: Limits;
   repetitions: number;
+  /** Повторов на месте после технического сбоя (runs/<id>.yaml, retries). */
+  retries: number;
   startAt: string | null;
 }
 
@@ -230,6 +232,7 @@ export function resolveRun(
           metrics,
           limits: cfg.limits,
           repetitions: cfg.repetitions,
+          retries: cfg.retries,
           startAt: cfg.startAt,
         }
       : null;

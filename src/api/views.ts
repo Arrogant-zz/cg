@@ -324,6 +324,7 @@ export function preview(app: App, id: string, overrides: RunOverrides) {
           items: r.items.map((i) => ({ index: i.index, kind: i.kind, pos: i.pos, solution: i.solution?.id ?? null, title: i.solution?.title ?? null, case: i.caseDef?.id ?? null })),
           limits: r.limits,
           repetitions: r.repetitions,
+          retries: r.retries,
           startAt: r.startAt,
         }
       : null,

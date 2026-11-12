@@ -344,6 +344,8 @@ export const runSchema = {
     metrics: { anyOf: [{ enum: ['all'] }, strArr] },
     limits,
     repetitions: { type: 'integer', minimum: 1, maximum: 10 },
+    // Повторов на месте после технического сбоя кейса (решение владельца от 12.11.2026): 0 — выключено.
+    retries: { type: 'integer', minimum: 0, maximum: 3 },
     startAt: str,
   },
   additionalProperties: false,

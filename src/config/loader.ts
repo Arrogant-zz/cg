@@ -20,6 +20,7 @@ import {
 import {
   BUILTIN_METRICS,
   DEFAULT_LIMITS,
+  DEFAULT_RETRIES,
   type ActionRequirement,
   type AgentDef,
   type BasketDef,
@@ -736,6 +737,7 @@ function loadRun(c: Collector, p: Parsed): RunConfigDef | null {
     metrics: d.metrics === 'all' || d.metrics === undefined ? ['*'] : d.metrics,
     limits: { ...DEFAULT_LIMITS, ...(d.limits ?? {}) },
     repetitions: d.repetitions ?? 1,
+    retries: d.retries ?? DEFAULT_RETRIES,
     startAt: d.startAt ?? null,
     source: src(p),
   };

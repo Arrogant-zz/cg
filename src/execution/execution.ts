@@ -115,6 +115,32 @@ export class Execution {
     this.currentTaskId = this.mintTaskId();
   }
 
+  /**
+   * Выполнение из сохранённого журнала — для переоценки после прогона: события, статус, состояние заглушек и HTTP-обмены
+   * как были. Инструменты закрыты: вызов с прежним x-task-id до такого выполнения не доходит, оно ни к чему не привязано.
+   */
+  static restore(init: ExecutionInit, saved: ExecutionJSON, http: HttpExchange[]): Execution {
+    const e = new Execution(init);
+    e.taskIds = [...(saved.taskIds ?? [])];
+    e.currentTaskId = e.taskIds[e.taskIds.length - 1] ?? e.currentTaskId;
+    e.events = [...saved.events];
+    e.seq = e.events.reduce((m, x) => Math.max(m, x.seq), 0);
+    e.status = saved.status;
+    e.reason = saved.reason;
+    e.startedAt = saved.startedAt;
+    e.finishedAt = saved.finishedAt;
+    e.turns = saved.turns;
+    e.operatorCalls = saved.operatorCalls;
+    e.ignoredReminders = saved.ignoredReminders ?? 0;
+    e.closedBy = saved.closedBy ?? null;
+    e.closedTurnEndSeq = saved.closedTurnEndSeq ?? null;
+    e.endedBy = saved.endedBy ?? null;
+    if (saved.state) e.stub.state = saved.state;
+    e.http = [...http];
+    e.flags.closed = true;
+    return e;
+  }
+
   private mintTaskId(): string {
     const base = this.run ? `cg-${this.run.runId}-${this.run.line}-${String(this.run.position).padStart(2, '0')}` : `cg-${this.id}`;
     const id = `${base}-${randomHex(2)}`;

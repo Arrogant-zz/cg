@@ -9,7 +9,7 @@ import type { ManualRecord } from '../manual/manual.js';
 import type { ExecutionJSON } from '../execution/execution.js';
 import { errorMessage } from '../util/core.js';
 
-export const RECORD_FORMAT = 2;
+export const RECORD_FORMAT = 3;
 
 export type SavedExecution = ExecutionJSON & { item?: ItemRecord | null };
 
@@ -139,6 +139,23 @@ function sessionFrom1(s: any): void {
   s.history ??= null;
 }
 
+// ------------------------------------------------------------------ формат 2 → 3
+
+// Формат 2 — записи до 12.11.2026, до повтора на месте, перезапуска и переоценки (решение владельца от 12.11.2026).
+// У позиции была одна попытка, у прогона — один запуск; граница результата в позиции не хранилась: переоценка берёт её
+// по событию итогового статуса диалога. Повтора на месте тогда не было: settings.retries не задаётся.
+
+function runFrom2(r: any): void {
+  for (const l of r.lines) {
+    for (const i of l.items) {
+      i.attempts ??= [];
+      i.resultSeq ??= null;
+      i.reevaluated ??= false;
+    }
+  }
+  r.reruns ??= [];
+}
+
 const unchanged: Step = () => {};
 
 /** Журнал тестовых операторов (operators.json): x-a2a-sender-id → шаги истории. */
@@ -151,8 +168,9 @@ const validExecution: ValidateFunction = ajv.compile(EXECUTION_SCHEMA);
 const validSession: ValidateFunction = ajv.compile(SESSION_SCHEMA);
 const validOperators: ValidateFunction = ajv.compile(OPERATORS_SCHEMA);
 
-export const loadRunRecord = (raw: unknown) => load<RunRecord>(raw, [runFrom0, runFrom1], validRun);
-export const loadExecutionRecord = (raw: unknown) => load<SavedExecution>(raw, [execFrom0, unchanged], validExecution);
-export const loadSessionRecord = (raw: unknown) => load<ManualRecord>(raw, [sessionFrom0, sessionFrom1], validSession);
+export const loadRunRecord = (raw: unknown) => load<RunRecord>(raw, [runFrom0, runFrom1, runFrom2], validRun);
+/** Журналы кейсов в формате 3 не меняются: события переоценки — обычные judge и scores с признаком reevaluation. */
+export const loadExecutionRecord = (raw: unknown) => load<SavedExecution>(raw, [execFrom0, unchanged, unchanged], validExecution);
+export const loadSessionRecord = (raw: unknown) => load<ManualRecord>(raw, [sessionFrom0, sessionFrom1, unchanged], validSession);
 /** Журнал операторов появился в формате 2: прежних версий у него нет. */
-export const loadOperatorsRecord = (raw: unknown) => load<OperatorsRecord>(raw, [unchanged, unchanged], validOperators);
+export const loadOperatorsRecord = (raw: unknown) => load<OperatorsRecord>(raw, [unchanged, unchanged, unchanged], validOperators);
