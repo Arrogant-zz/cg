@@ -83,16 +83,7 @@ export function fakeOperator(ctx: Ctx) {
   const text = ev.agentReply;
   if (/обращение (закрыто|обработано)/i.test(text)) return decision({ finish: true, approval: true, reason: 'итоговое действие выполнено' });
 
-  if (ctx.mode === 'checking') {
-    if (ev.looksLikeQuestion && !/можно закрывать/i.test(text)) {
-      const words = text.toLowerCase().match(/[а-яё]{5,}/g) ?? [];
-      const fact = ctx.case.facts.find((f) => words.some((w) => f.toLowerCase().includes(w.slice(0, 5))));
-      return decision({ reply: fact ?? 'Таких данных в обращении нет.', reason: 'вопрос о фактах' });
-    }
-    if (/можно закрывать/i.test(text)) return decision({ reply: 'Хорошо, можно закрывать обращение.', approval: true, reason: 'проверка: оператор не исправляет агента' });
-    return decision({ reply: 'Продолжайте.', reason: 'проверка' });
-  }
-
+  // Конец хода в проверяющей корзине сюда не приходит: у него своя подсказка и своя ветка — fakeCheck.
   if (ev.looksLikeQuestion && !/можно закрывать/i.test(text)) {
     const last = [...corrections].reverse().find((t) => t.lessonId);
     const lastLesson = last?.lessonId ?? lastRejectLesson(ctx);
@@ -110,6 +101,31 @@ export function fakeOperator(ctx: Ctx) {
     return decision({ reply: 'Хорошо, можно закрывать обращение.', approval: true, reason: 'ответ соответствует эталону' });
   }
   return decision({ reply: 'Продолжайте.', reason: 'ход без вопроса' });
+}
+
+/** Контекст конца хода в проверяющей корзине: только факты кейса и журнал — эталона, стиля и уроков в запросе нет. */
+interface CheckCtx {
+  facts: string[];
+  transcript: any[];
+  event: { type: 'turn_end'; agentReply: string; looksLikeQuestion: boolean };
+}
+
+/** Агент спрашивает, что делать или можно ли выполнить действие: это не вопрос о факте. */
+const ASKS_WHAT_TO_DO = /можно (ли )?закры|что (нужно|надо|делать|сделать|дальше)|как (поступить|правильно)|какую проверку/i;
+
+/**
+ * Реакция на конец хода в проверке (подсказка operator-check-v…): слова о завершении — done; вопрос, на который
+ * подходит факт, — answer с этим фактом, а без факта — «таких данных нет»; всё остальное — remind.
+ */
+export function fakeCheck(ctx: CheckCtx) {
+  const text = ctx.event.agentReply;
+  if (/обращение (закрыто|обработано)|работа\S* (по обращению )?законч/i.test(text)) return { reaction: 'done', reply: null, reason: 'агент сообщил о завершении' };
+  if (ctx.event.looksLikeQuestion && !ASKS_WHAT_TO_DO.test(text)) {
+    const words = text.toLowerCase().match(/[а-яё]{5,}/g) ?? [];
+    const fact = ctx.facts.find((f) => words.some((w) => f.toLowerCase().includes(w.slice(0, 5))));
+    return { reaction: 'answer', reply: fact ?? 'Таких данных в обращении нет.', reason: fact ? 'вопрос о факте' : 'вопрос о данных, которых нет в фактах' };
+  }
+  return { reaction: 'remind', reply: null, reason: ctx.event.looksLikeQuestion ? 'агент спрашивает, как поступить' : 'ход без вопроса о факте' };
 }
 
 function lastRejectLesson(ctx: Ctx): string | null {
@@ -146,7 +162,10 @@ export function fakeAnswerMatch(ctx: { reference: string; text: string; run: num
   return { match: share >= threshold, reason: `fake-gigachat: в тексте ${Math.round(share * 100)}% слов эталона, порог прогона ${ctx.run} — ${Math.round(threshold * 100)}%` };
 }
 
-/** Роль по системной подсказке: у судьи в ней метка версии judge-v (и у судьи по эталонному тексту — answer-judge-v). */
+/**
+ * Роль по системной подсказке: у судьи в ней метка версии judge-v (и у судьи по эталонному тексту — answer-judge-v).
+ * Подсказка проверки operator-check-v — тоже оператор: сбой оператора в демо задевает и её.
+ */
 export const fakeRole = (system: string): 'judge' | 'operator' => (system.includes('judge-v') ? 'judge' : 'operator');
 
 /** Ответ «модели» по контексту ClawGym из блока ```json в сообщении пользователя. */
@@ -156,6 +175,7 @@ export function fakeAnswer(system: string, user: string): string {
     const m = /```json\s*([\s\S]*)```/.exec(user);
     const ctx = JSON.parse(m ? m[1] : user);
     if (system.includes('answer-judge-v')) return JSON.stringify(fakeAnswerMatch(ctx));
+    if (system.includes('operator-check-v')) return JSON.stringify(fakeCheck(ctx));
     return JSON.stringify(fakeRole(system) === 'judge' ? fakeJudge(ctx) : fakeOperator(ctx));
   } catch (e: any) {
     return JSON.stringify({ error: `fake-gigachat не понял контекст: ${e?.message}` });

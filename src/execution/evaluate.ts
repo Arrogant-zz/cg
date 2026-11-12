@@ -124,7 +124,8 @@ export interface ExecStats {
   unknownCorrections: number;
   rejected: { operator: number; human: number; timeout: number; auto: number };
   unexpected: { tool: string; seq: number; outcome: string }[];
-  operator: { calls: number; failedAttempts: number; errors: number; modeViolations: number; replies: number };
+  /** replies — все сообщения LLM-оператора агенту вместе с напоминаниями стенда; reminders — напоминания стенда в проверяющей корзине, в записях до 12.11.2026 поля нет. */
+  operator: { calls: number; failedAttempts: number; errors: number; modeViolations: number; replies: number; reminders?: number };
 }
 
 const add = (a: number | null, b: number | null) => (a === null && b === null ? null : (a ?? 0) + (b ?? 0));
@@ -198,6 +199,7 @@ export function execStats(exec: Execution): ExecStats {
       errors: decisions.filter((d) => d.error).length,
       modeViolations: ev.filter((e) => e.type === 'mode_violation').length,
       replies: msgs.filter((m) => m.type === 'operator_message').length,
+      reminders: msgs.filter((m) => m.type === 'operator_message' && m.reminder).length,
     },
   };
 }

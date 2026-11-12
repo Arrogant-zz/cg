@@ -194,9 +194,10 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
 function metricsKey(r: RunRecord): string {
   return r.settings.metrics.map((m) => `${m.id}:${m.builtin}:${m.version}:${stableStringify(m.params ?? {})}`).join(',');
 }
+/** Версия общей подсказки оператора — первой, за ней подсказка конца хода в проверке: в прежних записях её нет. */
 function promptsLabel(r: RunRecord): string {
   const p = r.settings.prompts;
-  return [p.operator, p.judge, p.answerJudge].filter(Boolean).join(' · ');
+  return [p.operator, p.operatorCheck, p.judge, p.answerJudge].filter(Boolean).join(' · ');
 }
 function metricsLabel(r: RunRecord): string {
   const n = r.settings.metrics.length;
@@ -204,9 +205,11 @@ function metricsLabel(r: RunRecord): string {
   return `${n} ${plural(n, 'метрика', 'метрики', 'метрик')} · ${versions}`;
 }
 
+/** Лимит напоминаний — если он есть в записи: до 12.11.2026 его не было. */
 function limits(r: RunRecord): string {
   const l = r.settings.limits;
-  return `${l.maxTurns} ходов · ${l.maxDurationSec} с · ${l.maxOperatorCalls} запросов`;
+  const n = l.maxReminders;
+  return `${l.maxTurns} ходов · ${l.maxDurationSec} с · ${l.maxOperatorCalls} запросов${n === undefined ? '' : ` · ${n} ${plural(n, 'напоминание', 'напоминания', 'напоминаний')}`}`;
 }
 const isEval = (i: ItemRecord) => i.outcome === 'passed' || i.outcome === 'failed';
 const label = (i: ItemRecord) => (i.outcome === 'technical' ? 'технический сбой' : i.outcome === 'not_evaluated' ? 'не оценено' : 'не выполнялся');

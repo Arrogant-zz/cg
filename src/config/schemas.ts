@@ -20,6 +20,7 @@ const limits = {
     maxTurns: { type: 'integer', minimum: 1, maximum: 500 },
     maxDurationSec: { type: 'integer', minimum: 10, maximum: 86400 },
     maxOperatorCalls: { type: 'integer', minimum: 1, maximum: 1000 },
+    maxReminders: { type: 'integer', minimum: 1, maximum: 20 },
   },
   additionalProperties: false,
 } as const;

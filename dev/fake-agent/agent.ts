@@ -453,7 +453,8 @@ export class FakeAgent {
       d.awaiting = null;
       return this.advance(taskId);
     }
-    if (aw?.kind === 'close' && /можно закрывать|закрывайте|закрыть можно|верно|да,? закр/i.test(text)) {
+    // «Действуйте» — из напоминания стенда в проверяющей корзине: разрешения там не дают, агент закрывает обращение сам.
+    if (aw?.kind === 'close' && /можно закрывать|закрывайте|закрыть можно|верно|да,? закр|действуйте/i.test(text)) {
       d.awaiting = null;
       return this.advance(taskId);
     }

@@ -214,7 +214,7 @@ test('диалог: после терминального вызова аген�
       await call(x, 'get_channel_cases');
       await call(x, 'get_close_with_answer', close);
       return 'Кейс закрыт, ответ отправлен клиенту.';
-    }]), op, { limits: { maxTurns: 1, maxDurationSec: 60, maxOperatorCalls: 20 } }),
+    }]), op, { limits: { maxTurns: 1, maxDurationSec: 60, maxOperatorCalls: 20, maxReminders: 2 } }),
   );
   assert.deepEqual([out.status, out.reason, exec.endedBy], ['completed', 'Выполнен терминальный инструмент get_close_with_answer', 'terminal']);
   assert.deepEqual(seen, ['confirmation get_close_with_answer'], 'решения на конец хода после закрытия нет');
@@ -323,7 +323,7 @@ test('поправки: учитывается то, что дошло до аг
   assert.deepEqual([stats.corrections, stats.lessons], [1, ['L-dropped']]);
 });
 
-test('LLM-оператор: в событии подтверждения видно, закроет ли вызов кейс; подсказка operator-v3 объясняет терминальное действие и неотправленные реплики', async (t) => {
+test('LLM-оператор: в событии подтверждения видно, закроет ли вызов кейс; подсказка operator-v4 объясняет терминальное действие, неотправленные реплики и проверку', async (t) => {
   const exec = await execution();
   t.after(() => exec.stop('cleanup'));
   const limits = { maxTurns: 6, maxDurationSec: 60, maxOperatorCalls: 20 };
@@ -335,11 +335,17 @@ test('LLM-оператор: в событии подтверждения вид�
   assert.equal(ctx('get_close_with_answer', close), true);
   assert.equal(ctx('change_stage', { request: { comment: 'на себе', keepOnSelf: true, stageId: 'ST-2' } }), false);
   assert.equal(ctx('change_notifications_channel_for_case', { request: { channelCode: 'SMS' } }), false);
-  assert.equal(OPERATOR_PROMPT_VERSION, 'operator-v3');
-  assert.match(OPERATOR_SYSTEM, /подсказка operator-v3/);
+  assert.equal(OPERATOR_PROMPT_VERSION, 'operator-v4');
+  assert.match(OPERATOR_SYSTEM, /подсказка operator-v4/);
   assert.match(OPERATOR_SYSTEM, /terminal=true/);
   assert.match(OPERATOR_SYSTEM, /unsentReplies/);
   assert.match(OPERATOR_SYSTEM, /sent=false/);
+  // Проверяющая корзина: общая подсказка — только для решения по подтверждению, реплики к подтверждениям агенту не уходят.
+  const checking = OPERATOR_SYSTEM.split('\n').find((l) => l.startsWith('- checking'))!;
+  assert.match(checking, /тебя вызывают только на событие confirmation/);
+  assert.match(checking, /correction всегда false, reply оставь null — в проверке реплики к подтверждениям агенту не уходят/);
+  assert.match(checking, /На конец хода в проверке отвечает отдельная подсказка/);
+  assert.doesNotMatch(checking, /отвечай на вопросы о фактах/);
 });
 
 // ---------------------------------------------------------------- ручная сессия на fake-agent

@@ -75,6 +75,8 @@ export class Execution {
   finishedAt: string | null = null;
   turns = 0;
   operatorCalls = 0;
+  /** Проверяющая корзина: сколько напоминаний стенда подряд агент оставил без единого вызова инструмента (лимит maxReminders). */
+  ignoredReminders = 0;
   flags = { operatorTimeout: false, stopped: false, closed: false };
   /** Кейс закрыт терминальным инструментом: после этого ничто не ждёт решения человека или оператора. */
   closedBy: { seq: number; tool: string } | null = null;
@@ -488,6 +490,7 @@ export class Execution {
       finishedAt: this.finishedAt,
       turns: this.turns,
       operatorCalls: this.operatorCalls,
+      ignoredReminders: this.ignoredReminders,
       closedBy: this.closedBy,
       closedTurnEndSeq: this.closedTurnEndSeq,
       endedBy: this.endedBy,

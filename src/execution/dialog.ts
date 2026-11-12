@@ -3,11 +3,12 @@ import type { BasketType, CaseDef, ContractDef, Limits } from '../config/types.j
 import type { ConfirmDecision, Execution } from './execution.js';
 import type { AgentChannel } from './channel.js';
 import type { DecisionEvent, MessageEvent, NoteEvent, ToolCallEvent } from './events.js';
-import { MODE_MARK, decisionLabel, type LlmOperator, type OperatorDecision, type OperatorEvent } from '../operator/operator.js';
-import { StructuredError } from '../llm/structured.js';
+import { CHECK_LABEL, MODE_MARK, decisionLabel, type LlmOperator, type OperatorDecision, type OperatorEvent, type OperatorReaction } from '../operator/operator.js';
+import { CHECK_REMINDER } from '../operator/prompts.js';
+import { StructuredError, type StructuredResult } from '../llm/structured.js';
 import { renderLines } from '../util/template.js';
 import { previewStub } from '../stubs/engine.js';
-import { errorMessage } from '../util/core.js';
+import { errorMessage, plural } from '../util/core.js';
 
 export interface DialogDeps {
   channel: AgentChannel;
@@ -100,6 +101,15 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     exec.add<NoteEvent>({ type: 'note', hidden: true, text: `Реплика оператора не отправлена: ${reason}`, data: { decisions: q.map((x) => x.decisionSeq), text: q.map((x) => x.text) } });
   };
 
+  // Проверяющая корзина: реплика к подтверждению агенту не уходит и на конец хода не пересматривается.
+  // Она написана с эталоном перед глазами, а решение на конец хода в проверке эталона не видит.
+  const dropInChecking = (dec: DecisionEvent, text: string): void => {
+    dec.replyDropped = true;
+    dec.replyDropReason = 'checking';
+    exec.update(dec);
+    exec.add<NoteEvent>({ type: 'note', hidden: true, text: 'Реплика оператора не отправлена: в проверяющей корзине реплики к подтверждениям агенту не уходят', data: { decisions: [dec.seq], text: [text] } });
+  };
+
   // Решение на конец хода пересмотрело реплики хода: агенту уходит только его реплика.
   const reviewed = (seq: number): void => {
     for (const x of unsent.splice(0, unsent.length)) {
@@ -118,7 +128,7 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
   };
   const failure: { status: string; reason: string } = { status: '', reason: '' };
 
-  const recordDecision = (event: OperatorEvent, res: Awaited<ReturnType<LlmOperator['decide']>> | null, err: StructuredError | null, callId?: string): DecisionEvent =>
+  const recordDecision = (event: OperatorEvent, res: StructuredResult<OperatorDecision | OperatorReaction> | null, err: StructuredError | null, callId?: string): DecisionEvent =>
     exec.add<DecisionEvent>({
       type: 'operator_decision',
       hidden: true,
@@ -154,6 +164,13 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     exec.operatorCalls++;
     const signal = AbortSignal.any([deps.signal, AbortSignal.timeout(timeoutMs)]);
     return operator.decide(exec, event, mode, limits, signal, log.onExchange);
+  };
+
+  // Реакция на конец хода в проверяющей корзине: расходует запрос оператора и ограничена тем же временем, что решение на конец хода.
+  const react = async (agentReply: string, log: ReturnType<Execution['llmLog']>) => {
+    exec.operatorCalls++;
+    const signal = AbortSignal.any([deps.signal, AbortSignal.timeout(turnDecisionMs)]);
+    return operator.react(exec, agentReply, signal, log.onExchange);
   };
 
   // Кейс закрыли, пока оператор решал: вызов уже получил ошибку закрытого кейса, решение ни на что не влияет — ни репликой, ни сбоем.
@@ -192,7 +209,8 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
       const dec = recordDecision(event, res, null, call.callId);
       log.attach(dec);
       if (call.afterClose) return moot(dec);
-      if (d.reply) unsent.push({ text: d.reply, decisionSeq: dec.seq });
+      if (d.reply && mode === 'checking') dropInChecking(dec, d.reply);
+      else if (d.reply) unsent.push({ text: d.reply, decisionSeq: dec.seq });
       return { action: d.confirmation ?? 'reject', by: 'operator', decisionSeq: dec.seq };
     } catch (e) {
       const err = e instanceof StructuredError ? e : null;
@@ -219,6 +237,8 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     if (exec.turns >= limits.maxTurns) return end('limit_turns', `Достигнут лимит ${limits.maxTurns} ходов`);
     if (Date.now() - started > limits.maxDurationSec * 1000) return end('limit_duration', `Кейс длится дольше ${limits.maxDurationSec} с`);
 
+    // Вызовы инструментов этого хода — события после отправленного сообщения.
+    const sentAfter = lastSeq();
     const r = await channel.sendMessage(exec, next.text, next.kind, next.extra, deps.signal);
     if (!r.ok) {
       if (r.error.kind === 'aborted' || deps.signal.aborted) return end('stopped', 'Прогон остановлен');
@@ -238,6 +258,42 @@ export async function runDialog(exec: Execution, deps: DialogDeps): Promise<Dial
     // Реплики к подтверждениям этого хода оператор видит в решении на конец хода и сам решает, что из них написать агенту.
     if (exec.operatorCalls >= limits.maxOperatorCalls) return end('limit_operator_calls', `Исчерпан лимит ${limits.maxOperatorCalls} запросов оператора`);
     const event: OperatorEvent = { type: 'turn_end', agentReply: r.reply.text, unsent: unsent.map((x) => x.decisionSeq) };
+
+    // Проверяющая корзина: оператор не пишет агенту реплику, а выбирает реакцию. У хода три исхода: ответ на вопрос о факте,
+    // напоминание стенда или завершение кейса. Произвольной реплики LLM, кроме ответа на вопрос о факте, агент не получает.
+    if (mode === 'checking') {
+      const log = exec.llmLog({ label: CHECK_LABEL, title: 'LLM-оператор решает, что ответить', timeoutMs: turnDecisionMs });
+      let res;
+      try {
+        res = await react(r.reply.text, log);
+      } catch (e) {
+        log.attach(recordDecision(event, null, e instanceof StructuredError ? e : null));
+        const f = classify(e);
+        return end(f.status, f.reason);
+      }
+      const dec = recordDecision(event, res, null);
+      log.attach(dec);
+      const d = res.value;
+      if (d.reaction === 'done') return end('completed', 'Агент сообщил, что закончил работу', 'operator');
+      if (d.reaction === 'answer') {
+        // Вопрос о факте — содержательный ответ на напоминание: счёт начинается заново.
+        exec.ignoredReminders = 0;
+        next = { text: d.reply!, kind: 'operator', extra: { decisionSeq: dec.seq } };
+        continue;
+      }
+      // Напоминание осталось без действий, если ход начался с него и агент не вызвал ни одного инструмента.
+      // Считается любой вызов, а не только выполненный: агент, чей вызов отклонён или получил ошибку, на напоминание отреагировал.
+      const acted = exec.events.some((e) => e.type === 'tool_call' && e.seq > sentAfter);
+      exec.ignoredReminders = next.extra.reminder && !acted ? exec.ignoredReminders + 1 : 0;
+      if (exec.ignoredReminders >= limits.maxReminders) {
+        const n = exec.ignoredReminders;
+        return end('limit_reminders', `Агент оставил без действий ${n} ${plural(n, 'напоминание', 'напоминания', 'напоминаний')} подряд`);
+      }
+      // Текст напоминания — стенда, один на все случаи: текст модели, приложенный к реакции, агенту не уходит.
+      next = { text: CHECK_REMINDER, kind: 'operator', extra: { reminder: true, decisionSeq: dec.seq } };
+      continue;
+    }
+
     const log = exec.llmLog({ label: decisionLabel(event), title: 'LLM-оператор решает, что ответить', timeoutMs: turnDecisionMs });
     let res;
     try {

@@ -26,6 +26,7 @@ import { maskHeaders } from '../src/util/core.js';
 import YAML from 'yaml';
 import { buildPlan as agentPlan, rulesOf } from '../dev/fake-agent/agent.js';
 import { cases as casesView } from '../src/api/views.js';
+import { CHECK_REMINDER, OPERATOR_CHECK_SCHEMA, OPERATOR_CHECK_SYSTEM } from '../src/operator/prompts.js';
 
 const stub = (s: Partial<StubDef>, index: number): StubDef => ({ id: `s${index}`, tool: 't', origin: 'case', index, ...s });
 
@@ -451,11 +452,23 @@ test('перечень входных данных: стартовый шабл�
       ['agents/fake-agent.yaml', 'agent'],
       ['templates/aefclaw-a2a-message.json', 'agent'],
       ['models/fake-operator.yaml', 'models'],
-      ['prompts/operator-v3.txt', 'prompts'],
-      ['prompts/operator-v3.schema.json', 'prompts'],
+      ['prompts/operator-v4.txt', 'prompts'],
+      ['prompts/operator-v4.schema.json', 'prompts'],
+      // Подсказка конца хода в проверке, её схема и текст напоминания стенда — в перечне любого прогона.
+      ['prompts/operator-check-v1.txt', 'prompts'],
+      ['prompts/operator-check-v1.schema.json', 'prompts'],
+      ['prompts/operator-check-v1.reminder.txt', 'prompts'],
     ]) {
       assert.equal(files.get(file), group, file);
     }
+    assert.ok(![...files.keys()].some((f) => f.includes('operator-v3')), 'прежней подсказки в перечне нет');
+    const input = (file: string) => p.inputs.files.find((f) => f.file === file)!.text;
+    assert.equal(input('prompts/operator-check-v1.reminder.txt'), CHECK_REMINDER);
+    assert.equal(input('prompts/operator-check-v1.txt'), OPERATOR_CHECK_SYSTEM);
+    assert.deepEqual(JSON.parse(input('prompts/operator-check-v1.schema.json')), OPERATOR_CHECK_SCHEMA);
+    // Перечень не зависит от типа корзины: у обучающего прогона те же файлы подсказок.
+    const train = resolveRun(await loadRegistry(dir), env, 'demo-train', { continueFrom: 'new' });
+    assert.deepEqual(train.inputs.files.filter((f) => f.group === 'prompts').map((f) => f.file), p.inputs.files.filter((f) => f.group === 'prompts').map((f) => f.file));
     assert.deepEqual(p.involvedFiles, [...files.keys()].sort(), 'проверка ошибок — по тому же перечню');
     const settings = Object.fromEntries(p.inputs.settings.map((s) => [s.key, s.value]));
     assert.equal(settings['operator.model'], 'fake-operator-2');

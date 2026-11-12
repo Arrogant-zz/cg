@@ -4,7 +4,7 @@ import type { Execution } from '../execution/execution.js';
 import type { ToolCallEvent } from '../execution/events.js';
 import type { LlmProvider, LlmRequest } from '../llm/provider.js';
 import { structuredCall, type StructuredResult } from '../llm/structured.js';
-import { OPERATOR_SCHEMA, OPERATOR_SYSTEM } from './prompts.js';
+import { OPERATOR_CHECK_SCHEMA, OPERATOR_CHECK_SYSTEM, OPERATOR_SCHEMA, OPERATOR_SYSTEM } from './prompts.js';
 
 /** Метка ошибки режима: по ней сбой формата отличается от нарушения режима проверки. */
 export const MODE_MARK = 'в проверяющей корзине поправки запрещены';
@@ -18,6 +18,16 @@ export interface OperatorDecision {
   explanation: boolean;
   approval: boolean;
   finish: boolean;
+  reason: string;
+}
+
+/**
+ * Решение на конец хода в проверяющей корзине: реакция вместо реплики. answer — ответ на вопрос о факте, его текст в reply;
+ * done — агент сообщил, что закончил работу; remind — всё остальное: агенту уходит напоминание стенда, а не текст модели.
+ */
+export interface OperatorReaction {
+  reaction: 'answer' | 'done' | 'remind';
+  reply: string | null;
   reason: string;
 }
 
@@ -51,7 +61,8 @@ export function transcript(exec: Execution, unsent: readonly number[] = []): unk
   for (const e of exec.events) {
     if (e.type === 'start_message') out.push({ seq: e.seq, role: 'clawgym', kind: 'start', text: e.text });
     else if (e.type === 'agent_message') out.push({ seq: e.seq, role: 'agent', text: e.text });
-    else if (e.type === 'operator_message' || e.type === 'human_message') out.push({ seq: e.seq, role: 'operator', text: e.text, correction: e.marks?.correction ?? false, lessonId: e.marks?.lessonId ?? null });
+    // Напоминание стенда в проверяющей корзине помечено reminder: его написал не оператор.
+    else if (e.type === 'operator_message' || e.type === 'human_message') out.push({ seq: e.seq, role: 'operator', text: e.text, correction: e.marks?.correction ?? false, lessonId: e.marks?.lessonId ?? null, ...(e.reminder ? { reminder: true } : {}) });
     else if (e.type === 'operator_decision' && pending.has(e.seq)) {
       const d = e.decision ?? {};
       out.push({ seq: e.seq, role: 'operator', text: d.reply, sent: false, call: e.callId ? (calls.get(e.callId) ?? null) : null, correction: d.correction === true, lessonId: d.lessonId ?? null });
@@ -71,6 +82,9 @@ export function transcript(exec: Execution, unsent: readonly number[] = []): unk
   }
   return out;
 }
+
+/** Признак вопроса в ответе агента — подсказка модели, а не решение: «Уточните: cardId.» — вопрос без знака. */
+const looksLikeQuestion = (text: string): boolean => /\?\s*$/.test(text.trim());
 
 export function operatorContext(exec: Execution, event: OperatorEvent, mode: BasketType, limits: OperatorLimits, devHints: boolean): Record<string, unknown> {
   const c = exec.caseDef;
@@ -96,7 +110,7 @@ export function operatorContext(exec: Execution, event: OperatorEvent, mode: Bas
         ? {
             type: 'turn_end',
             agentReply: event.agentReply,
-            looksLikeQuestion: /\?\s*$/.test(event.agentReply.trim()),
+            looksLikeQuestion: looksLikeQuestion(event.agentReply),
             // Реплики к подтверждениям этого хода, которых агент не видел: что из них ещё нужно, оператор пишет в reply.
             ...(event.unsent?.length ? { unsentReplies: event.unsent } : {}),
           }
@@ -112,13 +126,34 @@ export function operatorContext(exec: Execution, event: OperatorEvent, mode: Bas
   };
 }
 
+/**
+ * Конец хода в проверяющей корзине: оператор знает об обращении столько же, сколько агент, плюс факты кейса.
+ * Ситуации, эталона, инструкции и стиля решения, уроков, названия и тематики кейса, лимитов здесь нет:
+ * подсказать решение нечем, а выбор реакции не зависит от того, прав ли агент.
+ */
+export function checkContext(exec: Execution, agentReply: string): Record<string, unknown> {
+  return {
+    mode: 'checking',
+    facts: exec.caseDef.facts,
+    // Реплик к подтверждениям в журнале нет: в проверке они агенту не уходят и на конец хода не пересматриваются.
+    transcript: transcript(exec),
+    event: { type: 'turn_end', agentReply, looksLikeQuestion: looksLikeQuestion(agentReply) },
+  };
+}
+
 export function operatorUserPrompt(ctx: Record<string, unknown>): string {
   const ev = ctx.event as { type: string };
   return `Событие: ${ev.type}. Контекст кейса и диалога:\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\`\nВерни решение оператора по схеме.`;
 }
 
+export function checkUserPrompt(ctx: Record<string, unknown>): string {
+  return `Событие: turn_end. Факты обращения и журнал диалога:\n\`\`\`json\n${JSON.stringify(ctx, null, 2)}\n\`\`\`\nВерни реакцию по схеме.`;
+}
+
 /** Подпись вызова оператора в журнале HTTP: роль и повод. */
 export const decisionLabel = (event: OperatorEvent): string => (event.type === 'confirmation' ? `LLM-оператор · подтверждение ${event.call.tool}` : 'LLM-оператор · конец хода');
+/** Подпись вызова реакции на конец хода в проверяющей корзине. */
+export const CHECK_LABEL = 'LLM-оператор · конец хода в проверке';
 
 export class LlmOperator {
   constructor(
@@ -138,7 +173,7 @@ export class LlmOperator {
         if (event.type === 'confirmation' && !d.confirmation) errs.push('для события confirmation поле confirmation должно быть approve или reject');
         if (event.type === 'turn_end' && d.confirmation) errs.push('для события turn_end поле confirmation должно быть null');
         if (event.type === 'turn_end' && !d.finish && !(d.reply ?? '').trim()) errs.push('нужна реплика reply или finish=true');
-        if (mode === 'checking' && d.correction) errs.push(`${MODE_MARK}: correction должно быть false, реплика — только факты кейса`);
+        if (mode === 'checking' && d.correction) errs.push(`${MODE_MARK}: correction должно быть false, reply оставь null`);
         if (d.lessonId && !known.has(d.lessonId)) {
           // Неизвестный урок не выдумываем: переносим в lessonNote (MET-04).
           d.lessonNote = d.lessonNote ?? d.lessonId;
@@ -146,6 +181,21 @@ export class LlmOperator {
         }
         if (d.reply !== null) d.reply = d.reply.trim() || null;
         return errs;
+      },
+      1,
+    );
+  }
+
+  /** Реакция на конец хода в проверяющей корзине: отдельная подсказка и схема, контекст — только факты кейса и журнал. */
+  async react(exec: Execution, agentReply: string, signal?: AbortSignal, onExchange?: LlmRequest['onExchange']): Promise<StructuredResult<OperatorReaction>> {
+    const ctx = checkContext(exec, agentReply);
+    return structuredCall<OperatorReaction>(
+      this.provider,
+      { system: OPERATOR_CHECK_SYSTEM, user: checkUserPrompt(ctx), schema: OPERATOR_CHECK_SCHEMA, schemaName: 'operator_reaction', signal, label: CHECK_LABEL, onExchange },
+      (d) => {
+        // Текст модели при done и remind агенту не уходит: он обнуляется, ошибкой формата это не считается.
+        d.reply = d.reaction === 'answer' ? (d.reply ?? '').trim() || null : null;
+        return d.reaction === 'answer' && !d.reply ? ['для реакции answer нужен текст ответа в reply'] : [];
       },
       1,
     );

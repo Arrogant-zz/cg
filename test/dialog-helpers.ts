@@ -7,7 +7,7 @@ import { Execution, type ExecutionInit } from '../src/execution/execution.js';
 import type { DialogDeps } from '../src/execution/dialog.js';
 import type { AgentChannel } from '../src/execution/channel.js';
 import type { CommandEvent, MessageEvent, NoteEvent } from '../src/execution/events.js';
-import { operatorContext, type LlmOperator, type OperatorDecision, type OperatorEvent, type OperatorLimits } from '../src/operator/operator.js';
+import { checkContext, operatorContext, type LlmOperator, type OperatorDecision, type OperatorEvent, type OperatorLimits, type OperatorReaction } from '../src/operator/operator.js';
 import { CONFIG, REPO } from './helpers.js';
 
 /** Выполнение кейса notifications-channel-change: заглушка закрытия есть, у get_smsbank_notifications и cases_postpone заглушек нет. */
@@ -59,8 +59,14 @@ export function agent(turns: Turn[]): AgentChannel {
   } as unknown as AgentChannel;
 }
 
-/** LLM-оператор по сценарию; seen — какие решения у него спрашивали, contexts — что он при этом видел. */
-export function operator(decide: (event: OperatorEvent, exec: Execution) => Promise<Partial<OperatorDecision>>): { op: LlmOperator; seen: string[]; contexts: Record<string, any>[] } {
+/**
+ * LLM-оператор по сценарию; seen — какие решения у него спрашивали, contexts — что он при этом видел.
+ * react — реакция на конец хода в проверяющей корзине (в seen — check); без обработчика — напоминание.
+ */
+export function operator(
+  decide: (event: OperatorEvent, exec: Execution) => Promise<Partial<OperatorDecision>>,
+  react: (agentReply: string, exec: Execution) => Promise<Partial<OperatorReaction>> = async () => ({}),
+): { op: LlmOperator; seen: string[]; contexts: Record<string, any>[] } {
   const seen: string[] = [];
   const contexts: Record<string, any>[] = [];
   const op = {
@@ -69,6 +75,12 @@ export function operator(decide: (event: OperatorEvent, exec: Execution) => Prom
       seen.push(event.type === 'confirmation' ? `confirmation ${event.call.tool}` : 'turn_end');
       contexts.push(operatorContext(exec, event, mode, limits, false));
       const value = { reply: null, confirmation: null, correction: false, lessonId: null, lessonNote: null, explanation: false, approval: false, finish: false, reason: 'сценарий теста', ...(await decide(event, exec)) };
+      return { value, attempts: [{ n: 1, ok: true, durationMs: 1 }], usage: null, durationMs: 1, model: 'fake-operator' };
+    },
+    async react(exec: Execution, agentReply: string) {
+      seen.push('check');
+      contexts.push(checkContext(exec, agentReply));
+      const value = { reaction: 'remind', reply: null, reason: 'сценарий теста', ...(await react(agentReply, exec)) };
       return { value, attempts: [{ n: 1, ok: true, durationMs: 1 }], usage: null, durationMs: 1, model: 'fake-operator' };
     },
   };
@@ -80,7 +92,7 @@ export const deps = (channel: AgentChannel, op: LlmOperator, over: Partial<Dialo
   operator: op,
   mode: 'training',
   checkingConfirmations: 'approve',
-  limits: { maxTurns: 6, maxDurationSec: 60, maxOperatorCalls: 20 },
+  limits: { maxTurns: 6, maxDurationSec: 60, maxOperatorCalls: 20, maxReminders: 2 },
   confirmationTimeoutMs: 5000,
   priorLessons: new Set(),
   signal: new AbortController().signal,

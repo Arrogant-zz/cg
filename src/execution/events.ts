@@ -89,6 +89,8 @@ export interface MessageEvent extends BaseEvent {
   decisionSeq?: number;
   /** Склеенные реплики к подтверждениям, ушедшие после хода, — только в прежних записях: теперь их пересматривает решение на конец хода. */
   queued?: boolean;
+  /** Напоминание стенда в проверяющей корзине: фиксированный текст, а не реплика LLM-оператора. decisionSeq — решение, по которому оно отправлено. */
+  reminder?: true;
 }
 
 export interface CommandEvent extends BaseEvent {
@@ -111,6 +113,7 @@ export interface DecisionEvent extends BaseEvent {
   hidden: true;
   event: 'turn_end' | 'confirmation';
   callId?: string;
+  /** Решение модели по схеме оператора; у конца хода в проверяющей корзине — реакция: reaction, reply, reason. */
   decision: Record<string, unknown> | null;
   model: string;
   durationMs: number;
@@ -122,6 +125,8 @@ export interface DecisionEvent extends BaseEvent {
   moot?: true;
   /** Реплика к решению не ушла агенту: кейс завершился раньше, чем оператор её пересмотрел, — терминальным инструментом, решением оператора, лимитом или сбоем. */
   replyDropped?: true;
+  /** Почему реплика к подтверждению не ушла, если не из-за завершения кейса: checking — в проверяющей корзине реплики к подтверждениям агенту не уходят. */
+  replyDropReason?: 'checking';
   /** Номер решения на конец хода, которое пересмотрело реплику к подтверждению: сама реплика агенту не уходит. */
   replyReviewed?: number;
 }
@@ -188,7 +193,7 @@ export const TECH_STATUSES = new Set([
   'prepare_failed',
 ]);
 
-export const LIMIT_STATUSES = new Set(['limit_turns', 'limit_duration', 'limit_operator_calls']);
+export const LIMIT_STATUSES = new Set(['limit_turns', 'limit_duration', 'limit_operator_calls', 'limit_reminders']);
 
 export const STATUS_TITLES: Record<string, string> = {
   preparing: 'Подготовка',
@@ -197,6 +202,7 @@ export const STATUS_TITLES: Record<string, string> = {
   limit_turns: 'Исчерпан лимит ходов',
   limit_duration: 'Исчерпан лимит времени',
   limit_operator_calls: 'Исчерпан лимит запросов оператора',
+  limit_reminders: 'Исчерпан лимит напоминаний',
   reset_failed: 'Сбой /reset',
   agent_busy: 'Агент занят прерванным запросом',
   agent_error: 'Сбой агента',

@@ -9,6 +9,7 @@ import type { NoteEvent } from '../src/execution/events.js';
 import { settleWrites } from '../src/util/fsx.js';
 import { compareRuns } from '../src/results/compare.js';
 import { stepLabel } from '../src/runner/operators.js';
+import { CHECK_REMINDER } from '../src/operator/prompts.js';
 import { startStand, until, CONFIG, REPO, type Stand } from './helpers.js';
 
 let s: Stand;
@@ -140,6 +141,7 @@ test('проверка до и после обучения: новый опер�
   assert.equal(cmp.status, 200);
   assert.ok(cmp.data.counts.better > 0);
   assert.equal(cmp.data.rows.filter((r: any) => !r.same).map((r: any) => r.key).join(','), 'operator');
+  assert.deepEqual([cmp.data.comparable, cmp.data.conclusion], [true, 'Отличается только: тестовый оператор'], 'до и после обучения сопоставимы');
   assert.match(cmp.data.rows.find((r: any) => r.key === 'operator').b, new RegExp(`^после #${train.id} обучение$`));
 
   // Метрики аналитика. M1: со стартовыми скиллами блокировка суммы идёт как спорная операция — экспертиза вместо ответа; после обучения — ответ и закрытие.
@@ -177,6 +179,37 @@ test('проверка до и после обучения: новый опер�
   assert.ok(pair('final-action').b.value - pair('final-action').a.value > 0.25);
   assert.ok(pair('case-score').b.value - pair('case-score').a.value > 0.5);
   assert.ok(cmp.data.rows.find((r: any) => r.key === 'prompts').a.includes('answer-judge-v1'));
+
+  // Проверяющая корзина: общая подсказка operator-v4, подсказка конца хода operator-check-v1 и лимит напоминаний — в записи прогона.
+  for (const r of [a, b]) {
+    assert.deepEqual([r.settings.prompts.operator, r.settings.prompts.operatorCheck, r.settings.limits.maxReminders], ['operator-v4', 'operator-check-v1', 2]);
+    assert.ok(r.lines[0].items.every((i: any) => i.limits.maxReminders === 2 && i.status === 'completed'), 'ни один кейс не закончился лимитом напоминаний');
+  }
+  assert.equal(cmp.data.rows.find((r: any) => r.key === 'prompts').a, 'operator-v4 · operator-check-v1 · judge-v1 · answer-judge-v1');
+  assert.equal(cmp.data.rows.find((r: any) => r.key === 'limits').a, '20 ходов · 900 с · 30 запросов · 2 напоминания');
+  // На «Можно закрывать обращение?» агент получает не «Хорошо, можно закрывать обращение.», а напоминание стенда — и закрывает кейс сам.
+  const journal = async (r: any, pos: number) => (await s.api('GET', `/api/runs/${r.id}/executions/${r.lines[0].items[pos].execName}`)).data;
+  const reminders: string[] = [];
+  for (const [r, pos] of [[a, 0], [b, 0], [b, 3]] as const) {
+    const j = await journal(r, pos);
+    const ask = j.events.findIndex((e: any) => e.type === 'agent_message' && /Можно закрывать обращение\?$/.test(e.text));
+    const [decision, reminder] = j.events.slice(ask + 1, ask + 3);
+    assert.deepEqual([decision.type, decision.event, decision.decision.reaction, decision.decision.reply, decision.hidden], ['operator_decision', 'turn_end', 'remind', null, true]);
+    assert.deepEqual([reminder.type, reminder.reminder, reminder.decisionSeq, reminder.marks], ['operator_message', true, decision.seq, undefined]);
+    reminders.push(reminder.text);
+    assert.ok(!j.events.some((e: any) => e.type === 'operator_message' && /можно закрывать/i.test(e.text)), 'разрешения закрывать оператор не давал');
+    assert.equal(j.closedBy.tool, 'get_close_with_answer', 'после напоминания агент закрыл кейс сам');
+    assert.deepEqual([r.lines[0].items[pos].stats.operator.reminders, r.lines[0].items[pos].stats.operator.replies, j.ignoredReminders], [1, 1, 0]);
+    const http = (await s.api('GET', `/api/runs/${r.id}/executions/${r.lines[0].items[pos].execName}/http`)).data as any[];
+    const check = http.filter((x) => x.kind === 'llm' && x.label.startsWith('LLM-оператор'));
+    assert.deepEqual(check.map((x) => x.label), ['LLM-оператор · конец хода в проверке']);
+    // Запрос к модели на конец хода в проверке: факты кейса и журнал — без эталона, ситуации, инструкции и уроков.
+    const sent = JSON.parse(JSON.parse(check[0].request.body).messages.find((m: any) => m.role === 'user').content.replace(/^[^`]*```json\s*/, '').replace(/```[^`]*$/, ''));
+    assert.deepEqual(Object.keys(sent), ['mode', 'facts', 'transcript', 'event']);
+  }
+  // Один текст в разных кейсах и прогонах: spasibo-bonus-missing до и после обучения, card-hold-amount после.
+  assert.deepEqual(reminders, [CHECK_REMINDER, CHECK_REMINDER, CHECK_REMINDER]);
+  assert.deepEqual([b.lines[0].items[0].case.id, b.lines[0].items[3].case.id], ['spasibo-bonus-missing', 'card-hold-amount']);
 });
 
 test('ручной режим: кейс без решений, ответ вместо инструмента, подтверждение, команда, разметка', async () => {
@@ -512,7 +545,7 @@ test('сравнение по снимку входных данных: друг
     await t.api('POST', '/api/config/reload');
     const b = await run();
     const file = (r: any, f: string) => r.snapshot.files.find((x: any) => x.file === f);
-    for (const f of ['contracts/start-message.txt', 'contracts/tool-defaults.yaml', 'templates/aefclaw-a2a-message.json', 'prompts/operator-v3.txt']) {
+    for (const f of ['contracts/start-message.txt', 'contracts/tool-defaults.yaml', 'templates/aefclaw-a2a-message.json', 'prompts/operator-v4.txt', 'prompts/operator-v4.schema.json', 'prompts/operator-check-v1.txt', 'prompts/operator-check-v1.schema.json', 'prompts/operator-check-v1.reminder.txt']) {
       assert.match(file(a, f)?.sha256 ?? '', /^[0-9a-f]{64}$/, f);
       assert.equal(file(a, f).hash, file(a, f).sha256.slice(0, 4), 'короткая метка — начало полного хеша');
     }
@@ -531,20 +564,46 @@ test('сравнение по снимку входных данных: друг
     assert.deepEqual(bc.rows.find((r: any) => r.key === 'stand').details, ['TURN_TIMEOUT_MS: 900000 → 600000']);
     assert.equal((await t.api('GET', `/api/compare?a=${b.id}&b=${b.id}`)).data.conclusion, 'Условия совпадают');
 
-    // Прогон на прежней подсказке оператора operator-v1: сравнение показывает, что подсказки различаются.
-    const v1 = structuredClone(t.app.runs.get(b.id));
-    v1.settings.prompts.operator = 'operator-v1';
-    Object.assign(v1.snapshot.files.find((f: any) => f.file === 'prompts/operator-v3.txt')!, { file: 'prompts/operator-v1.txt', sha256: '0'.repeat(64), hash: '0000' });
-    const prompts = compareRuns(v1, t.app.runs.get(b.id)).rows.find((r) => r.key === 'prompts')!;
-    assert.deepEqual([prompts.same, prompts.a.split(' · ')[0], prompts.b.split(' · ')[0]], [false, 'operator-v1', 'operator-v3']);
+    // Проверка на прежней подсказке operator-v3, до напоминаний стенда: подсказки проверки и лимита напоминаний в записи нет.
+    const current = t.app.runs.get(b.id);
+    assert.deepEqual([current.settings.prompts.operator, current.settings.prompts.operatorCheck, current.settings.limits.maxReminders], ['operator-v4', 'operator-check-v1', 2]);
+    const v3 = structuredClone(current);
+    v3.settings.prompts.operator = 'operator-v3';
+    delete v3.settings.prompts.operatorCheck;
+    delete v3.settings.limits.maxReminders;
+    v3.snapshot.files = v3.snapshot.files.filter((f) => !f.file.startsWith('prompts/operator-check-'));
+    for (const f of v3.snapshot.files) if (f.file.startsWith('prompts/operator-v4.')) Object.assign(f, { file: f.file.replace('operator-v4', 'operator-v3'), sha256: '0'.repeat(64), hash: '0000' });
+    const old = compareRuns(v3, current);
+    const row = (c: ReturnType<typeof compareRuns>, key: string) => c.rows.find((r) => r.key === key)!;
+    assert.deepEqual([row(old, 'prompts').same, row(old, 'prompts').a, row(old, 'prompts').b], [false, 'operator-v3 · judge-v1 · answer-judge-v1', 'operator-v4 · operator-check-v1 · judge-v1 · answer-judge-v1']);
+    assert.ok(row(old, 'prompts').details!.includes(`prompts/operator-check-v1.reminder.txt — только в #${b.id}`), JSON.stringify(row(old, 'prompts').details));
+    assert.deepEqual([row(old, 'limits').same, row(old, 'limits').a, row(old, 'limits').b], [false, '20 ходов · 900 с · 30 запросов', '20 ходов · 900 с · 30 запросов · 2 напоминания']);
+    assert.deepEqual([old.comparable, old.conclusion], [false, 'Отличаются: подсказки оператора и судьи, лимиты']);
+    // Две записи без подсказки проверки и лимита напоминаний сравниваются, как раньше.
+    const both = compareRuns(v3, structuredClone(v3));
+    assert.deepEqual([both.conclusion, row(both, 'limits').a], ['Условия совпадают', '20 ходов · 900 с · 30 запросов']);
+
+    // Другой текст напоминания стенда: строка подсказок называет файл, сравнение несопоставимо.
+    const reworded = structuredClone(current);
+    Object.assign(reworded.snapshot.files.find((f) => f.file === 'prompts/operator-check-v1.reminder.txt')!, { sha256: '1'.repeat(64), hash: '1111' });
+    const reminder = compareRuns(current, reworded);
+    assert.deepEqual(row(reminder, 'prompts').details, ['prompts/operator-check-v1.reminder.txt']);
+    assert.deepEqual([reminder.comparable, reminder.conclusion], [false, 'Отличается только: подсказки оператора и судьи']);
+
+    // Другой лимит напоминаний: строка лимитов показывает оба значения.
+    const patient = structuredClone(current);
+    patient.settings.limits.maxReminders = 5;
+    const lim = compareRuns(current, patient);
+    assert.deepEqual([row(lim, 'limits').a, row(lim, 'limits').b, lim.comparable], ['20 ходов · 900 с · 30 запросов · 2 напоминания', '20 ходов · 900 с · 30 запросов · 5 напоминаний', false]);
+    assert.equal(lim.conclusion, 'Отличается только: лимиты');
 
     // Запись до 28.10.2026 — без перечня входных данных: совпадение коротких меток сопоставимость не подтверждает.
     const legacy = structuredClone(t.app.runs.get(b.id));
     legacy.snapshot.settings = null;
-    const old = compareRuns(legacy, t.app.runs.get(b.id));
-    assert.equal(old.comparable, false);
-    assert.equal(old.conclusion, 'Сопоставимость не подтверждена');
-    assert.match(old.limitations[0], new RegExp(`В #${b.id} нет полного перечня входных данных`));
+    const unknown = compareRuns(legacy, t.app.runs.get(b.id));
+    assert.equal(unknown.comparable, false);
+    assert.equal(unknown.conclusion, 'Сопоставимость не подтверждена');
+    assert.match(unknown.limitations[0], new RegExp(`В #${b.id} нет полного перечня входных данных`));
   } finally {
     await t.close();
     fs.rmSync(cfg, { recursive: true, force: true });

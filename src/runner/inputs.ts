@@ -10,9 +10,13 @@ import {
   ANSWER_JUDGE_PROMPT_VERSION,
   ANSWER_JUDGE_SCHEMA,
   ANSWER_JUDGE_SYSTEM,
+  CHECK_REMINDER,
   JUDGE_PROMPT_VERSION,
   JUDGE_SCHEMA,
   JUDGE_SYSTEM,
+  OPERATOR_CHECK_PROMPT_VERSION,
+  OPERATOR_CHECK_SCHEMA,
+  OPERATOR_CHECK_SYSTEM,
   OPERATOR_PROMPT_VERSION,
   OPERATOR_SCHEMA,
   OPERATOR_SYSTEM,
@@ -164,8 +168,10 @@ export function runInputs(p: InputParts, env: Env): RunInputs {
   for (const m of [p.models.operator, p.models.judge]) source('models', m?.source);
   for (const m of p.metrics) source('metrics', m.source);
   // Подсказки и схемы ответа LLM-оператора и судей — часть кода: в снимок и сравнение они входят полным текстом.
+  // Подсказка проверки входит в перечень любого прогона, как подсказки судьи: перечень не зависит от типа корзины.
   const prompts: [string, string, object][] = [
     [OPERATOR_PROMPT_VERSION, OPERATOR_SYSTEM, OPERATOR_SCHEMA],
+    [OPERATOR_CHECK_PROMPT_VERSION, OPERATOR_CHECK_SYSTEM, OPERATOR_CHECK_SCHEMA],
     [JUDGE_PROMPT_VERSION, JUDGE_SYSTEM, JUDGE_SCHEMA],
     [ANSWER_JUDGE_PROMPT_VERSION, ANSWER_JUDGE_SYSTEM, ANSWER_JUDGE_SCHEMA],
   ];
@@ -173,6 +179,8 @@ export function runInputs(p: InputParts, env: Env): RunInputs {
     add('prompts', `prompts/${version}.txt`, system);
     add('prompts', `prompts/${version}.schema.json`, JSON.stringify(schema, null, 2));
   }
+  // Текст напоминания стенда — такое же условие эксперимента, как подсказка: он входит в её версию.
+  add('prompts', `prompts/${OPERATOR_CHECK_PROMPT_VERSION}.reminder.txt`, CHECK_REMINDER);
 
   // Подстановки окружения: файл подключения тот же, а адрес или модель — другие.
   const settings: InputSetting[] = [];

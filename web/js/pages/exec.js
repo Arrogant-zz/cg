@@ -47,6 +47,18 @@ ${a.status !== 'ok' && a.reason ? html`<div class="mt"><span class="cap" style="
 </section>`;
 }
 
+/**
+ * Число напоминаний стенда в сводке кейса. В записях до 12.11.2026 его нет: тогда пунктир с причиной, а не ноль.
+ * Без сводки — кейс ещё идёт — прочерк, как у соседних строк.
+ */
+function remindersRow(st) {
+  const n = st?.operator?.reminders;
+  const label = html`<span class="tip" title="Проверяющая корзина: стенд напоминает агенту, что обращение ведёт он, когда тот закончил ход без вопроса о факте и не сообщил о завершении">Напоминания стенда</span>`;
+  if (typeof n === 'number') return html`<div class="mt">${label}<span class="num t2">${n}</span></div>`;
+  if (!st) return html`<div class="mt">${label}<span class="num t2">—</span></div>`;
+  return html`<div class="mt">${label}<span class="pill na">нет данных</span><span class="cap" style="grid-column: 1 / -1">Запись сделана до 12 ноября 2026 года: напоминаний стенда тогда не было.</span></div>`;
+}
+
 function stats(ex, item) {
   const st = item?.stats;
   const judge = ex.events.filter((e) => e.type === 'judge').pop();
@@ -69,6 +81,7 @@ ${ex.mode === 'auto'
 <h2 class="h3" id="op-h" style="padding-bottom: 6px">LLM-оператор</h2>
 <div class="mt"><span>Модель</span><span class="t2">${decisions[0]?.model ?? '—'}</span></div>
 <div class="mt"><span>Решения · реплики</span><span class="num t2">${decisions.length} · ${st?.operator.replies ?? 0}</span></div>
+${remindersRow(st)}
 <div class="mt"><span>Поправки</span><span class="t2">${corr.length ? html`<span class="row" style="gap: 6px; justify-content: flex-end">${corr}</span>` : st?.corrections ? `${st.corrections} без урока` : '0'}</span></div>
 <div class="mt"><span>Отклонения действий</span><span class="num t2">${st ? st.rejected.operator : '—'}${st?.rejected.timeout ? ` · по таймауту ${st.rejected.timeout}` : ''}</span></div>
 <div class="mt"><span>Ошибки формата и LLM</span><span class="num t2">${st ? st.operator.failedAttempts : '—'}${st?.operator.modeViolations ? ` · нарушений режима ${st.operator.modeViolations}` : ''}</span></div>

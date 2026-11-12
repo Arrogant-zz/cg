@@ -10,6 +10,9 @@ import type { InputGroup, InputSetting } from './inputs.js';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'stopped' | 'failed';
 
+/** Лимиты в записи прогона. maxReminders нет в записях до 12.11.2026: лимита напоминаний тогда не было. */
+export type RecordLimits = Omit<Limits, 'maxReminders'> & { maxReminders?: number };
+
 export interface PrepItem {
   ok: boolean | null;
   text: string;
@@ -43,7 +46,7 @@ export interface ItemRecord {
   scores: ItemScores | null;
   stats: ExecStats | null;
   repeated: string[];
-  limits: Limits;
+  limits: RecordLimits;
 }
 
 export interface CuratorPassRecord {
@@ -120,9 +123,10 @@ export interface RunRecord {
     operator: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     judge: { id: string; title: string; provider: string; model: string | null; file: string; hash: string } | null;
     metrics: { id: string; title: string; builtin: string; version: string; params?: Record<string, unknown> }[];
-    limits: Limits;
+    limits: RecordLimits;
     repetitions: number;
-    prompts: { operator: string; judge: string; answerJudge?: string };
+    /** operatorCheck — подсказка конца хода в проверяющей корзине; в записях до 12.11.2026 её нет. */
+    prompts: { operator: string; operatorCheck?: string; judge: string; answerJudge?: string };
     contract: { file: string; hash: string; version: string; conditional: boolean };
   };
   /** Входные данные прогона: копии файлов в snapshot/ и значимые настройки окружения; settings — null в записях до 28.10.2026. */

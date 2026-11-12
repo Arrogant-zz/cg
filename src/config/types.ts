@@ -147,6 +147,8 @@ export interface Limits {
   maxTurns: number;
   maxDurationSec: number;
   maxOperatorCalls: number;
+  /** Сколько напоминаний стенда подряд агент может оставить без единого вызова инструмента. Действует только в проверяющей корзине. */
+  maxReminders: number;
 }
 
 export interface SolutionDef {
@@ -340,4 +342,4 @@ export interface Registry {
   fileCount: number;
 }
 
-export const DEFAULT_LIMITS: Limits = { maxTurns: 20, maxDurationSec: 900, maxOperatorCalls: 30 };
+export const DEFAULT_LIMITS: Limits = { maxTurns: 20, maxDurationSec: 900, maxOperatorCalls: 30, maxReminders: 2 };

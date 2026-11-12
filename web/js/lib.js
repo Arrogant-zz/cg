@@ -240,6 +240,7 @@ export const STATUS_TITLES = {
   limit_turns: 'Лимит ходов',
   limit_duration: 'Лимит времени',
   limit_operator_calls: 'Лимит запросов оператора',
+  limit_reminders: 'Лимит напоминаний',
   reset_failed: 'Сбой /reset',
   agent_busy: 'Агент занят прерванным запросом',
   agent_error: 'Сбой агента',
@@ -490,6 +491,8 @@ export function messageView(e, { full = true, human = false, http = false } = {}
     if (marks.manual && marks.correction) kv.push(html`<span>ручная отметка</span>`);
   }
   if (full && e.queued) kv.push(html`<span>реплика к отклонению — после конца хода</span>`);
+  // Напоминание в проверяющей корзине — текст стенда, а не реплика модели. Агент этой метки не видит.
+  if (full && e.reminder) kv.push(html`<span>напоминание стенда</span>`);
   if (e.type === 'start_message') {
     return html`<div class="msg" id="ev-${e.seq}"><span class="who"><span class="av cg"></span>ClawGym · стартовое сообщение${hl}<span class="ev">#${e.seq}</span></span><div class="bub sys" style="white-space: pre-wrap">${e.text}</div></div>`;
   }
@@ -502,9 +505,14 @@ export function messageView(e, { full = true, human = false, http = false } = {}
   return html`<div class="msg r" id="ev-${e.seq}"><span class="who"><span class="ev">#${e.seq}</span>${hl}${who}</span><div class="bub" style="white-space: pre-wrap">${e.text}</div>${kv.length ? html`<div class="kvh" style="justify-content: flex-end">${kv}</div>` : ''}</div>`;
 }
 
+/** Реакция LLM-оператора на конец хода в проверяющей корзине. */
+const REACTION_TITLES = { answer: 'ответ на вопрос', remind: 'напоминание', done: 'агент закончил' };
+
 export function decisionBlock(e, { http = false } = {}) {
   const d = e.decision ?? {};
   const kv = [];
+  // Решение на конец хода в проверке — реакция: поправки, урока и завершения в нём нет, их меток тоже.
+  if (d.reaction) kv.push(html`<span>реакция: ${REACTION_TITLES[d.reaction] ?? d.reaction}</span>`);
   if (e.event === 'confirmation') kv.push(html`<span>подтверждение: ${d.confirmation === 'approve' ? 'разрешить' : d.confirmation === 'reject' ? 'отклонить' : '—'}</span>`);
   if ('correction' in d) kv.push(html`<span>поправка: ${d.correction ? 'да' : 'нет'}</span>`);
   if (d.lessonId) kv.push(html`<span class="lesson">урок: ${d.lessonId}</span>`);
@@ -513,7 +521,8 @@ export function decisionBlock(e, { http = false } = {}) {
   if ('finish' in d) kv.push(html`<span>завершение: ${d.finish ? 'да' : 'нет'}</span>`);
   if (d.approval) kv.push(html`<span>одобрение</span>`);
   if (e.moot) kv.push(html`<span>кейс уже закрыт: решение не применено</span>`);
-  if (e.replyDropped) kv.push(html`<span>реплика не отправлена: кейс завершён</span>`);
+  // Без причины — прежняя подпись: кейс завершился раньше решения на конец хода.
+  if (e.replyDropped) kv.push(html`<span>реплика не отправлена: ${e.replyDropReason === 'checking' ? 'в проверке реплики к подтверждениям не уходят' : 'кейс завершён'}</span>`);
   if (e.replyReviewed) kv.push(html`<span>реплика не отправлена как есть: её пересмотрело решение <a class="ev" href="#ev-${e.replyReviewed}" data-action="toEvent" data-seq="${e.replyReviewed}">#${e.replyReviewed}</a></span>`);
   // Реплика к подтверждению сама агенту не уходит: её текст виден только здесь. Реплику решения на конец хода показывает сообщение оператора.
   const reply = e.event === 'confirmation' && d.reply ? html`<div class="bub sys" style="white-space: pre-wrap">${d.reply}</div>` : '';

@@ -44,6 +44,13 @@ ${p.continueOptions.map((o) => html`<option value="${o.id}" ${value === String(o
 </span>`;
 }
 
+/** Лимит напоминаний в строке лимитов — только у проверяющей корзины: в обучении напоминаний нет. */
+function remindersLimit(r) {
+  const n = r.limits.maxReminders;
+  if (r.basket.type !== 'checking' || n === undefined) return '';
+  return html` · <span class="tip" title="Кейс завершается, когда агент оставил без единого вызова инструмента столько напоминаний стенда подряд">${n} ${plural(n, 'напоминание', 'напоминания', 'напоминаний')} без действий</span>`;
+}
+
 function whatRuns(p, ctx) {
   const r = p.resolved;
   if (!r) return '';
@@ -54,7 +61,7 @@ function whatRuns(p, ctx) {
 <div class="cfg"><span class="t3">Модель оператора</span><span class="col" style="gap: 6px"><span class="m5">${r.operator?.title ?? '—'}</span><span class="cap">LLM-оператор ведёт диалог по инструкции решения${r.operator ? ` · ${r.operator.provider}` : ''}</span></span></div>
 <div class="cfg"><span class="t3">Модель оценки</span><span class="col" style="gap: 6px"><span class="m5">${r.judge?.title ?? 'не выбрана'}</span><span class="cap">${r.judge ? 'Отдельный вызов после завершения кейса; оценку агент не видит' : 'Без модели оценки смысл ответа останется «не оценён»'}</span></span></div>
 <div class="cfg"><span class="t3">Тестовый оператор</span>${operatorRow(p, ctx)}</div>
-<div class="cfg"><span class="t3">Лимиты</span><span class="col" style="gap: 6px"><span>${r.limits.maxTurns} ходов · ${Math.round(r.limits.maxDurationSec / 60)} мин на кейс · ${r.limits.maxOperatorCalls} запросов оператора</span><span class="cap">Повторений: ${r.repetitions}${r.repetitions > 1 ? ' — у каждого свой тестовый оператор' : ''}${r.startAt ? ` · старт ${fmtDate(r.startAt)}` : ''}</span></span></div>
+<div class="cfg"><span class="t3">Лимиты</span><span class="col" style="gap: 6px"><span>${r.limits.maxTurns} ходов · ${Math.round(r.limits.maxDurationSec / 60)} мин на кейс · ${r.limits.maxOperatorCalls} запросов оператора${remindersLimit(r)}</span><span class="cap">Повторений: ${r.repetitions}${r.repetitions > 1 ? ' — у каждого свой тестовый оператор' : ''}${r.startAt ? ` · старт ${fmtDate(r.startAt)}` : ''}</span></span></div>
 </section>`;
 }
 

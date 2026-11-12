@@ -96,6 +96,24 @@ test('класс финального действия: последний вы�
   assert.equal(finalAction(derived, 'completed', [], 'x', s).expectedFrom, 'actions.final');
 });
 
+test('лимит напоминаний в M1: без итогового вызова кейс незавершён, с выставленной экспертизой — класс «экспертиза»; слова агента о завершении — инструкция оператору', async () => {
+  const reg = await loadRegistry(CONFIG);
+  const s = scoringOf([...reg.metrics.values()]);
+  const card = reg.cases.get('card-operation-dispute')!;
+  const call = (seq: number, tool: string, args: Record<string, unknown> = {}, executed = true) => ({ seq, tool, args, executed });
+  // Агент оставил напоминания без действий: кейс не получает класс «инструкция оператору» с текстом «Готов отвечать на вопросы».
+  const idle = finalAction(card, 'limit_reminders', [call(3, 'get_client_cards')], 'Готов отвечать на вопросы по фактам кейса.', s);
+  assert.deepEqual([idle.incomplete, idle.predicted, idle.correct, idle.text], [true, null, null, '']);
+  assert.equal(idle.note, 'Исчерпан лимит напоминаний, итогового действия нет');
+  // Итоговый вызов был раньше лимита: класс — по нему, как при лимите ходов.
+  const desc = 'Клиент не узнаёт операцию по карте и оспаривает её';
+  const filed = finalAction(card, 'limit_reminders', [call(3, 'create_expertise', { request: { expertiseDescription: desc } })], 'Жду указаний.', s);
+  assert.deepEqual([filed.incomplete, filed.predicted, filed.correct, filed.text], [false, 'expertise', true, desc]);
+  // Агент сообщил о завершении без итогового вызова: кейс завершён обычным образом.
+  const done = finalAction(card, 'completed', [call(3, 'get_client_cards')], 'Работа по обращению закончена.', s);
+  assert.deepEqual([done.incomplete, done.predicted, done.correct, done.textFrom], [false, 'operator_instruction', false, 'последняя реплика агента']);
+});
+
 test('case_score: веса из параметров; нет части — нет оценки; fake-судья даёт градацию по прогонам', () => {
   assert.equal(caseScore(0.8, 1 / 3, { tools: 0.5, answer: 0.5 }), 0.5 * 0.8 + 0.5 / 3);
   assert.equal(caseScore(0.8, null, { tools: 0.5, answer: 0.5 }), null);

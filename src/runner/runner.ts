@@ -9,7 +9,7 @@ import { evaluate, execStats } from '../execution/evaluate.js';
 import type { CommandEvent, StatusEvent } from '../execution/events.js';
 import { LlmOperator } from '../operator/operator.js';
 import { LlmJudge } from '../judge/judge.js';
-import { ANSWER_JUDGE_PROMPT_VERSION, JUDGE_PROMPT_VERSION, OPERATOR_PROMPT_VERSION } from '../operator/prompts.js';
+import { ANSWER_JUDGE_PROMPT_VERSION, JUDGE_PROMPT_VERSION, OPERATOR_CHECK_PROMPT_VERSION, OPERATOR_PROMPT_VERSION } from '../operator/prompts.js';
 import { itemScores, scoringOf } from '../metrics/scoring.js';
 import { createProvider } from '../llm/provider.js';
 import { resolveRun, type ResolvedItem, type ResolvedRun, type RunOverrides } from './resolve.js';
@@ -155,7 +155,7 @@ export class RunManager {
           metrics: r.metrics.map((m) => ({ id: m.id, title: m.title, builtin: m.builtin, version: m.version, params: m.params })),
           limits: r.limits,
           repetitions: r.repetitions,
-          prompts: { operator: OPERATOR_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION, answerJudge: ANSWER_JUDGE_PROMPT_VERSION },
+          prompts: { operator: OPERATOR_PROMPT_VERSION, operatorCheck: OPERATOR_CHECK_PROMPT_VERSION, judge: JUDGE_PROMPT_VERSION, answerJudge: ANSWER_JUDGE_PROMPT_VERSION },
           contract: contract ? { file: contract.source.file, hash: contract.source.hash, version: contract.version, conditional: contract.conditional } : { file: '', hash: '', version: '', conditional: true },
         },
         snapshot: { createdAt, files: snapFiles, settings: preview.inputs.settings },
