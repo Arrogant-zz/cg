@@ -20,6 +20,22 @@ const execParam = (name: string) => {
   return name;
 };
 
+/** Позиции дозапуска: список ключей L1-P04; без поля — все подходящие. */
+function itemsOf(b: Record<string, unknown>): { items?: string[] } {
+  const v = b.items;
+  if (v === undefined || v === null) return {};
+  if (!Array.isArray(v) || !v.every((x) => typeof x === 'string' && /^L\d+-P\d+$/.test(x))) throw new HttpError(400, 'items — список позиций вида L1-P04');
+  return { items: [...new Set(v as string[])] };
+}
+
+/** Линии продолжения: список номеров; без поля — все, которые можно продолжить. */
+function linesOf(b: Record<string, unknown>): { lines?: number[] } {
+  const v = b.lines;
+  if (v === undefined || v === null) return {};
+  if (!Array.isArray(v) || !v.every((x) => Number.isSafeInteger(x) && (x as number) >= 1)) throw new HttpError(400, 'lines — список номеров линий');
+  return { lines: [...new Set(v as number[])] };
+}
+
 /** Тестовый оператор при запуске: new — новый, номер — продолжить на операторе этого прогона; без поля — как в файле прогона. */
 function overridesOf(o: { continueFrom?: unknown }): RunOverrides {
   const c = o.continueFrom;
@@ -64,19 +80,29 @@ export function buildRoutes(app: App): Router {
     const run = await app.runs.create(String(b.config), overridesOf(b.overrides ?? {}));
     return v.runListItem(run);
   });
-  r.get('/api/runs/:id', ({ params }) => v.runDetail(app.runs.get(num(params.id))));
+  r.get('/api/runs/:id', async ({ params }) => {
+    const run = app.runs.get(num(params.id));
+    return v.runDetail(run, await app.runs.dorun(run));
+  });
   r.post('/api/runs/:id/stop', async ({ params }) => v.runListItem(await app.runs.stop(num(params.id))));
+  // Дозапуск завершённого прогона (решение владельца от 12.11.2026): перезапуск позиций проверки, продолжение линий обучения, переоценка.
+  r.post('/api/runs/:id/rerun', async ({ params, body }) => v.runListItem(await app.runs.dorunStart(num(params.id), 'rerun', itemsOf(await body()))));
+  r.post('/api/runs/:id/resume', async ({ params, body }) => v.runListItem(await app.runs.dorunStart(num(params.id), 'resume', linesOf(await body()))));
+  r.post('/api/runs/:id/reevaluate', async ({ params, body }) => v.runListItem(await app.runs.dorunStart(num(params.id), 'reevaluate', itemsOf(await body()))));
   r.get('/api/runs/:id/executions/:name', async ({ params }) => {
     const id = num(params.id);
     const name = execParam(params.name);
     const run = app.runs.get(id);
     const live = app.runs.liveExecution(id, name);
-    const item = run.lines.flatMap((l) => l.items).find((i) => i.execName === name) ?? null;
+    // Позиция журнала: итоговая попытка или прежняя. У прежней в журнале сохранена позиция на её конец.
+    const item = run.lines.flatMap((l) => l.items).find((i) => i.execName === name || i.attempts?.some((a) => a.execName === name)) ?? null;
+    const current = !!item && item.execName === name;
+    const attempts = item ? v.attemptsOf(item) : [];
     // Ожидания — только у идущего выполнения: в запись они не входят.
-    if (live) return { ...live.toJSON(), item, live: true, waits: live.waits() };
-    const saved = await app.store.loadExecution(id, name);
+    if (live && current) return { ...live.toJSON(), item, attempts, live: true, waits: live.waits() };
+    const saved = live && !current ? { ...live.toJSON(), item: null } : await app.store.loadExecution(id, name);
     if (!saved) throw new HttpError(404, 'Журнал кейса не найден');
-    return { ...saved, item: item ?? saved.item, live: false, waits: [] };
+    return { ...saved, item: current ? item : (saved.item ?? item), attempts, live: false, waits: [] };
   });
   r.get('/api/runs/:id/executions/:name/http', async ({ params, query, res }) => {
     const id = num(params.id);

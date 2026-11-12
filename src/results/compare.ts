@@ -14,6 +14,8 @@ export interface CompareRow {
   b: string;
   same: boolean;
   focus?: boolean;
+  /** Различие видно, но на сопоставимость не влияет: повтор на месте меняет то, как стенд обходится со своими сбоями, а не условия агента. */
+  neutral?: boolean;
   /** Что именно различается: файлы снимка и настройки «значение A → значение B». */
   details?: string[];
 }
@@ -88,6 +90,7 @@ function rowsByInputs(a: RunRecord, b: RunRecord): CompareRow[] {
     { key: 'metrics', title: 'Определения метрик', a: metricsLabel(a), b: metricsLabel(b), same: metricsKey(a) === metricsKey(b) },
     row('contract', 'Контракт инструментов', 'contract', (r) => `${r.settings.contract.version} @${r.settings.contract.hash}`),
     { key: 'limits', title: 'Лимиты', a: limits(a), b: limits(b), same: limits(a) === limits(b) },
+    { key: 'retries', title: 'Повтор на месте', a: retriesLabel(a), b: retriesLabel(b), same: retriesLabel(a) === retriesLabel(b), neutral: true },
     row('stand', 'Настройки стенда', 'stand', standLabel),
     { key: 'operator', title: 'Тестовый оператор', a: operatorLabel(a), b: operatorLabel(b), same: operatorLabel(a) === operatorLabel(b), focus: true },
   ];
@@ -117,6 +120,7 @@ function legacyRows(a: RunRecord, b: RunRecord): CompareRow[] {
     { key: 'metrics', title: 'Определения метрик', a: metricsLabel(a), b: metricsLabel(b), same: metricsKey(a) === metricsKey(b) },
     { key: 'contract', title: 'Контракт инструментов', a: `${a.settings.contract.version} @${a.settings.contract.hash}`, b: `${b.settings.contract.version} @${b.settings.contract.hash}`, same: a.settings.contract.hash === b.settings.contract.hash },
     { key: 'limits', title: 'Лимиты', a: limits(a), b: limits(b), same: limits(a) === limits(b) },
+    { key: 'retries', title: 'Повтор на месте', a: retriesLabel(a), b: retriesLabel(b), same: retriesLabel(a) === retriesLabel(b), neutral: true },
     { key: 'operator', title: 'Тестовый оператор', a: operatorLabel(a), b: operatorLabel(b), same: operatorLabel(a) === operatorLabel(b), focus: true },
   ];
 }
@@ -169,6 +173,12 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
   }
   const notCompared = cases.filter((c) => c.change === 'na');
   if (notCompared.length) limitations.push(`Не сравниваются ${notCompared.length} позиций: ${notCompared.map((c) => `${c.pos} — ${c.note}`).join('; ')}. Долю успеха сравниваем на ${common.length} кейсах, оценённых в обоих прогонах.`);
+  // Итог, полученный повтором стенда — повторной попыткой или переоценкой, — сравнивается как остальные, но виден (решение владельца от 12.11.2026).
+  const repeated = [
+    ...viaRepeat(itemsA).map((x) => `позиция ${x.pos} — ${x.what} в A (#${a.id})`),
+    ...viaRepeat(itemsB).map((x) => `позиция ${x.pos} — ${x.what} в B (#${b.id})`),
+  ];
+  if (repeated.length) limitations.push(`Итог получен повтором стенда: ${repeated.join('; ')}. Такие позиции сравниваются по итоговой попытке, как остальные.`);
   if (a.lines.length > 1 || b.lines.length > 1) limitations.push('Сравнивается первая линия каждого прогона; разброс повторений — на странице результата.');
   if (a.lines.length < 3 && b.lines.length < 3) limitations.push('Малое число повторений: разницу нельзя считать статистически значимой.');
   return {
@@ -176,7 +186,7 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
     b: brief(b),
     rows,
     conclusion,
-    comparable: full && differ.every((d) => d.focus),
+    comparable: full && differ.every((d) => d.focus || d.neutral),
     cases,
     counts: {
       better: cases.filter((c) => c.change === 'better').length,
@@ -211,6 +221,19 @@ function limits(r: RunRecord): string {
   const n = l.maxReminders;
   return `${l.maxTurns} ходов · ${l.maxDurationSec} с · ${l.maxOperatorCalls} запросов${n === undefined ? '' : ` · ${n} ${plural(n, 'напоминание', 'напоминания', 'напоминаний')}`}`;
 }
+/** Повтор на месте: в записях до 12.11.2026 его не было. */
+function retriesLabel(r: RunRecord): string {
+  const n = r.settings.retries;
+  return n === undefined ? 'не было' : n === 0 ? 'выключен' : `${n} ${plural(n, 'повтор', 'повтора', 'повторов')}`;
+}
+
+/** Позиции, итог которых получен повторной попыткой или повторным вызовом судьи. */
+function viaRepeat(items: ItemRecord[]): { pos: number; what: string }[] {
+  return items
+    .filter((i) => i.reevaluated || (i.attempts?.length && i.outcome && i.outcome !== 'technical'))
+    .map((i) => ({ pos: i.pos ?? 0, what: i.attempts?.length && i.outcome !== 'technical' ? 'итог повторной попытки' : 'итог после переоценки' }));
+}
+
 const isEval = (i: ItemRecord) => i.outcome === 'passed' || i.outcome === 'failed';
 const label = (i: ItemRecord) => (i.outcome === 'technical' ? 'технический сбой' : i.outcome === 'not_evaluated' ? 'не оценено' : 'не выполнялся');
 const failures = (i: ItemRecord) => [...(i.checks ?? []).filter((c) => c.passed === false).map((c) => c.text), ...i.answerFailed];

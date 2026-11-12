@@ -1,12 +1,14 @@
 // Раннер прогонов (RUN-01–03, BASK-01–05): очередь, линии повторений на тестовых операторах, кейсы, команды обучения и проходы curator.
 // Скиллы живут в агенте у тестового оператора: ClawGym их не устанавливает и не выгружает (решение владельца от 27.10.2026).
+// Повтор на месте после технического сбоя, дозапуск завершённого прогона и переоценка — решение владельца от 12.11.2026 (rerun.ts).
+import path from 'node:path';
 import type { App } from '../app.js';
 import type { CaseDef, SolutionDef } from '../config/types.js';
 import { Execution } from '../execution/execution.js';
 import { AgentChannel } from '../execution/channel.js';
 import { runDialog } from '../execution/dialog.js';
-import { evaluate, execStats } from '../execution/evaluate.js';
-import type { CommandEvent, StatusEvent } from '../execution/events.js';
+import { evaluate, execStats, reevaluate, type Evaluation } from '../execution/evaluate.js';
+import { RETRYABLE_STATUSES, type CommandEvent, type ScoresEvent, type StatusEvent } from '../execution/events.js';
 import { LlmOperator } from '../operator/operator.js';
 import { LlmJudge } from '../judge/judge.js';
 import { ANSWER_JUDGE_PROMPT_VERSION, JUDGE_PROMPT_VERSION, OPERATOR_CHECK_PROMPT_VERSION, OPERATOR_PROMPT_VERSION } from '../operator/prompts.js';
@@ -14,7 +16,22 @@ import { itemScores, scoringOf } from '../metrics/scoring.js';
 import { createProvider } from '../llm/provider.js';
 import { resolveRun, type ResolvedItem, type ResolvedRun, type RunOverrides } from './resolve.js';
 import { runStep, stepLabel, stepsAfter, type OperatorHold } from './operators.js';
-import type { CuratorPassRecord, ItemRecord, LineRecord, RunRecord, SnapshotFile } from './types.js';
+import {
+  NOTE,
+  attemptName,
+  checkSnapshot,
+  linesOf,
+  operatorReasons,
+  parsePosKey,
+  posKey,
+  reevaluateItems,
+  rerunItems,
+  resumeLines,
+  snapshotReasons,
+  type DorunState,
+  type SnapshotCheck,
+} from './rerun.js';
+import type { CuratorPassRecord, ItemRecord, LineRecord, RerunRecord, RunRecord, SnapshotFile } from './types.js';
 import type { HttpExchange } from '../util/httplog.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { runKey } from '../results/store.js';
@@ -24,6 +41,20 @@ import { logger } from '../util/log.js';
 
 const log = logger('runner');
 
+/** Что дозапуск выполняет в линии: элементы корзины по индексу; forceFinal — финальный проход, даже если счётчик пуст. */
+interface LineJob {
+  indexes: Set<number>;
+  forceFinal: boolean;
+}
+
+/** Дозапуск завершённого прогона: запись в run.reruns и линии, которых он касается. */
+interface Job {
+  rerun: RerunRecord;
+  lines: Map<number, LineJob>;
+  /** Дозапуск начал работу: линия получила сессию агента или началась переоценка. До этого его можно снять без следа. */
+  began: boolean;
+}
+
 interface Live {
   abort: AbortController;
   resolved: ResolvedRun;
@@ -32,9 +63,25 @@ interface Live {
   started: boolean;
   /** Тестовые операторы прогона заняты от запуска до конца: другой прогон или ручная сессия их не возьмут. */
   hold: OperatorHold;
+  /** Дозапуск; нет — первый запуск прогона. */
+  job?: Job;
 }
 
-export const execName = (line: number, pos: number) => `L${line}-P${String(pos).padStart(2, '0')}`;
+interface Deps {
+  channel: AgentChannel;
+  operator: LlmOperator;
+  judge: LlmJudge | null;
+  prior: Set<string>;
+  signal: AbortSignal;
+  live: Live;
+}
+
+/** Попытка позиции: её выполнение, ключ отложенного сохранения и сохранение журнала. */
+interface Attempt {
+  exec: Execution;
+  key: string;
+  persist: () => Promise<unknown>;
+}
 
 export class RunManager {
   runs = new Map<number, RunRecord>();
@@ -43,26 +90,86 @@ export class RunManager {
   private saveTimers = new Map<number, NodeJS.Timeout>();
   /** Отложенные сохранения журналов кейсов; ключ — «прогон/кейс». */
   private persists = new Map<string, { timer: NodeJS.Timeout; persist: () => Promise<unknown> }>();
+  /** Позиция на конец прежней попытки: её журнал сохраняет её, а не итоговую, даже если поздние события придут после повтора. */
+  private frozen = new Map<string, ItemRecord>();
+  /** Прогон, собранный из снимка, и расхождения с ним: снимок, код и окружение процесса не меняются, поэтому — один раз на прогон. */
+  private snapshots = new Map<number, Promise<SnapshotCheck>>();
 
   constructor(private app: App) {}
 
   async init(): Promise<void> {
     for (const r of await this.app.store.loadRuns((file, reason) => this.app.stand.add('warn', 'store.skipped', `Прогон из ${file} не загружен: ${reason}`))) {
-      if (r.status === 'running' || r.status === 'queued') {
-        const wasRunning = r.status === 'running';
-        r.status = 'failed';
-        r.error = wasRunning ? 'ClawGym перезапущен во время прогона: начатый шаг не завершён' : 'ClawGym перезапущен до старта прогона — запустите его снова';
-        r.finishedAt = r.finishedAt ?? nowIso();
-        for (const l of r.lines) {
-          if (l.status === 'running' || l.status === 'queued') l.status = 'failed';
-          for (const i of l.items) if (i.status === 'running') i.status = 'internal_error';
-        }
-        await this.app.store.saveRun(r);
-      }
+      if (r.status === 'running' || r.status === 'queued') await this.recover(r);
       this.runs.set(r.id, r);
     }
     this.timer = setInterval(() => this.tick(), 2000);
     this.timer.unref();
+  }
+
+  /**
+   * Прогон шёл или ждал в очереди, когда ClawGym перезапустили. Запись приводится к виду, с которого его можно дозапустить:
+   * прерванная позиция — технический сбой с причиной, не начатые — «Не начат», идущий проход curator — сбой.
+   * Дозапуск, который не успел начаться, снимается, и прогон возвращается к прежнему статусу.
+   */
+  private async recover(r: RunRecord): Promise<void> {
+    const job = r.reruns.find((x) => x.status === 'queued' || x.status === 'running') ?? null;
+    if (job?.status === 'queued') {
+      this.restore(r, job);
+      job.status = 'stopped';
+      job.error = 'ClawGym перезапущен до начала дозапуска';
+      job.finishedAt = nowIso();
+      await this.app.store.saveRun(r);
+      return;
+    }
+    const wasRunning = r.status === 'running';
+    r.status = 'failed';
+    r.error = wasRunning ? 'ClawGym перезапущен во время прогона: начатый шаг не завершён' : 'ClawGym перезапущен до старта прогона — запустите его снова';
+    r.finishedAt = wasRunning ? nowIso() : (r.finishedAt ?? nowIso());
+    if (job) {
+      job.status = 'failed';
+      job.error = 'ClawGym перезапущен во время дозапуска';
+      job.finishedAt = r.finishedAt;
+    }
+    for (const l of r.lines) {
+      if (l.status === 'running' || l.status === 'queued') l.status = 'failed';
+      l.current = null;
+      for (const i of l.items) await this.closeInterrupted(r, i);
+      for (const p of l.curatorPasses) {
+        if (p.status !== 'running') continue;
+        p.status = 'failed';
+        p.error = 'ClawGym перезапущен во время прохода curator';
+      }
+    }
+    await this.app.store.saveRun(r);
+  }
+
+  /**
+   * Позиция, которую застал перезапуск ClawGym. Итог уже есть — прерван capture: итог остаётся, а capture считается
+   * неотправленным, хотя агент мог его принять. Итога нет — технический сбой «Внутренняя ошибка стенда», и в журнал кейса
+   * дописывается событие статуса, как при сбое стенда посреди линии.
+   */
+  private async closeInterrupted(run: RunRecord, i: ItemRecord): Promise<void> {
+    if (i.status === 'pending') i.status = 'not_started';
+    if (i.status !== 'running') return;
+    i.finishedAt = nowIso();
+    if (i.outcome) {
+      i.status = i.steps.dialog ?? 'completed';
+      if (run.type === 'training' && !i.steps.capture) i.steps.capture = { status: 'interrupted', signal: null, path: null, reason: 'прерван перезапуском ClawGym: агент мог его принять' };
+      return;
+    }
+    i.status = 'internal_error';
+    i.outcome = 'technical';
+    i.reason = 'ClawGym перезапущен во время кейса';
+    if (!i.execName) return;
+    try {
+      const saved = await this.app.store.loadExecution(run.id, i.execName);
+      if (!saved) return;
+      const seq = saved.events.reduce((m, e) => Math.max(m, e.seq), 0) + 1;
+      const ev: StatusEvent = { type: 'status', status: 'internal_error', reason: i.reason, seq, ts: i.finishedAt };
+      await this.app.store.saveExecution(run.id, i.execName, { ...saved, events: [...saved.events, ev], status: 'internal_error', reason: i.reason, finishedAt: saved.finishedAt ?? i.finishedAt, item: i });
+    } catch (e) {
+      log.warn(`Журнал кейса ${i.execName} прогона #${run.id} не дополнен статусом: ${errorMessage(e)}`);
+    }
   }
 
   close(): void {
@@ -232,6 +339,25 @@ export class RunManager {
   async stop(id: number): Promise<RunRecord> {
     const run = this.get(id);
     const live = this.live.get(id);
+    if (run.status === 'queued' && live?.job && live.started) {
+      // Дозапуск ждёт свободную сессию агента: ожидание отменяется, а прогон возвращается к прежнему статусу в execute.
+      live.abort.abort(new Error('Дозапуск убран из очереди'));
+      return run;
+    }
+    if (run.status === 'queued' && live?.job) {
+      // Дозапуск убран из очереди до старта: прогон возвращается к прежнему статусу и ошибкам.
+      const job = live.job;
+      live.abort.abort(new Error('Дозапуск убран из очереди'));
+      live.hold.release();
+      this.live.delete(id);
+      this.restore(run, job.rerun);
+      job.rerun.status = 'stopped';
+      job.rerun.error = 'Убран из очереди до старта';
+      job.rerun.finishedAt = nowIso();
+      await this.app.store.saveRun(run);
+      this.publish(run);
+      return run;
+    }
     if (run.status === 'queued') {
       run.status = 'stopped';
       run.error = 'Убран из очереди до старта';
@@ -250,6 +376,16 @@ export class RunManager {
     return run;
   }
 
+  /** Статус и ошибки прогона и линий — как до дозапуска, который так и не начался. */
+  private restore(run: RunRecord, rerun: RerunRecord): void {
+    run.status = rerun.previous.status;
+    run.error = rerun.previous.run;
+    for (const p of rerun.previous.lines) {
+      const l = run.lines.find((x) => x.index === p.line);
+      if (l) l.error = p.error;
+    }
+  }
+
   /** Удаление завершённого прогона с журналами и материалами (уточнение владельца от 26.10.2026). Прогоны, продолжившие его оператора, хранят историю у себя. */
   async delete(id: number): Promise<void> {
     const run = this.get(id);
@@ -258,6 +394,7 @@ export class RunManager {
     const t = this.saveTimers.get(id);
     if (t) clearTimeout(t);
     this.saveTimers.delete(id);
+    this.snapshots.delete(id);
     this.runs.delete(id);
     await this.app.store.deleteRun(id);
     this.app.publish('runs', 'run', { id, status: 'deleted' });
@@ -277,66 +414,99 @@ export class RunManager {
         run.status = 'failed';
         run.error = errorMessage(e);
         run.finishedAt = nowIso();
+        if (live.job) Object.assign(live.job.rerun, { status: 'failed', error: run.error, finishedAt: run.finishedAt });
         this.scheduleSave(run, true);
       });
     }
   }
 
   private async execute(run: RunRecord, live: Live): Promise<void> {
+    const job = live.job ?? null;
     try {
-      await Promise.all(run.lines.map((l) => this.runLine(run, l, live)));
+      if (job) Object.assign(job.rerun, { status: 'running', startedAt: nowIso() });
+      if (job?.rerun.kind === 'reevaluate') await this.reevaluateJob(run, live, job);
+      else await Promise.all(run.lines.filter((l) => !job || job.lines.has(l.index)).map((l) => this.runLine(run, l, live, job?.lines.get(l.index) ?? null)));
       const aborted = live.abort.signal.aborted;
-      run.finishedAt = nowIso();
-      if (aborted) run.status = 'stopped';
-      else if (run.lines.every((l) => l.status === 'failed')) {
-        run.status = 'failed';
-        run.error = run.error ?? run.lines.map((l) => l.error).filter(Boolean).join('; ');
-      } else run.status = 'completed';
-      if (!run.startedAt) run.startedAt = run.finishedAt;
-      run.summary = computeRunMetrics(run);
-      await this.app.store.saveRun(run);
+      if (job && aborted && !job.began) {
+        // Дозапуск остановлен, пока ждал сессию агента: он ничего не сделал — прогон такой же, как до него.
+        this.restore(run, job.rerun);
+        Object.assign(job.rerun, { status: 'stopped', error: 'Убран из очереди до старта', finishedAt: nowIso() });
+      } else this.finish(run, job, aborted);
     } finally {
-      // Линии закончились: привязки x-task-id, резерв операторов и живая запись снимаются, даже если упали метрики или запись run.json.
-      // Иначе прогон нельзя удалить, его операторы остаются занятыми, а поздние вызовы агента попадают в законченные кейсы.
+      // Линии закончились: привязки x-task-id, резерв операторов и живая запись снимаются тем же шагом, что итоговый статус, —
+      // и тогда, когда упали метрики. Иначе завершённый прогон ещё миг нельзя удалить или дозапустить, его операторы заняты,
+      // а поздние вызовы агента попадают в законченные кейсы. Запись run.json — после: её сбой ничего из этого не держит.
       for (const e of live.execs.values()) this.app.bindings.unbindAll(e);
       live.hold.release();
       this.live.delete(run.id);
+      for (const k of [...this.frozen.keys()]) if (k.startsWith(`${run.id}/`)) this.frozen.delete(k);
     }
+    await this.app.store.saveRun(run);
     this.publish(run);
-    log.info(`Прогон #${run.id} — ${run.status}`);
+    log.info(`Прогон #${run.id} — ${run.status}${job ? ` (дозапуск ${job.rerun.n}: ${job.rerun.kind})` : ''}`);
   }
 
-  private async runLine(run: RunRecord, line: LineRecord, live: Live): Promise<void> {
+  /** Итог прогона или дозапуска по его линиям: статус, ошибка, время и метрики. */
+  private finish(run: RunRecord, job: Job | null, aborted: boolean): void {
+    run.finishedAt = nowIso();
+    if (job) {
+      // Дозапуск: статус — по всем линиям, в том числе тем, которых он не касался. Остановленная линия, где остались
+      // не начатые позиции, остаётся остановленной.
+      run.status = aborted ? 'stopped' : run.lines.every((l) => l.status === 'failed') ? 'failed' : run.lines.some((l) => l.status === 'stopped') ? 'stopped' : 'completed';
+      if (job.rerun.kind !== 'reevaluate') run.error = run.status === 'failed' ? run.lines.map((l) => l.error).filter(Boolean).join('; ') : null;
+      const failed = run.lines.filter((l) => job.lines.has(l.index) && l.status === 'failed');
+      job.rerun.status = aborted ? 'stopped' : failed.length ? 'failed' : 'completed';
+      job.rerun.error ??= failed.map((l) => l.error).filter(Boolean).join('; ') || null;
+      job.rerun.finishedAt = run.finishedAt;
+    } else if (aborted) run.status = 'stopped';
+    else if (run.lines.every((l) => l.status === 'failed')) {
+      run.status = 'failed';
+      run.error = run.error ?? run.lines.map((l) => l.error).filter(Boolean).join('; ');
+    } else run.status = 'completed';
+    if (!run.startedAt) run.startedAt = run.finishedAt;
+    run.summary = computeRunMetrics(run);
+  }
+
+  private async runLine(run: RunRecord, line: LineRecord, live: Live, job: LineJob | null = null): Promise<void> {
     const app = this.app;
     const r = live.resolved;
     const signal = live.abort.signal;
     const owner = `run-${run.id}-l${line.index}`;
+    const before = line.status;
     try {
       await app.sessions.acquire(owner, signal);
     } catch {
-      line.status = 'stopped';
+      // Дозапуск остановлен до сессии: линия не начиналась и остаётся какой была.
+      line.status = job ? before : 'stopped';
       this.scheduleSave(run);
       return;
     }
+    if (live.job) live.job.began = true;
     try {
       if (run.status === 'queued') {
         run.status = 'running';
-        run.startedAt = nowIso();
+        run.startedAt ??= nowIso();
       }
       line.status = 'running';
-      line.startedAt = nowIso();
+      line.startedAt ??= nowIso();
+      line.finishedAt = null;
       if (!line.senderId) {
         line.senderId = `${app.env.senderPrefix}${r.basket.id}-r${run.id}-${line.index}-${randomHex(3)}`;
         live.hold.add(line.senderId);
       }
-      // Оператор начал этот прогон: шаг в журнале операторов сразу, до первого запроса агенту.
+      // Оператор начал этот прогон: шаг в журнале операторов сразу, до первого запроса агенту. У дозапуска шаг уже есть.
       app.operators.record(line.senderId, runStep(run, line.index));
-      this.operatorPrep(run, line);
+      if (!job || line.prep.status === 'pending') this.operatorPrep(run, line);
 
       const channel = new AgentChannel(r.agent, app.env, app.locks, app.unfinished);
       const operator = new LlmOperator(r.models.operator!, createProvider(r.models.operator!, app.env.raw));
       const judge = r.models.judge ? new LlmJudge(r.models.judge, createProvider(r.models.judge, app.env.raw)) : null;
       const prior = new Set<string>();
+      // Дозапуск: уроки итоговых попыток позиций, которые шли раньше, — как если бы линия шла подряд.
+      if (job) {
+        const first = Math.min(...job.indexes);
+        for (const i of line.items) if (i.index < first && i.kind === 'case' && i.outcome && i.outcome !== 'technical') for (const l of i.stats?.lessons ?? []) prior.add(l);
+      }
       const training = r.basket.type === 'training';
       const cur = r.basket.curator;
       // Агент не освободил сессию после прерванного запроса: следующие кейсы ждали бы его по очереди — линия останавливается.
@@ -349,6 +519,7 @@ export class RunManager {
       };
 
       for (const item of r.items) {
+        if (job && !job.indexes.has(item.index)) continue;
         const rec = line.items.find((x) => x.index === item.index)!;
         if (signal.aborted) break;
         if (item.kind === 'curator') {
@@ -365,14 +536,16 @@ export class RunManager {
           if (stuck()) break;
         }
       }
-      if (training && cur.enabled && cur.final && line.counter > 0 && !signal.aborted && !line.error) {
+      if (training && cur.enabled && cur.final && (line.counter > 0 || !!job?.forceFinal) && !signal.aborted && !line.error) {
         const last = [...line.items].reverse().find((i) => i.kind === 'case' && i.outcome && i.outcome !== 'technical');
         if (last) last.steps.curatorPass = line.curatorPasses.length + 1;
         await this.curatorPass(run, line, channel, 'final', this.lastPos(line), signal);
       }
       for (const i of line.items) if (i.status === 'pending') i.status = 'not_started';
       line.current = null;
-      line.status = signal.aborted ? 'stopped' : 'completed';
+      // Дозапуск части позиций остановленной линии: где остались не начатые, линия по-прежнему остановлена.
+      const left = line.items.some((i) => i.kind === 'case' && i.status === 'not_started');
+      line.status = signal.aborted || (job && before === 'stopped' && left) ? 'stopped' : 'completed';
     } catch (e) {
       log.error(`Линия ${line.index} прогона #${run.id}`, e);
       line.status = 'failed';
@@ -434,18 +607,55 @@ export class RunManager {
     this.scheduleSave(run);
   }
 
-  private async runItem(
-    run: RunRecord,
-    line: LineRecord,
-    rec: ItemRecord,
-    item: ResolvedItem,
-    deps: { channel: AgentChannel; operator: LlmOperator; judge: LlmJudge | null; prior: Set<string>; signal: AbortSignal; live: Live },
-  ): Promise<void> {
+  /**
+   * Позиция корзины. Быстрый технический сбой — сбой LLM-оператора, /reset или ошибка агента — сразу повторяется на месте,
+   * пока не исчерпан retries (решение владельца от 12.11.2026). Capture, счётчик curator и уроки линии — по итоговой попытке.
+   */
+  private async runItem(run: RunRecord, line: LineRecord, rec: ItemRecord, item: ResolvedItem, deps: Deps): Promise<void> {
+    const training = deps.live.resolved.basket.type === 'training';
+    let a = await this.runAttempt(run, line, rec, item, deps);
+    for (let n = 0; n < (run.settings.retries ?? 0) && RETRYABLE_STATUSES.has(a.exec.status) && !deps.signal.aborted; n++) {
+      if (training) rec.steps.capture = { status: 'not_sent', signal: null, path: null, reason: 'кейс прерван технически, повтор на месте' };
+      rec.status = a.exec.status;
+      rec.finishedAt = nowIso();
+      await (this.persistNow(a.key) ?? a.persist());
+      this.scheduleSave(run);
+      a = await this.runAttempt(run, line, rec, item, deps);
+    }
+    const exec = a.exec;
+    // Повторная поправка — урок, который уже поправляли в итоговой попытке прежней позиции. Технический сбой не дошёл до
+    // capture: агент на нём не учился, и его поправки повторными не делают.
+    if (rec.outcome !== 'technical') for (const l of rec.stats?.lessons ?? []) deps.prior.add(l);
+
+    if (training) {
+      if (rec.outcome !== 'technical' && !deps.signal.aborted) {
+        line.current = { index: item.index, execName: rec.execName, phase: 'capture' };
+        this.scheduleSave(run);
+        const cmd = await deps.channel.command(exec, 'capture', 'runner', deps.signal);
+        const p: any = cmd.parsed;
+        rec.steps.capture = { status: cmd.status, signal: p?.signal ?? null, path: p?.path ?? null, reason: p?.reason ?? cmd.error ?? null };
+        line.counter++;
+      } else {
+        rec.steps.capture = { status: 'not_sent', signal: null, path: null, reason: rec.outcome === 'technical' ? 'кейс прерван технически' : 'прогон остановлен' };
+      }
+    }
+    rec.status = exec.status;
+    rec.finishedAt = nowIso();
+    // Отложенное сохранение снимается: события после конца кейса — поздние вызовы прерванного хода — тоже сохраняются.
+    await (this.persistNow(a.key) ?? a.persist());
+    this.scheduleSave(run);
+  }
+
+  /** Попытка позиции — новое выполнение со своим журналом и x-task-id: диалог и оценка. Прежняя попытка уходит в attempts. */
+  private async runAttempt(run: RunRecord, line: LineRecord, rec: ItemRecord, item: ResolvedItem, deps: Deps): Promise<Attempt> {
     const app = this.app;
     const r = deps.live.resolved;
+    if (rec.execName) this.supersede(run, rec);
+    const n = rec.attempts.length + 1;
     const caseDef = item.caseDef as CaseDef;
     const solution = item.solution as SolutionDef;
-    const name = execName(line.index, item.pos!);
+    const name = attemptName(line.index, item.pos!, n);
+    // Номер обращения у всех попыток один: для агента это то же обращение. x-task-id и request_ref стартового сообщения — новые.
     const caseNumber = r.repetitions > 1 ? `CG-${run.id}-${line.index}-${String(item.pos).padStart(2, '0')}` : `CG-${run.id}-${String(item.pos).padStart(2, '0')}`;
     const exec = new Execution({
       id: `run${run.id}-${name}`,
@@ -467,12 +677,13 @@ export class RunManager {
     rec.execName = name;
     rec.status = 'running';
     rec.startedAt = nowIso();
-    line.current = { index: item.index, execName: name, phase: 'диалог' };
+    const phase = (p: string) => (n > 1 ? `${p} · попытка ${n}` : p);
+    line.current = { index: item.index, execName: name, phase: phase('диалог') };
     const key = `${run.id}/${name}`;
-    const persist = () => Promise.all([app.store.saveExecution(run.id, name, { ...exec.toJSON(), item: rec }), app.store.saveHttp(run.id, name, exec.http)]);
+    const persist = () => Promise.all([app.store.saveExecution(run.id, name, { ...exec.toJSON(), item: this.frozen.get(key) ?? rec }), app.store.saveHttp(run.id, name, exec.http)]);
     exec.onChange((c) => {
       // Шаг /reset отмечается сразу, не дожидаясь конца диалога.
-      if (c.kind === 'event' && c.event.type === 'command' && c.event.name === 'reset' && c.event.status !== 'running' && !rec.steps.reset) {
+      if (c.kind === 'event' && c.event.type === 'command' && c.event.name === 'reset' && c.event.status !== 'running' && !rec.steps.reset && rec.execName === name) {
         rec.steps.reset = c.event.status;
         this.scheduleSave(run);
       }
@@ -496,10 +707,26 @@ export class RunManager {
     exec.add<StatusEvent>({ type: 'status', status: outcome.status, reason: outcome.reason });
     rec.steps.reset = (exec.events.find((e) => e.type === 'command' && (e as CommandEvent).name === 'reset') as CommandEvent | undefined)?.status ?? null;
     rec.steps.dialog = outcome.status;
+    rec.resultSeq = outcome.resultSeq;
 
-    line.current = { index: item.index, execName: name, phase: 'оценка' };
+    line.current = { index: item.index, execName: name, phase: phase('оценка') };
     this.scheduleSave(run);
     const ev = await evaluate(exec, outcome.resultSeq, deps.judge, deps.signal, scoringOf(run.settings.metrics));
+    this.applyEvaluation(rec, ev);
+    rec.stats = execStats(exec);
+    rec.repeated = rec.stats.lessons.filter((l) => deps.prior.has(l));
+    return { exec, key, persist };
+  }
+
+  /** Новая попытка позиции: прежняя уходит в attempts со своим итогом, а её журнал сохраняет позицию на её конец. */
+  private supersede(run: RunRecord, rec: ItemRecord): void {
+    this.frozen.set(`${run.id}/${rec.execName}`, structuredClone(rec));
+    rec.attempts.push({ n: rec.attempts.length + 1, execName: rec.execName!, status: rec.status, outcome: rec.outcome, reason: rec.reason, startedAt: rec.startedAt, finishedAt: rec.finishedAt });
+    Object.assign(rec, { execName: null, status: 'pending', outcome: null, reason: '', startedAt: null, finishedAt: null, resultSeq: null, reevaluated: false, checks: null, answerFailed: [], scores: null, stats: null, repeated: [] });
+    rec.steps = { reset: null, dialog: null, checks: null, judge: null, capture: null, curatorPass: null };
+  }
+
+  private applyEvaluation(rec: ItemRecord, ev: Evaluation): void {
     rec.outcome = ev.outcome;
     rec.reason = ev.reason;
     rec.checks = ev.checks;
@@ -507,27 +734,7 @@ export class RunManager {
     rec.steps.judge = ev.judge ? { status: ev.judge.status, passed: ev.judge.passed, total: ev.judge.total } : null;
     rec.answerFailed = ev.judge?.failed ?? [];
     rec.scores = ev.scores ? itemScores(ev.scores) : null;
-    rec.stats = execStats(exec);
-    rec.repeated = rec.stats.lessons.filter((l) => deps.prior.has(l));
-    for (const l of rec.stats.lessons) deps.prior.add(l);
-
-    if (r.basket.type === 'training') {
-      if (ev.outcome !== 'technical' && !deps.signal.aborted) {
-        line.current = { index: item.index, execName: name, phase: 'capture' };
-        this.scheduleSave(run);
-        const cmd = await deps.channel.command(exec, 'capture', 'runner', deps.signal);
-        const p: any = cmd.parsed;
-        rec.steps.capture = { status: cmd.status, signal: p?.signal ?? null, path: p?.path ?? null, reason: p?.reason ?? cmd.error ?? null };
-        line.counter++;
-      } else {
-        rec.steps.capture = { status: 'not_sent', signal: null, path: null, reason: ev.outcome === 'technical' ? 'кейс прерван технически' : 'прогон остановлен' };
-      }
-    }
-    rec.status = exec.status;
-    rec.finishedAt = nowIso();
-    // Отложенное сохранение снимается: события после конца кейса — поздние вызовы прерванного хода — тоже сохраняются.
-    await (this.persistNow(key) ?? persist());
-    this.scheduleSave(run);
+    rec.reevaluated = ev.repeated;
   }
 
   /** Проход curator между решениями (BASK-02): /reset → /skill-curator. Что изменилось — по строке результата; файлы скиллов остаются в агенте. */
@@ -562,6 +769,186 @@ export class RunManager {
     const p: any = c.parsed;
     rec.report = p?.kind === 'complete' ? (p.report ?? null) : null;
     this.scheduleSave(run);
+  }
+
+  // ------------------------------------------------------------------ дозапуск (решение владельца от 12.11.2026)
+
+  private snapshotCheck(run: RunRecord): Promise<SnapshotCheck> {
+    let p = this.snapshots.get(run.id);
+    if (!p) {
+      p = checkSnapshot(run, path.join(this.app.store.runDir(run.id), 'snapshot'), this.app.env).catch(
+        (e): SnapshotCheck => ({ resolved: null, errors: [{ severity: 'error', file: 'snapshot/', reason: `прогон не собирается из снимка: ${errorMessage(e)}` }], diffs: [], hidden: [] }),
+      );
+      this.snapshots.set(run.id, p);
+    }
+    return p;
+  }
+
+  /** Что у прогона можно дозапустить и что мешает: позиции и линии — по записи, условия — по снимку и тестовым операторам. */
+  async dorun(run: RunRecord): Promise<DorunState> {
+    const busy = run.status === 'queued' || run.status === 'running' || this.live.has(run.id);
+    const rerun = rerunItems(run);
+    const resume = resumeLines(run);
+    const reeval = reevaluateItems(run);
+    const common = busy ? ['Прогон в очереди или идёт: дождитесь его завершения'] : [];
+    const snap = !busy && (rerun.length || resume.length || reeval.length) ? await this.snapshotCheck(run) : null;
+    const reasons = (kind: 'rerun' | 'resume' | 'reevaluate', lines: number[]) => [
+      ...common,
+      ...(snap ? snapshotReasons(snap, kind) : []),
+      ...(kind === 'reevaluate' ? [] : operatorReasons(run, lines, this.app.operators)),
+    ];
+    const rr = reasons('rerun', linesOf(rerun));
+    const rs = reasons('resume', resume.map((l) => l.line));
+    const re = reasons('reevaluate', []);
+    return {
+      rerun: { available: rerun.length > 0 && !rr.length, items: rerun, reasons: rerun.length ? rr : [] },
+      resume: { available: resume.length > 0 && !rs.length, items: [], lines: resume, reasons: resume.length ? rs : [] },
+      reevaluate: { available: reeval.length > 0 && !re.length, items: reeval, reasons: reeval.length ? re : [] },
+      note: NOTE,
+    };
+  }
+
+  /**
+   * Дозапуск завершённого, остановленного или упавшего прогона: перезапуск позиций проверки (rerun), продолжение линий
+   * обучения (resume) или переоценка упавших оценок (reevaluate). Прогон снова встаёт в очередь и собирается из снимка.
+   */
+  async dorunStart(id: number, kind: RerunRecord['kind'], sel: { items?: string[]; lines?: number[] } = {}): Promise<RunRecord> {
+    const run = this.get(id);
+    if (kind === 'rerun' && run.type !== 'checking') {
+      throw new HttpError(409, 'Перезапуск позиций — только у проверяющего прогона', ['Обучающую линию можно продолжить с места остановки: POST /api/runs/:id/resume']);
+    }
+    if (kind === 'resume' && run.type !== 'training') {
+      throw new HttpError(409, 'Продолжение — только для линий обучающего прогона', ['Проверяющий прогон перезапускается: POST /api/runs/:id/rerun']);
+    }
+    const positions = new Set(run.lines.flatMap((l) => l.items.filter((i) => i.kind === 'case' && i.pos !== null).map((i) => posKey(l.index, i.pos!))));
+    const unknown = kind === 'resume' ? (sel.lines ?? []).filter((n) => !run.lines.some((l) => l.index === n)).map((n) => `линии ${n}`) : (sel.items ?? []).filter((k) => !positions.has(k)).map((k) => `позиции ${k}`);
+    if (unknown.length) throw new HttpError(400, `В прогоне #${id} нет ${unknown.join(', ')}`);
+
+    const state = await this.dorun(run);
+    const snap = await this.snapshotCheck(run);
+    const a = state[kind];
+    const eligible: (string | number)[] = kind === 'resume' ? state.resume.lines.map((l) => l.line) : a.items;
+    const wanted: (string | number)[] = kind === 'resume' ? (sel.lines ?? eligible) : (sel.items ?? eligible);
+    const why = kind === 'rerun' ? 'перезапускаются только позиции с техническим сбоем и не начатые' : kind === 'reevaluate' ? 'оценка не падала: переоценивается только упавшая' : 'продолжить нельзя: линия дошла до конца корзины или после остановки прошёл curator';
+    const reasons = [...a.reasons, ...wanted.filter((w) => !eligible.includes(w)).map((w) => `${typeof w === 'number' ? `Линия ${w}` : w}: ${why}`)];
+    if (!wanted.length && !reasons.length) reasons.push(kind === 'rerun' ? 'Нет позиций для перезапуска' : kind === 'resume' ? 'Нет линий, которые можно продолжить' : 'Нет упавших оценок');
+    if (reasons.length) throw new HttpError(409, `Дозапуск прогона #${id} недоступен`, reasons);
+
+    // После await прогон мог встать в очередь: проверка и резерв операторов — один синхронный шаг, как при запуске.
+    if (run.status === 'queued' || run.status === 'running' || this.live.has(id)) throw new HttpError(409, `Прогон #${id} в очереди или идёт`);
+    const lines = kind === 'resume' ? (wanted as number[]) : linesOf(wanted as string[]);
+    const senders = kind === 'reevaluate' ? [] : run.lines.filter((l) => lines.includes(l.index) && l.senderId).map((l) => l.senderId);
+    const hold = this.app.operators.reserve(senders, 'run', `дозапуском прогона #${id}`);
+
+    const jobLines = new Map<number, LineJob>();
+    if (kind === 'resume') {
+      for (const n of lines) {
+        const from = state.resume.lines.find((l) => l.line === n)!.from;
+        const line = run.lines.find((l) => l.index === n)!;
+        jobLines.set(n, { indexes: new Set(from === null ? [] : line.items.filter((i) => i.index >= from).map((i) => i.index)), forceFinal: from === null });
+      }
+    } else {
+      for (const k of wanted as string[]) {
+        const p = parsePosKey(k)!;
+        const index = run.lines.find((l) => l.index === p.line)!.items.find((i) => i.pos === p.pos)!.index;
+        const lj = jobLines.get(p.line) ?? { indexes: new Set<number>(), forceFinal: false };
+        lj.indexes.add(index);
+        jobLines.set(p.line, lj);
+      }
+    }
+    const rerun: RerunRecord = {
+      n: run.reruns.length + 1,
+      kind,
+      items: kind === 'resume' ? [] : (wanted as string[]),
+      lines,
+      requestedAt: nowIso(),
+      startedAt: null,
+      finishedAt: null,
+      status: 'queued',
+      error: null,
+      previous: { status: run.status, run: run.error, lines: [] },
+    };
+    // Ошибки, с которыми остановились линии, переходят в запись дозапуска: после него они не висят на прогоне.
+    if (kind !== 'reevaluate') {
+      for (const l of run.lines.filter((x) => lines.includes(x.index) && x.error)) {
+        rerun.previous.lines.push({ line: l.index, error: l.error! });
+        l.error = null;
+      }
+      run.error = null;
+    }
+    run.reruns.push(rerun);
+    run.status = 'queued';
+    this.live.set(id, { abort: new AbortController(), resolved: snap.resolved!, execs: new Map(), started: false, hold, job: { rerun, lines: jobLines, began: false } });
+    try {
+      await this.app.store.saveRun(run);
+    } catch (e) {
+      this.live.delete(id);
+      hold.release();
+      this.restore(run, rerun);
+      run.reruns.pop();
+      throw e;
+    }
+    this.publish(run);
+    log.info(`Прогон #${id}: дозапуск ${rerun.n} (${kind}) поставлен в очередь`);
+    setImmediate(() => this.tick());
+    return run;
+  }
+
+  /** Переоценка: журнал итоговой попытки, кейс и модель судьи — из снимка. Агенту ничего не уходит, сессия агента не нужна. */
+  private async reevaluateJob(run: RunRecord, live: Live, job: Job): Promise<void> {
+    const app = this.app;
+    const r = live.resolved;
+    const judge = new LlmJudge(r.models.judge!, createProvider(r.models.judge!, app.env.raw));
+    const scoring = scoringOf(run.settings.metrics);
+    const errors: string[] = [];
+    job.began = true;
+    if (run.status === 'queued') run.status = 'running';
+    for (const line of run.lines) {
+      const lj = job.lines.get(line.index);
+      if (!lj) continue;
+      for (const rec of line.items.filter((i) => lj.indexes.has(i.index))) {
+        if (live.abort.signal.aborted) break;
+        const item = r.items.find((x) => x.index === rec.index);
+        const name = rec.execName!;
+        try {
+          if (!item?.caseDef) throw new Error('кейса позиции нет в снимке');
+          line.current = { index: rec.index, execName: name, phase: 'переоценка' };
+          this.scheduleSave(run);
+          const saved = await app.store.loadExecution(run.id, name);
+          if (!saved) throw new Error('журнал кейса не найден');
+          const http = (await app.store.loadHttp(run.id, name)) ?? [];
+          const exec = Execution.restore(
+            { id: saved.id, mode: 'auto', caseDef: item.caseDef, contract: r.contract!, solution: item.solution, basketType: r.basket.type, senderId: saved.senderId, caseNumber: saved.caseNumber, requestRef: saved.requestRef, taskIdScope: r.agent.request.taskIdScope, env: app.env, run: saved.run },
+            saved,
+            http,
+          );
+          live.execs.set(name, exec);
+          // Граница результата; у записей до 12.11.2026 её нет — событие перед итоговым статусом диалога.
+          const status = saved.events.find((e) => e.type === 'status');
+          const boundary = rec.resultSeq ?? (status ? status.seq - 1 : exec.events.length);
+          const prevAnswer = ([...saved.events].reverse().find((e) => e.type === 'scores') as ScoresEvent | undefined)?.answer ?? null;
+          const j = rec.steps.judge;
+          const ev = await reevaluate(
+            exec,
+            boundary,
+            judge,
+            { checks: rec.checks ?? [], judge: { status: j?.status === 'ok' || j?.status === 'failed' ? j.status : 'skipped', passed: j?.passed ?? 0, total: j?.total ?? 0, failed: rec.answerFailed }, answer: prevAnswer },
+            live.abort.signal,
+            scoring,
+          );
+          const was = rec.reevaluated;
+          this.applyEvaluation(rec, ev);
+          rec.reevaluated = was || ev.repeated;
+          await Promise.all([app.store.saveExecution(run.id, name, { ...exec.toJSON(), item: rec }), app.store.saveHttp(run.id, name, exec.http)]);
+        } catch (e) {
+          errors.push(`${posKey(line.index, rec.pos!)}: ${errorMessage(e)}`);
+          log.warn(`Переоценка ${name} прогона #${run.id}: ${errorMessage(e)}`);
+        }
+        this.scheduleSave(run);
+      }
+      line.current = null;
+    }
+    if (errors.length) job.rerun.error = errors.join('; ');
   }
 
   private publish(run: RunRecord): void {

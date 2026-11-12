@@ -11,6 +11,7 @@ startFakeAgent({
   workspaces: path.resolve(process.env.FAKE_AGENT_WORKSPACES ?? '.dev/fake-agent/workspaces'),
   buildSkills: path.resolve(process.env.FAKE_AGENT_BUILD_SKILLS ?? path.join(repo, 'dev/fake-agent/build')),
   failOn: process.env.FAKE_AGENT_FAIL_ON ?? null,
+  failTimes: process.env.FAKE_AGENT_FAIL_TIMES ? Number(process.env.FAKE_AGENT_FAIL_TIMES) : null,
   delayMs: Number(process.env.FAKE_AGENT_DELAY_MS ?? 0),
   slowOn: process.env.FAKE_AGENT_SLOW_ON ?? null,
   slowMs: Number(process.env.FAKE_AGENT_SLOW_MS ?? 0),

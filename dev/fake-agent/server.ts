@@ -14,6 +14,8 @@ export interface FakeAgentOptions {
   mcpTimeoutMs?: number;
   /** Регулярное выражение: сообщения, на которые агент отвечает HTTP 500. */
   failOn?: string | null;
+  /** Сбой только первых N подходящих сообщений, дальше агент отвечает: так проверяется повтор на месте. Нет — сбой всегда. */
+  failTimes?: number | null;
   delayMs?: number;
   /** Регулярное выражение и задержка: долгий ход, как у модели, которая думает минутами. Очередь отправителя в это время занята, как у шлюза AEFClaw. */
   slowOn?: string | null;
@@ -22,6 +24,7 @@ export interface FakeAgentOptions {
 
 export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: http.Server; port: number; url: string }> {
   const agents = new Map<string, FakeAgent>();
+  let failed = 0;
   const queues = new Map<string, Promise<unknown>>();
   const get = (sender: string) => {
     let a = agents.get(sender);
@@ -60,7 +63,7 @@ export async function startFakeAgent(o: FakeAgentOptions): Promise<{ server: htt
         if (!sender || !taskId) return json(res, 400, { error: { message: 'Нужны заголовки x-a2a-sender-id и x-task-id' } });
         const b = await body(req);
         const text: string = b?.params?.message?.parts?.map((p: any) => p.text).join('\n') ?? '';
-        if (o.failOn && new RegExp(o.failOn, 'u').test(text)) return json(res, 500, { error: { message: 'fake-agent: имитация сбоя' } });
+        if (o.failOn && new RegExp(o.failOn, 'u').test(text) && (o.failTimes == null || failed++ < o.failTimes)) return json(res, 500, { error: { message: 'fake-agent: имитация сбоя' } });
         const a = get(sender);
         const reply = await serial(sender, async () => {
           await a.ws.ensure();

@@ -162,9 +162,10 @@ export function resumePoint(l: LineRecord, cur: CuratorPolicy): Omit<ResumeLine,
     if (l.curatorPasses.some((p) => p.afterPos > lastBefore && p.status !== 'failed')) return null;
     return { from: first.index, pos };
   }
-  const finalOk = l.curatorPasses.some((p) => p.reason === 'final' && p.status === 'ok');
+  // Проход выполнен, если curator ответил: разобрал очередь или она была пуста — агент мог доделать прерванный проход сам.
+  const finalDone = l.curatorPasses.some((p) => p.reason === 'final' && (p.status === 'ok' || p.status === 'skipped'));
   const finalTried = l.curatorPasses.some((p) => p.reason === 'final');
-  if (cur.enabled && cur.final && !finalOk && (l.counter > 0 || finalTried)) return { from: null, pos: null };
+  if (cur.enabled && cur.final && !finalDone && (l.counter > 0 || finalTried)) return { from: null, pos: null };
   return null;
 }
 

@@ -2,6 +2,8 @@
 // По HTTPS требует клиентский сертификат, подписанный переданным CA. Запрос сверяется со схемой: нарушение — HTTP 422, как у GigaChat.
 // Модель с суффиксом -blacklist или -length имитирует срабатывание фильтра или обрезку ответа.
 // Заголовок X-Fake-Fail: operator | judge — HTTP 503 для этой роли; format — ответ не JSON (headers в models/*.yaml).
+// X-Fake-Fail-Times: N — сбой только первых N таких запросов, дальше модель отвечает: так проверяется повтор на месте.
+// X-Fake-Fail-After: M — первые M таких запросов проходят, сбой начинается с M + 1-го.
 import crypto from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
@@ -95,6 +97,8 @@ function finishFor(model: string, blocked: string): string {
 
 export async function startFakeGigaChat(opts: { port?: number; host?: string; tls?: { cert: string | Buffer; key: string | Buffer; ca: string | Buffer } | null } = {}): Promise<FakeGigaChat> {
   const requests: FakeGigaChatRequest[] = [];
+  /** Сколько раз уже сработал сбой по X-Fake-Fail-Times: роль или format → число. */
+  const failCounts = new Map<string, number>();
   const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const send = (status: number, body: unknown) => res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
     if (req.method === 'GET' && req.url === '/health') return send(200, { status: 'ok' });
@@ -116,8 +120,16 @@ export async function startFakeGigaChat(opts: { port?: number; host?: string; tl
     const system = textOf(body.messages.find((m: any) => m.role === 'system')?.content);
     const user = textOf(body.messages.find((m: any) => m.role === 'user')?.content);
     const fail = String(req.headers['x-fake-fail'] ?? '');
-    if (fail && fail === fakeRole(system)) return send(503, { status: 503, message: 'fake-gigachat: модель недоступна' });
-    const content = fail === 'format' ? 'Не JSON, а рассуждение' : fakeAnswer(system, user);
+    const times = Number(req.headers['x-fake-fail-times'] ?? NaN);
+    const after = Number(req.headers['x-fake-fail-after'] ?? 0) || 0;
+    const due = (kind: string): boolean => {
+      if (!Number.isFinite(times) && !after) return true;
+      const n = failCounts.get(kind) ?? 0;
+      failCounts.set(kind, n + 1);
+      return n >= after && (!Number.isFinite(times) || n < after + times);
+    };
+    if (fail && fail === fakeRole(system) && due(fail)) return send(503, { status: 503, message: 'fake-gigachat: модель недоступна' });
+    const content = fail === 'format' && due('format') ? 'Не JSON, а рассуждение' : fakeAnswer(system, user);
     const input = Math.ceil((system.length + user.length) / 4);
     const output = Math.ceil(content.length / 4);
     const created = Math.floor(Date.now() / 1000);

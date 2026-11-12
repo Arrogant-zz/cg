@@ -1,5 +1,6 @@
 // Встроенные метрики (MET-01–04). Нет данных — не ноль: значение отсутствует, причина видна.
 import type { ItemRecord, LineRecord, RunRecord } from '../runner/types.js';
+import { OPERATOR_FAILURES } from '../execution/events.js';
 import { plural } from '../util/core.js';
 import { classReport, fmtShare, scoringOf } from './scoring.js';
 
@@ -275,9 +276,12 @@ export function computeRunMetrics(run: RunRecord): MetricValue[] {
           break;
         }
         const failed = d.reduce((s, i) => s + i.stats!.operator.failedAttempts, 0);
-        const errors = items.filter((i) => ['operator_error', 'operator_format_error', 'operator_timeout', 'operator_mode_violation'].includes(i.status)).length;
+        // Позиции со сбоем оператора в любой попытке: повтор на месте исправляет итог, но сбой стенда остаётся виден (решение владельца от 12.11.2026).
+        const hit = items.filter((i) => OPERATOR_FAILURES.has(i.status) || (i.attempts ?? []).some((a) => OPERATOR_FAILURES.has(a.status)));
+        const fixed = hit.filter((i) => !OPERATOR_FAILURES.has(i.status) && i.outcome && i.outcome !== 'technical').length;
         const calls = d.reduce((s, i) => s + i.stats!.operator.calls, 0);
-        out.push({ ...base, status: 'ok', value: errors, denominator: null, display: String(errors), note: `сбоев кейсов · неудачных попыток ${failed} из ${calls} вызовов`, reason: '' });
+        const note = `${plural(hit.length, 'позиция', 'позиции', 'позиций')} со сбоем оператора${fixed ? ` · у ${fixed} итог получен повтором` : ''} · неудачных попыток ${failed} из ${calls} вызовов`;
+        out.push({ ...base, status: 'ok', value: hit.length, denominator: null, display: String(hit.length), note, reason: '' });
         break;
       }
     }

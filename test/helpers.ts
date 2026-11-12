@@ -25,7 +25,8 @@ export interface Stand {
 
 export async function startStand(extraEnv: Record<string, string> = {}): Promise<Stand> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawgym-test-'));
-  const llm = await startFakeGigaChat();
+  // Порты заглушек задаются, когда стенд перезапускают на тех же адресах: адрес агента и моделей входит в снимок прогона.
+  const llm = await startFakeGigaChat({ port: Number(extraEnv.FAKE_GIGACHAT_PORT ?? 0) });
   const raw: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: '0',
@@ -44,11 +45,12 @@ export async function startStand(extraEnv: Record<string, string> = {}): Promise
   const { port } = await app.listen();
   const base = `http://127.0.0.1:${port}`;
   const agent = await startFakeAgent({
-    port: 0,
+    port: Number(extraEnv.FAKE_AGENT_PORT ?? 0),
     mcpUrl: `${base}/mcp`,
     workspaces: path.join(dataDir, 'fake-workspaces'),
     buildSkills: path.join(REPO, 'dev/fake-agent/build'),
     failOn: extraEnv.FAKE_AGENT_FAIL_ON ?? null,
+    failTimes: extraEnv.FAKE_AGENT_FAIL_TIMES ? Number(extraEnv.FAKE_AGENT_FAIL_TIMES) : null,
     slowOn: extraEnv.FAKE_AGENT_SLOW_ON ?? null,
     slowMs: Number(extraEnv.FAKE_AGENT_SLOW_MS ?? 0),
   });

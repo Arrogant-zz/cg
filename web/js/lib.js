@@ -338,6 +338,7 @@ export function stepsView(it, training) {
   if (training) {
     if (st.capture) {
       if (st.capture.status === 'not_sent') out.push(sp('off', null, 'capture не отправлялся'));
+      else if (st.capture.status === 'interrupted') out.push(sp('tech', 'capture', 'capture прерван'));
       else out.push(sp(st.capture.status === 'ok' ? '' : st.capture.status === 'skipped' ? 'off' : 'tech', 'capture', st.capture.status === 'ok' ? 'capture' : st.capture.status === 'skipped' ? 'capture пропущен' : 'capture: сбой'));
     } else if (it.status === 'running') out.push(sp('fu', null, 'capture'));
   }
@@ -537,11 +538,16 @@ ${e.attempts?.some((a) => !a.ok) ? html`<span class="cap">${e.attempts.filter((a
 </div>`;
 }
 
+/** Повторный вызов судьи: сразу после сбоя или переоценкой после прогона (решение владельца от 12.11.2026). */
+export const repeatLabel = (r) => (r === 'after' ? 'переоценка после прогона' : r === 'inline' ? 'повтор после сбоя' : '');
+
 export function judgeBlock(e, { http = false } = {}) {
+  const mark = e.repeat ? ` · ${repeatLabel(e.repeat)}` : '';
   if (e.status !== 'ok') {
-    return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}LLM-оценка ответа · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div><div class="chki" style="border-top: 0">${mk('na')}<span class="col" style="gap: 2px"><span class="m5">Ответ не оценён</span><span class="t2">${e.error ?? ''}</span></span></div></div>`;
+    const replaced = e.replacedBy ? html`<span class="cap">Сбой заменён повторным вызовом судьи — <a href="#ev-${e.replacedBy}">событие #${e.replacedBy}</a></span>` : '';
+    return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}LLM-оценка ответа${mark} · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div><div class="chki" style="border-top: 0">${mk('na')}<span class="col" style="gap: 2px"><span class="m5">${e.status === 'failed' ? 'Сбой судьи' : 'Ответ не оценён'}</span><span class="t2">${e.error ?? ''}</span>${replaced}</span></div></div>`;
   }
-  return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}LLM-оценка ответа · ${e.model}${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''} · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
+  return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}LLM-оценка ответа · ${e.model}${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''}${mark} · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
 <div class="chkl">${e.criteria.map((c) => html`<div class="chki">${mk(c.passed)}<span class="col" style="gap: 2px"><span class="${c.passed ? '' : 'm5'}">${c.text}</span>${c.reason ? html`<span class="t2">${c.reason}</span>` : ''}</span></div>`)}</div>
 ${e.summary ? html`<span class="cap">${e.summary}</span>` : ''}
 </div>`;
@@ -576,14 +582,15 @@ export function scoresBlock(e, { http = false } = {}) {
   const w = e.weights;
   const num = (x) => String(x).replace('.', ',');
   const finalText = f.text ? mdHtml(f.text) : null;
-  return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}Метрики аналитика · M1 и M2 · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
+  return html`<div class="hid" id="ev-${e.seq}" style="gap: 12px"><div class="hid-h">${icon('hidden')}Метрики аналитика · M1 и M2${e.reevaluation ? ' · переоценка после прогона' : ''} · скрыто от агента<span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
 <div class="chkl">
 <div class="chki">${mk(f.correct === null ? 'na' : f.correct)}<span class="col" style="gap: 2px"><span class="m5">Финальное действие: ${clsTitle(f.predicted)}</span><span class="t2">${f.expected ? `эталон — ${clsTitle(f.expected)}${f.expectedFrom === 'actions.final' ? ', выведен из reference.actions.final' : ''}` : 'эталонного класса нет — в M1 не входит'}</span><span class="cap">${f.seq ? html`<a href="#ev-${f.seq}">событие #${f.seq}</a> · ` : ''}${f.note}</span></span></div>
 <div class="chki">${mk(t.f1 === null ? 'na' : t.f1 === 1)}<span class="col" style="gap: 2px"><span class="m5">F1 инструментов: ${fmtShare(t.f1)}${t.f1 !== null ? html`<span class="t2" style="font-weight: 400"> · TP ${t.tp} · FP ${t.fp} · FN ${t.fn}</span>` : ''}</span>
 ${t.f1 === null ? html`<span class="t2">${t.reason}</span>` : t.rows.map((r) => html`<span class="t2"><span class="mono">${r.tool}</span> · ${r.ref ? `в эталоне${r.ref > 1 ? ` ×${r.ref}` : ''}` : 'вне эталона'} · ${r.calls ? `вызовов ${r.calls}${r.counted !== r.calls ? `, засчитано ${r.counted}` : ''}` : 'не вызывался'}${r.fp ? ` · FP ${r.fp}` : ''}${r.fn ? ` · FN ${r.fn}` : ''}</span>`)}
 <span class="cap">${t.rule}</span></span></div>
 <div class="chki">${mk(a.status !== 'ok' ? 'na' : a.score === 1)}<span class="col" style="gap: 2px"><span class="m5">A_judge: ${a.status === 'ok' ? html`${fmtShare(a.score)}${a.runs.length ? html`<span class="t2" style="font-weight: 400"> · соответствует в ${a.runs.filter((r) => r.match).length} из ${a.runs.length} прогонов${a.model ? ` · ${a.model}` : ''}</span>` : ''}` : a.status === 'failed' ? 'сбой судьи' : 'не оценено'}</span>
-${a.runs.map((r) => html`<span class="t2">прогон ${r.n}: ${r.error ? `сбой — ${r.error}` : r.match ? 'соответствует' : 'не соответствует'}${r.reason ? ` — ${r.reason}` : ''}</span>`)}
+${a.runs.map((r) => html`<span class="t2">прогон ${r.n}${r.repeat ? ` (${repeatLabel(r.repeat)})` : ''}: ${r.error ? `сбой — ${r.error}` : r.match ? 'соответствует' : 'не соответствует'}${r.reason ? ` — ${r.reason}` : ''}</span>`)}
+${(a.retried ?? []).length ? html`<span class="cap">Сбои, которые заменил повторный вызов: ${a.retried.map((r) => `прогон ${r.n} — ${r.error}`).join('; ')}</span>` : ''}
 ${a.reason ? html`<span class="t2">${a.reason}</span>` : ''}
 ${f.text || a.reference ? html`<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 8px 16px; padding-top: 6px">
 <div class="col" style="gap: 4px; min-width: 0"><span class="lbl">Итоговый текст агента${f.textFrom ? html` · <span class="mono">${f.textFrom}</span>` : ''}</span>${finalText ? html`<div class="quote md">${finalText}</div>` : html`<div class="quote">${f.text || '—'}</div>`}</div>

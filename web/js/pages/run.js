@@ -204,6 +204,13 @@ function curve(run) {
   return raw(`<svg class="chart" viewBox="0 0 ${W} 248" role="img" aria-label="${training ? 'Поправки оператора по позициям корзины' : 'Успех по позициям корзины'}">${parts.join('')}</svg>`);
 }
 
+/** Сколько позиций получили итог повтором стенда: повторной попыткой или повторным вызовом судьи. */
+function retriedNote(run) {
+  const r = run.retried;
+  const parts = [r?.attempts ? `повторной попыткой — ${r.attempts}` : '', r?.reevaluated ? `повторным вызовом судьи — ${r.reevaluated}` : ''].filter(Boolean);
+  return parts.length ? ` · итог ${parts.join(', ')}` : '';
+}
+
 /** Проверка для обученного оператора: настройка с тем же агентом, лучше та, что продолжает файл этого прогона. */
 function nextCheckConfig(run, configs) {
   const same = configs.filter((c) => c.basket.type === 'checking' && c.agent === run.settings.agent.id);
@@ -264,10 +271,12 @@ function resultsTable(run, line) {
       if (i.steps.curatorPass) cmds.push(html`<span class="sp">curator ${i.steps.curatorPass}</span>`);
       const ch = i.steps.checks;
       const jd = i.steps.judge;
+      const tries = i.attempts?.length ? html`<div class="cap" style="padding-top: 4px">попытка ${i.attempts.length + 1} · до неё: ${i.attempts.map((a) => STATUS_TITLES[a.status] ?? a.status).join(', ')}</div>` : '';
+      const rejudged = i.reevaluated ? html`<div class="cap">оценка — повтором судьи</div>` : '';
       return html`<tr>
 <td class="num m5">${i.pos}</td>
 <td>${i.execName ? html`<a class="rl mono" href="/runs/${run.id}/cases/${i.execName}">${i.case?.id}</a>` : html`<span class="mono m5">${i.case?.id}</span>`}<div class="cap">${i.solution?.title}</div></td>
-<td>${outcomePill(i)}${reason ? html`<div class="cap" style="padding-top: 4px">${reason}</div>` : ''}</td>
+<td>${outcomePill(i)}${reason ? html`<div class="cap" style="padding-top: 4px">${reason}</div>` : ''}${tries}${rejudged}</td>
 <td class="num">${ch ? html`<span${ch.passed < ch.total ? raw(' style="color: #A51C14"') : ''}>${ch.passed}/${ch.total}</span>` : html`<span class="t3">—</span>`}</td>
 <td class="num">${jd?.status === 'ok' ? html`<span${jd.passed < jd.total ? raw(' style="color: #A51C14"') : ''}>${jd.passed}/${jd.total}</span>` : jd && jd.total ? html`<span class="pill na">${jd.status === 'failed' ? 'сбой судьи' : 'не оценён'}</span>` : html`<span class="t3">—</span>`}</td>
 ${analystOn ? html`<td>${analystCell(i.scores)}</td>` : ''}
@@ -291,6 +300,34 @@ ${run.snapshot.settings ? html`<div class="okr">${mk(true)}<span>Подстан�
 </div>
 ${run.snapshot.files.length ? html`<details class="raw"><summary>Файлы снимка</summary><pre>${run.snapshot.files.map((f) => `${f.file}${f.hash ? ` @${f.hash}` : ''}`).join('\n')}</pre></details>` : ''}
 ${run.snapshot.settings?.length ? html`<details class="raw"><summary>Настройки окружения</summary><pre>${run.snapshot.settings.map((s) => `${s.key} = ${s.value}`).join('\n')}</pre></details>` : ''}
+</section>`;
+}
+
+/**
+ * Дозапуск завершённого прогона (решение владельца от 12.11.2026): перезапуск сбойных и не начатых позиций проверки,
+ * продолжение остановленной линии обучения, переоценка упавших оценок. Недоступная кнопка видна с причиной.
+ */
+function dorunSection(run) {
+  const d = run.dorun;
+  if (!d) return '';
+  const rows = [];
+  // Причина может быть длинным адресом без пробелов: она переносится в любом месте, а не выходит за блок.
+  const why = (a) => (a.available || !a.reasons.length ? '' : html`<ul class="col cap" style="gap: 4px; padding-left: 18px; list-style: disc; overflow-wrap: anywhere">${a.reasons.map((r) => html`<li>${r}</li>`)}</ul>`);
+  // Кнопка — по ширине своей подписи, а не колонки.
+  const col = (body) => html`<div class="col" style="gap: 6px; align-items: flex-start; min-width: 0">${body}</div>`;
+  const btn = (action, label, a, line = null) =>
+    html`<button class="btn" type="button" data-action="${action}"${line === null ? '' : raw(` data-line="${line}"`)}${a.available ? '' : raw(' disabled aria-disabled="true"')}>${icon('refresh')}${label}</button>`;
+  if (d.rerun.items.length) rows.push(col(html`${btn('rerun', `Перезапустить сбои · ${d.rerun.items.length}`, d.rerun)}<span class="cap">Технические сбои и не начатые позиции — на том же тестовом операторе: ${d.rerun.items.join(', ')}</span>${why(d.rerun)}`));
+  for (const l of d.resume.lines) {
+    const label = l.from === null ? `Выполнить финальный проход curator${run.lines.length > 1 ? ` · линия ${l.line}` : ''}` : `Продолжить линию${run.lines.length > 1 ? ` ${l.line}` : ''} с позиции ${l.pos}`;
+    rows.push(col(html`${btn('resume', label, d.resume, l.line)}<span class="cap">${l.from === null ? 'Все позиции завершены, финальный проход curator не выполнен.' : 'Остаток корзины — по порядку, с /case-capture и проходами curator.'}</span>${why(d.resume)}`));
+  }
+  if (d.reevaluate.items.length) rows.push(col(html`${btn('reevaluate', `Переоценить · ${d.reevaluate.items.length}`, d.reevaluate)}<span class="cap">Упавшая оценка судьи — по сохранённому диалогу, без запросов агенту: ${d.reevaluate.items.join(', ')}</span>${why(d.reevaluate)}`));
+  if (!rows.length) return '';
+  return html`<section class="soft p20 sec" aria-labelledby="dorun-h" style="gap: 14px">
+<div class="sec-h" style="padding-bottom: 0"><h2 class="h3" id="dorun-h">Дозапуск</h2><span class="cap">Из снимка прогона: правка справочников на него не влияет</span></div>
+<div class="row" style="gap: 24px; align-items: flex-start; flex-wrap: wrap">${rows}</div>
+<span class="cap">${d.note}</span>
 </section>`;
 }
 
@@ -353,6 +390,7 @@ ${liveAside(run, line)}
   const summary = run.summary ?? [];
   const metrics = [...lead.flatMap((b) => summary.filter((m) => m.builtin === b)), ...summary.filter((m) => !lead.includes(m.builtin))];
   return html`${head}
+${dorunSection(run)}
 <section class="kpis" aria-label="Метрики прогона" style="grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr))">${metrics.map((m) => kpi(m))}</section>
 ${classMatrix(metrics.find((m) => m.builtin === 'final-action'))}
 <div class="split">
@@ -364,7 +402,7 @@ ${hint(html`Технический сбой — пропуск на кривой
 ${operatorAside(run, line)}
 </div>
 <section class="sec" aria-labelledby="res-h">
-<div class="sec-h"><h2 class="h2" id="res-h">Результаты по решениям</h2><span class="cap">Оценка — до служебных команд: capture и curator её не меняют</span></div>
+<div class="sec-h"><h2 class="h2" id="res-h">Результаты по решениям</h2><span class="cap">Оценка — до служебных команд: capture и curator её не меняют${retriedNote(run)}</span></div>
 ${resultsTable(run, line)}
 </section>
 ${run.type === 'training'
@@ -389,5 +427,25 @@ export const actions = {
     toast('Остановка отправлена: новые кейсы не начнутся');
     return ctx.rerender();
   },
+  async rerun(el, ctx) {
+    await dorun(ctx, 'rerun', {}, 'Перезапуск сбоев поставлен в очередь');
+  },
+  async resume(el, ctx) {
+    await dorun(ctx, 'resume', { lines: [Number(el.dataset.line)] }, 'Продолжение линии поставлено в очередь');
+  },
+  async reevaluate(el, ctx) {
+    await dorun(ctx, 'reevaluate', {}, 'Переоценка поставлена в очередь');
+  },
 };
+
+/** Дозапуск: отказ сервера (409) — тост с причинами, страница перечитывается. */
+async function dorun(ctx, kind, body, done) {
+  try {
+    await post(`/api/runs/${ctx.params[0]}/${kind}`, body);
+    toast(done);
+  } catch (e) {
+    toast(Array.isArray(e.details) && e.details.length ? `${e.message}: ${e.details.join('; ')}` : e.message, true);
+  }
+  return ctx.rerender();
+}
 void STATUS_TITLES;

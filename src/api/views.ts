@@ -9,6 +9,7 @@ import { stepLabel, stepsAfter } from '../runner/operators.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { operatorLabel } from '../results/compare.js';
 import type { ItemRecord, RunRecord } from '../runner/types.js';
+import type { DorunState } from '../runner/rerun.js';
 import { endpointOf, modelAuth, modelReadiness } from '../llm/provider.js';
 import { HttpError } from '../util/http.js';
 import { SUPPORTED_PROTOCOLS } from '../mcp/server.js';
@@ -377,6 +378,19 @@ export function runListItem(r: RunRecord) {
   };
 }
 
-export function runDetail(r: RunRecord) {
-  return { ...r, testOperatorLabel: operatorLabel(r), summary: r.status === 'running' || !r.summary ? computeRunMetrics(r) : r.summary };
+/** Попытки позиции по порядку: прежние и итоговая (current). */
+export function attemptsOf(i: ItemRecord) {
+  const prev = (i.attempts ?? []).map((a) => ({ ...a, current: false }));
+  if (!i.execName) return prev;
+  return [...prev, { n: prev.length + 1, execName: i.execName, status: i.status, outcome: i.outcome, reason: i.reason, startedAt: i.startedAt, finishedAt: i.finishedAt, current: true }];
+}
+
+/** Сколько позиций получили итог повторной попыткой и сколько — повторным вызовом судьи. */
+export function retriesOf(r: RunRecord) {
+  const items = r.lines.flatMap((l) => l.items.filter((i) => i.kind === 'case'));
+  return { attempts: items.filter((i) => i.attempts?.length && i.outcome && i.outcome !== 'technical').length, reevaluated: items.filter((i) => i.reevaluated).length };
+}
+
+export function runDetail(r: RunRecord, dorun: DorunState | null = null) {
+  return { ...r, testOperatorLabel: operatorLabel(r), summary: r.status === 'running' || !r.summary ? computeRunMetrics(r) : r.summary, retried: retriesOf(r), dorun };
 }

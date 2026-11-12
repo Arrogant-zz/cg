@@ -22,6 +22,9 @@ async function main() {
     delayMs: Number(process.env.FAKE_AGENT_DELAY_MS ?? 0),
     slowOn: process.env.FAKE_AGENT_SLOW_ON ?? null,
     slowMs: Number(process.env.FAKE_AGENT_SLOW_MS ?? 0),
+    // Разовый сбой агента — проверить повтор на месте и перезапуск сбоев (README, «Повтор и дозапуск»).
+    failOn: process.env.FAKE_AGENT_FAIL_ON ?? null,
+    failTimes: process.env.FAKE_AGENT_FAIL_TIMES ? Number(process.env.FAKE_AGENT_FAIL_TIMES) : null,
   });
   process.env.FAKE_GIGACHAT_URL = llm.url;
   process.env.FAKE_AGENT_URL = agent.url;

@@ -1,9 +1,18 @@
 // Экран «Разбор кейса»: журнал с ролями, вызовы и заглушки, решения оператора, оценка, режим «что видел агент» (SOL-02–06, RES-01).
-import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH, fmtShare, finalVerdict, headWait, waitBadge } from '../lib.js';
+import { html, icon, get, typeBadge, outcomePill, fmtDur, fmtClock, ref, hint, feed, legend, checksBlock, exchangesView, mk, STATUS_TITLES, TECH, fmtShare, finalVerdict, headWait, waitBadge, repeatLabel } from '../lib.js';
 
 export const title = (ctx) => `Разбор ${ctx.params[1]}`;
 
-function verdict(item, ex) {
+/** Попытки позиции: прежние и итоговая (решение владельца от 12.11.2026). Технический итог прежней попытки — фиолетовый. */
+function attemptsBar(ex, name) {
+  const list = ex.attempts ?? [];
+  if (list.length < 2) return '';
+  return html`<div class="row" style="gap: 10px; flex-wrap: wrap"><span class="lbl">Попытки позиции</span><div class="seg" role="group" aria-label="Попытки позиции">${list.map(
+    (a) => html`<button type="button" class="${a.execName === name ? 'on' : ''}" data-action="attempt" data-name="${a.execName}" aria-pressed="${a.execName === name ? 'true' : 'false'}">${a.n}${a.current ? ' · итоговая' : ''}${outcomePill(a)}</button>`,
+  )}</div></div>`;
+}
+
+function verdict(item, ex, shown) {
   const o = item?.outcome;
   const big = o === 'passed' ? mk(true) : o === 'failed' ? mk(false) : o === 'technical' ? mk('tech') : mk('na');
   const text = o === 'passed' ? 'Пройден' : o === 'failed' ? 'Не пройден' : o === 'technical' ? STATUS_TITLES[item.status] ?? 'Технический сбой' : o === 'not_evaluated' ? 'Не оценено' : 'Выполняется';
@@ -15,6 +24,8 @@ function verdict(item, ex) {
   } else if (o === 'technical') lines.push(`${item.reason}. Это сбой стенда, а не неуспех агента: кейс не оценивается.`);
   else if (o === 'not_evaluated') lines.push(item.reason);
   else if (o === 'passed') lines.push('Все обязательные проверки действий и ответа пройдены.');
+  if (shown && !shown.current) lines.push(`Это попытка ${shown.n}: её заменила повторная попытка, итог позиции — по итоговой.`);
+  if (item?.reevaluated && (!shown || shown.current)) lines.push('Оценка получена повторным вызовом судьи после его сбоя.');
   const training = ex.basketType === 'training';
   const cap = item?.steps.capture;
   return html`<section class="verdict" aria-labelledby="v-h">
@@ -22,7 +33,7 @@ function verdict(item, ex) {
 <span class="row" style="gap: 10px">${big}<span class="h2">${text}</span></span>
 <span class="sm t2">${lines.join(' ')}</span>
 <span class="cap">Предложенное правило: итог — все обязательные проверки действий и ответа пройдены; без оценки ответа — «не оценено».</span>
-${training && cap ? html`<span class="cap">${cap.status === 'not_sent' ? 'Capture не отправлялся: кейс прерван технически.' : `Capture: ${cap.status === 'ok' ? `кейс сохранён${o === 'failed' ? ' и после неверного решения — так задано для обучающей корзины' : ''}` : cap.status}${cap.signal ? ` · signal ${cap.signal}` : ''}.`}</span>` : ''}
+${training && cap ? html`<span class="cap">${cap.status === 'not_sent' ? `Capture не отправлялся: ${cap.reason ?? 'кейс прерван технически'}.` : cap.status === 'interrupted' ? 'Capture прерван перезапуском ClawGym: агент мог его принять, в счётчик curator кейс не вошёл.' : `Capture: ${cap.status === 'ok' ? `кейс сохранён${o === 'failed' ? ' и после неверного решения — так задано для обучающей корзины' : ''}` : cap.status}${cap.signal ? ` · signal ${cap.signal}` : ''}.`}</span>` : ''}
 </section>`;
 }
 
@@ -62,6 +73,7 @@ function remindersRow(st) {
 function stats(ex, item) {
   const st = item?.stats;
   const judge = ex.events.filter((e) => e.type === 'judge').pop();
+  const replaced = ex.events.filter((e) => e.type === 'judge' && e.replacedBy);
   const decisions = ex.events.filter((e) => e.type === 'operator_decision' && !e.forced);
   const corr = st ? st.lessons.map((l) => html`<span class="lesson">${l}${item.repeated?.includes(l) ? ' · повтор' : ''}</span>`) : [];
   return html`
@@ -73,6 +85,7 @@ ${item?.checks ? checksBlock(item.checks) : html`<span class="cap">Провер�
 <section class="sec" aria-labelledby="ans-h" style="gap: 6px">
 <div class="sec-h" style="padding-bottom: 6px"><h2 class="h3" id="ans-h">Ответ · LLM-оценка</h2>${judge?.status === 'ok' ? html`<span class="pill ${judge.criteria.every((c) => c.passed) ? 'pass' : 'fail'}">${judge.criteria.filter((c) => c.passed).length} из ${judge.criteria.length}</span>` : html`<span class="pill na">не оценено</span>`}</div>
 <div class="mt"><span>Модель и вызов</span><span class="t2">${judge?.model ?? '—'} · отдельный контекст</span></div>
+${judge?.repeat ? html`<div class="mt"><span>Повтор судьи</span><span class="t2">${repeatLabel(judge.repeat)}${replaced.length ? html` · заменил сбой ${replaced.map((e) => html`<a href="#ev-${e.seq}">#${e.seq}</a>`).reduce((a, b) => html`${a}, ${b}`)}` : ''}</span></div>` : ''}
 ${judge?.status === 'ok' ? html`<div class="mt"><span>Непройденные критерии</span><span class="t2">${judge.criteria.filter((c) => !c.passed).map((c) => c.text).join('; ') || 'нет'}</span></div><div class="mt"><span>Обоснование</span><span class="t2"><a href="#ev-${judge.seq}">событие #${judge.seq}</a></span></div>` : html`<div class="mt"><span>Причина</span><span class="t2">${judge?.error ?? 'оценка не запускалась'}</span></div>`}
 </section>
 ${analyst(ex, item)}
@@ -113,7 +126,9 @@ export async function render(ctx) {
   const full = view !== 'agent';
   const http = view === 'http' ? await get(`/api/runs/${id}/executions/${name}/http`) : null;
   const cases = run.lines.flatMap((l) => l.items).filter((i) => i.kind === 'case' && i.execName);
-  const idx = cases.findIndex((i) => i.execName === name);
+  // Журнал прежней попытки — та же позиция: соседние позиции считаются от неё.
+  const idx = cases.findIndex((i) => i.execName === name || i.attempts?.some((a) => a.execName === name));
+  const shown = (ex.attempts ?? []).find((a) => a.execName === name) ?? null;
   const prev = cases[idx - 1];
   const next = cases[idx + 1];
   const st = item?.stats;
@@ -127,6 +142,7 @@ export async function render(ctx) {
 </div>
 <div class="ph-a">${prev ? html`<a class="btn ghost" href="/runs/${id}/cases/${prev.execName}">Позиция ${prev.pos}</a>` : ''}${next ? html`<a class="btn" href="/runs/${id}/cases/${next.execName}">Позиция ${next.pos}${icon('chevRight')}</a>` : ''}</div>
 </header>
+${attemptsBar(ex, name)}
 </div>
 <div class="split">
 <section class="mn" aria-label="Журнал выполнения" style="gap: 24px">
@@ -150,7 +166,7 @@ ${view === 'http'
     : feed(ex.events, { full, httpLinks: true, waits: ex.waits })}
 </section>
 <aside class="sd" style="gap: 32px">
-${verdict(item, ex)}
+${verdict(item, ex, shown)}
 ${stats(ex, item)}
 </aside>
 </div>`;
@@ -176,5 +192,8 @@ export const actions = {
   view(el, ctx) {
     ctx.state.view = el.dataset.view;
     return ctx.rerender();
+  },
+  attempt(el, ctx) {
+    ctx.navigate(`/runs/${ctx.params[0]}/cases/${el.dataset.name}`);
   },
 };
