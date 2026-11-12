@@ -64,6 +64,12 @@ a.it:hover{background:#FAFAF8}
    на следующий ряд того же размера, а отметки короткой корзины делят ширину поровну. В полосе таблицы «Завершённые» шириной
    128 px (runs.js) при зазоре .bar из clawgym.css в ряду 15 отметок: эти три числа меняются вместе с test/web-runs.test.ts. */
 .bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(5.5px,1fr))}
+/* У прогона с повторениями каждая линия — свой блок .bar с нового ряда, слева номер линии. Между блоками 6 px — вдвое больше,
+   чем между рядами внутри блока. Строка номера не выше отметки (6 px в clawgym.css), иначе номер раздвигает блоки и полоса
+   растёт втрое. Колонка блока — 1fr, а не minmax(0,1fr): блок таблицы шириной 128 px не даёт сжать колонку уже себя, а блок
+   карточки без ширины занимает её целиком. Правило меняется вместе с test/web-runs.test.ts. */
+.bar-lines{display:grid;grid-template-columns:max-content 1fr;gap:6px;align-items:start}
+.bar-lines>span{font-size:12px;line-height:6px;color:#69716B;font-variant-numeric:tabular-nums}
 
 /* Разбор кейса */
 .kvh{display:flex;flex-wrap:wrap;gap:6px}

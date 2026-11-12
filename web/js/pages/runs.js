@@ -4,6 +4,15 @@ import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtTime, fmtDur, 
 export const title = 'Прогоны';
 
 const bar = (cells, width) => html`<div class="bar"${width ? html` style="width: ${width}px"` : ''} aria-hidden="true">${cells.map((c) => html`<i class="${c}"></i>`)}</div>`;
+/** Полоса прогона: у прогона с повторениями — блок на каждую линию с её номером слева, как вкладки «Повторение N» прогона. */
+const lineBars = (lines, width) =>
+  lines.length > 1 ? html`<div class="bar-lines" aria-hidden="true">${lines.map((cells, k) => html`<span>${k + 1}</span>${bar(cells, width)}`)}</div>` : bar(lines[0] ?? [], width);
+const DONE = new Set(['ok', 'no', 'tech', 'na']);
+/** Ход прогона с повторениями — по его полосе, чтобы подпись сходилась с отметками: сколько кейсов с исходом из всех. */
+function linesProgress(lines) {
+  const cells = lines.flat();
+  return `Готово ${cells.filter((c) => DONE.has(c)).length} из ${cells.length} · повторений ${lines.length}`;
+}
 
 function runningCard(r) {
   const p = r.progress;
@@ -12,8 +21,8 @@ function runningCard(r) {
 <div class="row" style="justify-content: space-between">${typeBadge(r.type)}${runStatus(r, r.startedAt ? fmtDur(since(r.startedAt)) : '')}</div>
 <div class="col" style="gap: 4px"><a class="h3" href="/runs/${r.id}" style="text-decoration: none">#${r.id} ${r.title}</a><span class="cap mono">${r.configFile}</span></div>
 <div class="col" style="gap: 8px">
-${bar(r.bar)}
-<span class="sm t2">${p.pos ? `Решение ${p.pos} из ${p.total}` : `Готово ${p.done} из ${p.total}`}${phase}${r.repetitions > 1 ? ` · повторений ${r.repetitions}` : ''}</span>
+${lineBars(r.bars)}
+<span class="sm t2">${r.bars.length > 1 ? linesProgress(r.bars) : `${p.pos ? `Решение ${p.pos} из ${p.total}` : `Готово ${p.done} из ${p.total}`}${phase}`}</span>
 </div>
 <dl class="kvs sm" style="grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px">
 <dt>Тестовый оператор</dt><dd>${r.testOperator}</dd>
@@ -99,7 +108,7 @@ ${done.length
 <td><a class="rl" href="/runs/${r.id}">#${r.id} ${r.title}</a><div class="cap mono">${r.configFile}</div></td>
 <td>${typeBadge(r.type)}</td>
 <td class="t2">${r.testOperator}</td>
-<td>${r.success.evaluated ? html`<div class="col" style="gap: 6px"><span class="num m5">${r.success.passed} из ${r.success.evaluated}</span><div class="bar" style="width: 128px" aria-hidden="true">${r.bar.map((c) => html`<i class="${c}"></i>`)}</div></div>` : html`<span class="pill na">нет оценённых</span>`}</td>
+<td>${r.success.evaluated ? html`<div class="col" style="gap: 6px"><span class="num m5">${r.success.passed} из ${r.success.evaluated}</span>${lineBars(r.bars, 128)}</div>` : html`<span class="pill na">нет оценённых</span>`}</td>
 <td>${outside(r)}</td>
 <td class="r nw num">${fmtDate(r.finishedAt)}</td>
 <td class="r"><button class="btn ghost ib del" type="button" data-action="remove" data-id="${r.id}" data-title="${r.title}" aria-label="Удалить прогон #${r.id}" title="Удалить прогон">${icon('trash')}</button></td>

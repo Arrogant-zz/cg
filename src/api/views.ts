@@ -8,7 +8,7 @@ import { resolveRun, type RunOverrides } from '../runner/resolve.js';
 import { stepLabel, stepsAfter } from '../runner/operators.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
 import { operatorLabel } from '../results/compare.js';
-import type { RunRecord } from '../runner/types.js';
+import type { ItemRecord, RunRecord } from '../runner/types.js';
 import { endpointOf, modelAuth, modelReadiness } from '../llm/provider.js';
 import { HttpError } from '../util/http.js';
 import { SUPPORTED_PROTOCOLS } from '../mcp/server.js';
@@ -336,6 +336,9 @@ function successOf(r: RunRecord) {
   return { passed: ev.filter((i) => i.outcome === 'passed').length, evaluated: ev.length };
 }
 
+/** Отметка кейса в полосе результатов: идёт, исход или пусто — ещё не начат. */
+const mark = (i: ItemRecord) => (i.status === 'running' ? 'live' : i.outcome === 'passed' ? 'ok' : i.outcome === 'failed' ? 'no' : i.outcome === 'technical' ? 'tech' : i.outcome === 'not_evaluated' ? 'na' : '');
+
 export function runListItem(r: RunRecord) {
   const items = r.lines.flatMap((l) => l.items.filter((i) => i.kind === 'case'));
   const line = r.lines.find((l) => l.status === 'running') ?? r.lines[0];
@@ -360,7 +363,10 @@ export function runListItem(r: RunRecord) {
     // Подключения в записи может не быть: загрузка проверяет только поля, без которых не строится список (results/format.ts).
     agent: { id: r.settings.agent?.id ?? null, title: r.settings.agent?.title ?? null, build: r.settings.agent?.build ?? null, model: r.settings.agent?.model ?? null },
     models: { operator: r.settings.operator?.id ?? null, judge: r.settings.judge?.id ?? null },
-    bar: (line?.items ?? []).filter((i) => i.kind === 'case').map((i) => (i.status === 'running' ? 'live' : i.outcome === 'passed' ? 'ok' : i.outcome === 'failed' ? 'no' : i.outcome === 'technical' ? 'tech' : i.outcome === 'not_evaluated' ? 'na' : '')),
+    // Полоса — по блоку отметок на каждую линию, в порядке линий: число успехов рядом с ней тоже считается по всем линиям,
+    // и его можно пересчитать по отметкам (решение владельца от 12.11.2026). Номер блока в интерфейсе — номер линии.
+    bars: r.lines.map((l) => l.items.filter((i) => i.kind === 'case').map(mark)),
+    // Ход одной линии — идущей или первой: карточка прогона в очереди берёт отсюда размер корзины.
     progress: { done, total, phase: cur?.phase ?? null, pos: curItem?.pos ?? null, turns: null as number | null },
     success: successOf(r),
     tech: items.filter((i) => i.outcome === 'technical').length,
