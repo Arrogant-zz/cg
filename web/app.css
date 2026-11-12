@@ -71,6 +71,14 @@ a.it:focus-visible{z-index:1}
    карточки без ширины занимает её целиком. Правило меняется вместе с test/web-runs.test.ts. */
 .bar-lines{display:grid;grid-template-columns:max-content 1fr;gap:6px;align-items:start}
 .bar-lines>span{font-size:12px;line-height:6px;color:#69716B;font-variant-numeric:tabular-nums}
+/* Балл от 0 до 100 в таблицах «Завершённые» и «Результаты по решениям» (docs/CONTRACTS.md, правило 30). Все варианты одного
+   размера, цифры табличные и прижаты вправо: числа в колонке стоят на одной вертикали, разряд под разрядом. Рамка есть у каждого
+   варианта, поэтому пунктир неполной оценки размер не меняет. Без зоны — текст страницы без фона; зелёная и красная зоны — пары
+   «Пройдено» и «Неуспех агента» из стайлгайда, пунктир — «нет данных». Правила меняются вместе с test/web-runs.test.ts. */
+.score{display:inline-flex;align-items:center;justify-content:flex-end;min-width:44px;height:24px;padding:0 8px;border:1px solid transparent;border-radius:7px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.score.high{background:#E6F2EA;color:#17603F}
+.score.low{background:#FCEAE8;color:#A51C14}
+.score.partial{border-style:dashed;border-color:#A6ADA7}
 
 /* Разбор кейса */
 .kvh{display:flex;flex-wrap:wrap;gap:6px}

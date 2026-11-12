@@ -1,5 +1,5 @@
-// Экран «Прогоны»: что идёт сейчас, очередь, завершённые с успехом среди оценённых (RUN-03, RES-02).
-import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtTime, fmtDur, since, plural, hint, mk, exchangeCard, toast, removeRun } from '../lib.js';
+// Экран «Прогоны»: что идёт сейчас, очередь, завершённые с баллом и успехом среди оценённых (RUN-03, RES-02).
+import { html, icon, get, post, typeBadge, runStatus, fmtDate, fmtTime, fmtDur, since, plural, hint, mk, exchangeCard, toast, removeRun, scoreBox, SCORE_HINT } from '../lib.js';
 
 export const title = 'Прогоны';
 
@@ -54,6 +54,16 @@ ${p ? html`<div class="tool ${p.kind === 'confirmation' ? 'wait' : 'miss'}" styl
 </article>`;
 }
 
+/**
+ * Колонка «Балл» таблицы «Завершённые»: балл прогона от 0 до 100 (docs/CONTRACTS.md, правило 30). У обучающего прогона под ним —
+ * число поправок оператора за прогон: в балл они не входят. Без балла — прочерк, причина стоит рядом, в колонке успеха.
+ */
+function scoreCell(r) {
+  const n = r.type === 'training' ? (r.corrections ?? null) : null;
+  if (n === null) return scoreBox(r.score);
+  return html`<div class="col" style="gap: 4px; align-items: flex-start">${scoreBox(r.score)}<span class="cap nw">${n} ${plural(n, 'поправка', 'поправки', 'поправок')}</span></div>`;
+}
+
 function outside(r) {
   const parts = [];
   if (r.status === 'stopped') return html`<span class="st"><span class="dot stop"></span>Остановлен${r.notStarted ? ` · ${r.notStarted} не начаты` : ''}</span>`;
@@ -102,12 +112,13 @@ ${now.length ? html`<div style="display: grid; grid-template-columns: repeat(aut
 <div class="sec-h"><h2 class="h2" id="done-h">Завершённые</h2>${pair ? html`<a class="btn" href="/compare?a=${pair[0].id}&b=${pair[1].id}">${icon('compare')}Сравнить #${pair[0].id} и #${pair[1].id}</a>` : ''}</div>
 ${done.length
     ? html`<div class="tw"><table class="tbl">
-<thead><tr><th>Прогон</th><th>Тип</th><th>Тестовый оператор</th><th>Успех среди оценённых</th><th>Вне оценки</th><th class="r">Завершён</th><th aria-label="Удаление"></th></tr></thead>
+<thead><tr><th>Прогон</th><th>Тип</th><th>Тестовый оператор</th><th title="${SCORE_HINT}">Балл</th><th>Успех среди оценённых</th><th>Вне оценки</th><th class="r">Завершён</th><th aria-label="Удаление"></th></tr></thead>
 <tbody>${done.map(
         (r) => html`<tr>
 <td><a class="rl" href="/runs/${r.id}">#${r.id} ${r.title}</a><div class="cap mono">${r.configFile}</div></td>
 <td>${typeBadge(r.type)}</td>
 <td class="t2">${r.testOperator}</td>
+<td>${scoreCell(r)}</td>
 <td>${r.success.evaluated ? html`<div class="col" style="gap: 6px"><span class="num m5">${r.success.passed} из ${r.success.evaluated}</span>${lineBars(r.bars, 128)}</div>` : html`<span class="pill na">нет оценённых</span>`}</td>
 <td>${outside(r)}</td>
 <td class="r nw num">${fmtDate(r.finishedAt)}</td>
@@ -115,7 +126,7 @@ ${done.length
 </tr>`,
       )}</tbody></table></div>`
     : html`<div class="empty">Завершённых прогонов пока нет.</div>`}
-${hint('Успех считается среди оценённых кейсов. Технические сбои, неоценённые и не начатые кейсы показаны отдельно и не превращаются в неуспех агента.')}
+${hint('Успех считается среди оценённых кейсов. Технические сбои, неоценённые и не начатые кейсы показаны отдельно и не превращаются в неуспех агента. Балл — от 0 до 100 по тем же кейсам: 20 за пройденный кейс и до 80 за близость к эталону; от 80 он зелёный, ниже 40 — красный. Если оценены не все кейсы прогона, балл показан пунктиром без цвета.')}
 </section>
 ${standSection(status, traffic)}`;
 }

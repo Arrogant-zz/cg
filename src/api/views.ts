@@ -7,6 +7,7 @@ import { buildPlan, describePlan } from '../runner/plan.js';
 import { resolveRun, type RunOverrides } from '../runner/resolve.js';
 import { stepLabel, stepsAfter } from '../runner/operators.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
+import { runScore, runScoreDetail } from '../metrics/score.js';
 import { operatorLabel } from '../results/compare.js';
 import type { ItemRecord, RunRecord } from '../runner/types.js';
 import type { DorunState } from '../runner/rerun.js';
@@ -338,6 +339,16 @@ function successOf(r: RunRecord) {
   return { passed: ev.filter((i) => i.outcome === 'passed').length, evaluated: ev.length };
 }
 
+/**
+ * Поправки оператора за обучающий прогон — то же число, что показывает метрика «Поправки оператора»: по завершённым
+ * нетехническим кейсам. От выбора метрик в прогоне не зависит. null — у проверяющего прогона и пока таких кейсов нет.
+ */
+function correctionsOf(r: RunRecord): number | null {
+  if (r.type !== 'training') return null;
+  const done = r.lines.flatMap((l) => l.items.filter((i) => i.kind === 'case' && i.outcome && i.outcome !== 'technical'));
+  return done.length ? done.reduce((s, i) => s + (i.stats?.corrections ?? 0), 0) : null;
+}
+
 /** Отметка кейса в полосе результатов: идёт, исход или пусто — ещё не начат. */
 const mark = (i: ItemRecord) => (i.status === 'running' ? 'live' : i.outcome === 'passed' ? 'ok' : i.outcome === 'failed' ? 'no' : i.outcome === 'technical' ? 'tech' : i.outcome === 'not_evaluated' ? 'na' : '');
 
@@ -371,6 +382,11 @@ export function runListItem(r: RunRecord) {
     // Ход одной линии — идущей или первой: карточка прогона в очереди берёт отсюда размер корзины.
     progress: { done, total, phase: cur?.phase ?? null, pos: curItem?.pos ?? null, turns: null as number | null },
     success: successOf(r),
+    // Балл от 0 до 100 по тем же оценённым кейсам (правило 30). Считается по записи при каждом запросе и в ней не хранится:
+    // он есть и у прогонов, завершённых до его появления.
+    score: runScore(r),
+    // Поправки в балл не входят: у обучающего прогона их число стоит рядом с баллом.
+    corrections: correctionsOf(r),
     tech: items.filter((i) => i.outcome === 'technical').length,
     notEvaluated: items.filter((i) => i.outcome === 'not_evaluated').length,
     notStarted: items.filter((i) => i.status === 'not_started').length,
@@ -392,5 +408,6 @@ export function retriesOf(r: RunRecord) {
 }
 
 export function runDetail(r: RunRecord, dorun: DorunState | null = null) {
-  return { ...r, testOperatorLabel: operatorLabel(r), summary: r.status === 'running' || !r.summary ? computeRunMetrics(r) : r.summary, retried: retriesOf(r), dorun };
+  // Балл прогона — с баллами линий и кейсов: страница берёт балл кейса по линии и индексу элемента.
+  return { ...r, testOperatorLabel: operatorLabel(r), summary: r.status === 'running' || !r.summary ? computeRunMetrics(r) : r.summary, retried: retriesOf(r), score: runScoreDetail(r), dorun };
 }

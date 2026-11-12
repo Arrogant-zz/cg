@@ -14,6 +14,7 @@ import { operatorsFromRecords } from './runner/operators.js';
 import { ResultsStore } from './results/store.js';
 import type { Issue } from './config/types.js';
 import { computeRunMetrics } from './metrics/builtins.js';
+import { runScore, scoreSummary } from './metrics/score.js';
 import { setLogLevel } from './util/log.js';
 import { fetchToolsList, mergeTools, readToolsFile } from './config/tools-import.js';
 
@@ -128,6 +129,8 @@ async function main() {
       for (const i of l.items.filter((x) => x.kind === 'case')) console.log(`  ${i.pos}. ${i.case?.id} · ${i.solution?.title}: ${i.outcome ?? i.status} — ${i.reason}`);
       console.log(`  Тестовый оператор: x-a2a-sender-id = ${l.senderId} — на нём можно продолжить: --continue ${r.id}`);
     }
+    // Балл прогона — от 0 до 100, по кейсам всех линий; от выбранных метрик не зависит (docs/CONTRACTS.md, правило 30).
+    console.log(`  ${scoreSummary(runScore(r))}`);
     for (const m of computeRunMetrics(r)) console.log(`  ${m.title}: ${m.display}${m.note ? ` · ${m.note}` : ''}${m.reason ? ` (${m.reason})` : ''}`);
     await app.close();
     process.exit(r.status === 'completed' ? 0 : 1);

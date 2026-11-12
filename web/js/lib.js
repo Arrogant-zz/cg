@@ -362,6 +362,23 @@ function splitDisplay(d) {
   return [d, ''];
 }
 
+/** Подсказка к заголовку колонки «Балл»: из чего складывается балл кейса. */
+export const SCORE_HINT = '0–100: 20 за пройденный кейс, 40 за действия, 40 за ответ';
+
+/** «3 из 15 кейсов» — сколько кейсов оценено из всех: пояснение к баллу по неполной оценке. */
+export const scoreCoverage = (score) => `${score.evaluated} из ${score.total} ${plural(score.total, 'кейса', 'кейсов', 'кейсов')}`;
+
+/**
+ * Балл от 0 до 100 (docs/CONTRACTS.md, правило 30): балл прогона в таблице «Завершённые» и балл кейса в «Результатах по решениям».
+ * Формулу интерфейс не повторяет: число и зона приходят со стенда. Зелёный — зона high, красный — low, без зоны — без цвета.
+ * Оценены не все кейсы — пунктир без цвета и подсказка, сколько оценено. Балла нет — серый прочерк, а не ноль.
+ */
+export function scoreBox(score) {
+  if (typeof score?.value !== 'number') return html`<span class="t3">—</span>`;
+  if (score.evaluated < score.total) return html`<span class="score partial" title="Оценено ${scoreCoverage(score)}">${score.value}</span>`;
+  return html`<span class="score${score.zone === 'high' ? ' high' : score.zone === 'low' ? ' low' : ''}">${score.value}</span>`;
+}
+
 export function issuesBox(issues, title = 'Прогон не запустится: ошибка в настройках') {
   const errors = issues.filter((i) => i.severity === 'error');
   if (!errors.length) return '';

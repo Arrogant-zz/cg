@@ -31,6 +31,9 @@ import {
   fmtShare,
   fmtRuns,
   FINAL_CLASS_TITLES,
+  scoreBox,
+  scoreCoverage,
+  SCORE_HINT,
 } from '../lib.js';
 
 export const title = (ctx) => `Прогон #${ctx.params[0]}`;
@@ -257,11 +260,37 @@ function analystCell(sc) {
 <div class="cap nw">F1 ${fmtShare(sc.tools.f1)} · A ${a.status === 'ok' ? (a.runs ? fmtRuns(a) : fmtShare(a.score)) : a.status === 'failed' ? 'сбой' : '—'}</div>${f.incomplete ? html`<div class="cap">не завершён</div>` : wrong}`;
 }
 
+/**
+ * Блок «Балл прогона» над плитками метрик (docs/CONTRACTS.md, правило 30): балл от 0 до 100 и его разложение — сколько кейсов
+ * пройдено из оценённых и средние «действия» и «ответ». Плитки ниже — метрики, выбранные в прогоне, а балл есть у любого
+ * прогона, поэтому он стоит отдельным рядом. Разложение — пояснение, а не сумма: как сложение оно не подписано.
+ */
+function scoreSection(run) {
+  const s = run.score;
+  if (!s) return '';
+  const row = (tile) => html`<section class="kpis" aria-label="Балл прогона">${tile}</section>`;
+  if (typeof s.value !== 'number') return row(html`<div class="kpi dim"><span class="k">Балл прогона</span><span class="v na">нет данных</span><span class="cap">${s.reason}</span></div>`);
+  // Оценены не все кейсы: пунктирная линия «нет данных» и число без цвета зоны — балл по части корзины не итог всего прогона.
+  const partial = s.evaluated < s.total;
+  const zone = partial ? '' : s.zone === 'high' ? ' up' : s.zone === 'low' ? ' down' : '';
+  const parts = [`пройдено ${s.passed} из ${s.evaluated}`];
+  if (typeof s.actions === 'number') parts.push(`действия ${s.actions} %`);
+  if (typeof s.answer === 'number') parts.push(`ответ ${s.answer} %`);
+  if (partial) parts.push(`оценено ${scoreCoverage(s)}`);
+  const notes = [];
+  if (s.noAnswer) notes.push(`у ${s.noAnswer} ${plural(s.noAnswer, 'кейса', 'кейсов', 'кейсов')} ответ не оценён: балл по действиям`);
+  // Баллы повторений — в порядке линий; у линии без оценённых кейсов — прочерк.
+  if (s.lines?.length > 1) notes.push(`по повторениям: ${s.lines.map((l) => l.value ?? '—').join(' · ')}`);
+  return row(html`<div class="kpi${partial ? ' dim' : ''}"><span class="k">Балл прогона</span><span class="v${zone}">${s.value} <small>из 100</small></span><span class="cap">${parts.join(' · ')}</span>${notes.map((n) => html`<span class="cap">${n}</span>`)}</div>`);
+}
+
 function resultsTable(run, line) {
   const training = run.type === 'training';
   const analystOn = run.settings.metrics.some((m) => m.builtin === 'final-action' || m.builtin === 'case-score');
+  // Балл кейса считает стенд: берётся по линии и индексу элемента. У кейса вне оценки балла нет — прочерк.
+  const points = new Map((run.score?.items ?? []).filter((x) => x.line === line.index).map((x) => [x.index, x.value]));
   return html`<div class="tw"><table class="tbl">
-<thead><tr><th>№</th><th>Кейс · решение</th><th>Итог</th><th>Действия</th><th>Ответ</th>${analystOn ? html`<th title="Финальное действие верно (M1) · case_score (M2)">M1 · M2</th>` : ''}${training ? html`<th>Поправки</th>` : ''}<th>Команды</th><th class="r">Время</th></tr></thead>
+<thead><tr><th>№</th><th>Кейс · решение</th><th>Итог</th><th title="${SCORE_HINT}">Балл</th><th>Действия</th><th>Ответ</th>${analystOn ? html`<th title="Финальное действие верно (M1) · case_score (M2)">M1 · M2</th>` : ''}${training ? html`<th>Поправки</th>` : ''}<th>Команды</th><th class="r">Время</th></tr></thead>
 <tbody>${line.items
     .filter((i) => i.kind === 'case')
     .map((i) => {
@@ -277,6 +306,7 @@ function resultsTable(run, line) {
 <td class="num m5">${i.pos}</td>
 <td>${i.execName ? html`<a class="rl mono" href="/runs/${run.id}/cases/${i.execName}">${i.case?.id}</a>` : html`<span class="mono m5">${i.case?.id}</span>`}<div class="cap">${i.solution?.title}</div></td>
 <td>${outcomePill(i)}${reason ? html`<div class="cap" style="padding-top: 4px">${reason}</div>` : ''}${tries}${rejudged}</td>
+<td>${scoreBox({ value: points.get(i.index) })}</td>
 <td class="num">${ch ? html`<span${ch.passed < ch.total ? raw(' style="color: #A51C14"') : ''}>${ch.passed}/${ch.total}</span>` : html`<span class="t3">—</span>`}</td>
 <td class="num">${jd?.status === 'ok' ? html`<span${jd.passed < jd.total ? raw(' style="color: #A51C14"') : ''}>${jd.passed}/${jd.total}</span>` : jd && jd.total ? html`<span class="pill na">${jd.status === 'failed' ? 'сбой судьи' : 'не оценён'}</span>` : html`<span class="t3">—</span>`}</td>
 ${analystOn ? html`<td>${analystCell(i.scores)}</td>` : ''}
@@ -391,6 +421,7 @@ ${liveAside(run, line)}
   const metrics = [...lead.flatMap((b) => summary.filter((m) => m.builtin === b)), ...summary.filter((m) => !lead.includes(m.builtin))];
   return html`${head}
 ${dorunSection(run)}
+${scoreSection(run)}
 <section class="kpis" aria-label="Метрики прогона" style="grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr))">${metrics.map((m) => kpi(m))}</section>
 ${classMatrix(metrics.find((m) => m.builtin === 'final-action'))}
 <div class="split">

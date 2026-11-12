@@ -1,5 +1,5 @@
 // Экран «Сравнение»: сопоставимость условий, метрики A → B, различия по кейсам (RES-02, SK-06).
-import { html, icon, get, typeBadge, fmtDate, fmtDur, mk, hint, later, fmtShare } from '../lib.js';
+import { html, icon, get, typeBadge, fmtDate, fmtDur, mk, hint, later, fmtShare, SCORE_HINT } from '../lib.js';
 
 export const title = 'Сравнение';
 
@@ -33,6 +33,20 @@ function pairKpi(p) {
   const b = p.b;
   if (a.status !== 'ok' && b?.status !== 'ok') return html`<div class="kpi dim"><span class="k">${a.title}</span><span class="v na">нет данных</span><span class="cap">${a.reason || b?.reason || ''}</span></div>`;
   return html`<div class="kpi"><span class="k">${a.title}</span><span class="v">${a.status === 'ok' ? a.display : '—'} <span class="ar">→</span> ${b?.status === 'ok' ? b.display : '—'}</span>${deltaOf(a, b)}</div>`;
+}
+
+/** Разница баллов B − A; ноль — без пометки. Баллы сравнения по зонам не красятся: смысл несёт знак разницы. */
+const scoreDelta = (d, style = '') => (d ? html`<span class="delta ${d > 0 ? 'up' : 'down'}"${style ? html` style="${style}"` : ''}>${d > 0 ? '+' : '−'}${Math.abs(d)}</span>` : '');
+
+/**
+ * Плитка «Балл на общих кейсах» (docs/CONTRACTS.md, правило 30): балл прогонов A и B на позициях, оценённых в обоих, — тех же,
+ * что у плитки «Успех на общих кейсах». Без общих кейсов — «нет данных» с причиной, а не ноль.
+ */
+function scoreKpi(common) {
+  const a = common.scoreA ?? null;
+  const b = common.scoreB ?? null;
+  if (a === null || b === null) return html`<div class="kpi dim"><span class="k">Балл на общих кейсах</span><span class="v na">нет данных</span><span class="cap">${common.n ? 'нет оценённых кейсов' : 'нет кейсов, оценённых в обоих прогонах'}</span></div>`;
+  return html`<div class="kpi"><span class="k">Балл на общих кейсах</span><span class="v">${a} <span class="ar">→</span> ${b}</span>${scoreDelta(b - a) || html`<span class="delta same">без изменений</span>`}</div>`;
 }
 
 export async function render(ctx) {
@@ -72,20 +86,25 @@ ${hint('Схема аналитика: проверка на новом тест
 <section class="kpis" aria-label="Метрики A и B" style="grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr))">
 ${c.metrics.filter((p) => LEAD[p.a.builtin]).map(pairKpi)}
 <div class="kpi"><span class="k">Успех на общих кейсах</span><span class="v">${c.common.passA} <span class="ar">→</span> ${c.common.passB} <small>из ${c.common.n}</small></span><span class="delta ${c.common.passB > c.common.passA ? 'up' : c.common.passB < c.common.passA ? 'down' : 'same'}">${c.common.passB - c.common.passA > 0 ? '+' : ''}${c.common.passB - c.common.passA} ${Math.abs(c.common.passB - c.common.passA) === 1 ? 'кейс' : 'кейса'}</span></div>
+${scoreKpi(c.common)}
 ${c.metrics.filter((p) => !LEAD[p.a.builtin]).filter((p) => !['corrections', 'repeated-corrections'].includes(p.a.builtin) || c.a.type === 'training').map(pairKpi)}
 </section>
 <section class="sec" aria-labelledby="cases-h">
 <div class="sec-h"><h2 class="h2" id="cases-h">По кейсам</h2><span class="row cap" style="gap: 14px"><span>Улучшилось <span class="num t2 m5">${c.counts.better}</span></span><span>Ухудшилось <span class="num t2 m5">${c.counts.worse}</span></span><span>Без изменений <span class="num t2 m5">${c.counts.same}</span></span><span>Не сравнивается <span class="num t2 m5">${c.counts.na}</span></span></span></div>
-<div class="tw"><table class="tbl"><thead><tr><th>№</th><th>Кейс</th><th>#${c.a.id}</th><th>#${c.b.id}</th><th>Изменение</th>${scored ? html`<th title="case_score = w_tools · F1 + w_answer · A_judge">case_score</th>` : ''}<th>Что видно в журнале</th></tr></thead>
+<div class="tw"><table class="tbl"><thead><tr><th>№</th><th>Кейс</th><th>#${c.a.id}</th><th>#${c.b.id}</th><th>Изменение</th><th title="${SCORE_HINT}">Балл</th>${scored ? html`<th title="case_score = w_tools · F1 + w_answer · A_judge">case_score</th>` : ''}<th>Что видно в журнале</th></tr></thead>
 <tbody>${c.cases.map((x) => {
     const cell = (it) => (!it ? mk('na') : it.outcome === 'passed' ? mk(true) : it.outcome === 'failed' ? mk(false) : it.outcome === 'technical' ? mk('tech') : mk('na'));
     const link = (run, it) => (it?.execName ? `/runs/${run}/cases/${it.execName}` : null);
     const ch = x.change === 'better' ? html`<span class="pill pass">Улучшение</span>` : x.change === 'worse' ? html`<span class="pill fail">Ухудшение</span>` : x.change === 'same' ? html`<span class="pill">Без изменений</span>` : html`<span class="pill na">Не сравнивается</span>`;
+    // Балл кейса в A и в B — со стенда. Разница — только у сравниваемой позиции: признак изменения по-прежнему считается по итогу кейса.
+    const pa = x.scoreA ?? null;
+    const pb = x.scoreB ?? null;
+    const pointsCell = html`<td class="num nw">${pa ?? '—'} <span class="t3">→</span> ${pb ?? '—'}${x.change !== 'na' && pa !== null && pb !== null && pb !== pa ? html` ${scoreDelta(pb - pa, 'display: inline')}` : ''}</td>`;
     const sa = x.a?.scores?.caseScore ?? null;
     const sb = x.b?.scores?.caseScore ?? null;
     const sd = sa !== null && sb !== null ? sb - sa : null;
     const scoreCell = html`<td class="num nw">${fmtShare(sa)} <span class="t3">→</span> ${fmtShare(sb)}${sd !== null && Math.abs(sd) >= 0.005 ? html` <span class="delta ${sd > 0 ? 'up' : 'down'}" style="display: inline">${sd > 0 ? '+' : '−'}${fmtShare(Math.abs(sd))}</span>` : ''}</td>`;
-    return html`<tr><td class="num m5">${x.pos}</td><td>${link(c.b.id, x.b) ? html`<a class="rl mono" href="${link(c.b.id, x.b)}">${x.case}</a>` : html`<span class="mono">${x.case}</span>`}<div class="cap">${x.solution}</div></td><td>${link(c.a.id, x.a) ? html`<a href="${link(c.a.id, x.a)}" aria-label="Разбор в #${c.a.id}">${cell(x.a)}</a>` : cell(x.a)}</td><td>${link(c.b.id, x.b) ? html`<a href="${link(c.b.id, x.b)}" aria-label="Разбор в #${c.b.id}">${cell(x.b)}</a>` : cell(x.b)}</td><td>${ch}</td>${scored ? scoreCell : ''}<td class="t2">${x.note || html`<span class="t3">—</span>`}</td></tr>`;
+    return html`<tr><td class="num m5">${x.pos}</td><td>${link(c.b.id, x.b) ? html`<a class="rl mono" href="${link(c.b.id, x.b)}">${x.case}</a>` : html`<span class="mono">${x.case}</span>`}<div class="cap">${x.solution}</div></td><td>${link(c.a.id, x.a) ? html`<a href="${link(c.a.id, x.a)}" aria-label="Разбор в #${c.a.id}">${cell(x.a)}</a>` : cell(x.a)}</td><td>${link(c.b.id, x.b) ? html`<a href="${link(c.b.id, x.b)}" aria-label="Разбор в #${c.b.id}">${cell(x.b)}</a>` : cell(x.b)}</td><td>${ch}</td>${pointsCell}${scored ? scoreCell : ''}<td class="t2">${x.note || html`<span class="t3">—</span>`}</td></tr>`;
   })}</tbody></table></div>
 ${hint(html`Здесь — наблюдаемые различия ответа и действий. Причины по журналу знаний агента — «урок не показан», «скилл не прочитан», «прочитан, но не применён» — ${later()}`)}
 </section>`;

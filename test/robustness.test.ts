@@ -9,7 +9,7 @@ import YAML from 'yaml';
 import { loadRegistry } from '../src/config/loader.js';
 import { condMatches, yamlSnippet } from '../src/stubs/engine.js';
 import { ResultsStore } from '../src/results/store.js';
-import { RECORD_FORMAT } from '../src/results/format.js';
+import { RECORD_FORMAT, loadRunRecord } from '../src/results/format.js';
 import { runListItem } from '../src/api/views.js';
 import { loadEnv } from '../src/env.js';
 import { parseReply } from '../src/agent/client.js';
@@ -124,6 +124,25 @@ test('записи var/: прежние форматы загружаются, �
     'operators.json: запись повреждена: «operators.lab-1» — не массив',
   ]);
   assert.equal(runListItem(runs[0]).agent.id, null, 'запись без подключения агента видна в списке');
+  // Балл прогона считается по записи при каждом запросе: у записей форматов 0 и 1 без оценённых кейсов его нет, причина названа.
+  for (const r of runs) {
+    const listed = runListItem(r);
+    assert.deepEqual([listed.score.value, listed.score.zone, listed.score.reason, listed.corrections], [null, null, 'нет оценённых кейсов', null], `прогон #${r.id}`);
+  }
+  // Запись формата 0 с оценённым кейсом получает балл без пересчёта: проверки действий с их видом и счёт критериев судьи
+  // были в записи кейса с первой версии. Выполнено одно обязательное действие из двух и один критерий из двух — 40.
+  const check = (kind: string, passed: boolean) => ({ id: kind, kind, text: kind, passed, evidence: [], note: '' });
+  const old = loadRunRecord({
+    id: 5,
+    type: 'training',
+    settings: { skillset: 'build' },
+    snapshot: { files: [] },
+    lines: [{ index: 1, senderId: 'lab-5', items: [{ index: 0, kind: 'case', pos: 1, status: 'completed', outcome: 'failed', checks: [check('required', true), check('final', false), check('forbidden', true)], steps: { judge: { status: 'ok', passed: 1, total: 2 } }, stats: { corrections: 3 } }] }],
+  });
+  assert.ok(old.ok, JSON.stringify(old));
+  const scored = runListItem(old.record);
+  assert.deepEqual(scored.score, { value: 40, zone: null, evaluated: 1, total: 1, passed: 0, actions: 50, answer: 50, noAnswer: 0, reason: '' });
+  assert.equal(scored.corrections, 3, 'поправки обучающего прогона — рядом с баллом');
 });
 
 test('API: имя журнала кейса с выходом из каталога прогона — 400, секрет request_ref не отдаётся', async () => {

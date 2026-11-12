@@ -84,10 +84,13 @@ async function page(file: string, data: Record<string, unknown>, params: string[
 }
 
 const T = '2026-11-11T10:00:00.000Z';
-const checkRun = (id: number, configId: string) => ({ id, title: 'Проверка', configFile: `runs/${configId}.yaml`, configId, type: 'checking', testOperator: `новый · cg-${id}-1`, status: 'completed', success: { evaluated: 1, passed: 1 }, bars: [['ok']], tech: 0, notEvaluated: 0, finishedAt: T });
+// Балл прогона — как его отдаёт стенд: у прогона с одним пройденным кейсом и у прогона без оценённых кейсов.
+const SCORED = { value: 100, zone: 'high', evaluated: 1, total: 1, passed: 1, actions: 100, answer: 100, noAnswer: 0, reason: '' };
+const NO_SCORE = { value: null, zone: null, evaluated: 0, total: 0, passed: 0, actions: null, answer: null, noAnswer: 0, reason: 'нет оценённых кейсов' };
+const checkRun = (id: number, configId: string) => ({ id, title: 'Проверка', configFile: `runs/${configId}.yaml`, configId, type: 'checking', testOperator: `новый · cg-${id}-1`, status: 'completed', success: { evaluated: 1, passed: 1 }, score: SCORED, corrections: null, bars: [['ok']], tech: 0, notEvaluated: 0, finishedAt: T });
 
 test('«Прогоны»: сообщение о сбое стенда у завершённого прогона — в пилюле note', async () => {
-  const failed = { ...checkRun(12, 'check'), status: 'failed', error: FREE, success: { evaluated: 0, passed: 0 }, bars: [[]] };
+  const failed = { ...checkRun(12, 'check'), status: 'failed', error: FREE, success: { evaluated: 0, passed: 0 }, score: NO_SCORE, bars: [[]] };
   const runs = await page('runs.js', { '/api/runs': { runs: [failed, checkRun(11, 'check')], manual: [] }, '/api/status': { stand: [] }, '/api/mcp/traffic?unbound=1': [] });
   assertFree('сбой стенда', runs, 1);
   assert.match(runs, /<span class="pill tech note"><svg/);

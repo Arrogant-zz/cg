@@ -5,6 +5,7 @@ import type { InputGroup } from '../runner/inputs.js';
 import type { ItemRecord, RunRecord } from '../runner/types.js';
 import { stepLabel } from '../runner/operators.js';
 import { computeRunMetrics } from '../metrics/builtins.js';
+import { caseScoreValue, scoreOf } from '../metrics/score.js';
 import { plural, stableStringify } from '../util/core.js';
 
 export interface CompareRow {
@@ -137,7 +138,8 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
   const itemsA = a.lines[0]?.items.filter((i) => i.kind === 'case') ?? [];
   const itemsB = b.lines[0]?.items.filter((i) => i.kind === 'case') ?? [];
   const n = Math.max(itemsA.length, itemsB.length);
-  const cases: { pos: number; case: string; solution: string; a: ItemRecord | null; b: ItemRecord | null; change: 'better' | 'worse' | 'same' | 'na'; note: string }[] = [];
+  // scoreA и scoreB — балл кейса позиции в каждом прогоне (правило 30); null — кейса нет или он не оценён.
+  const cases: { pos: number; case: string; solution: string; a: ItemRecord | null; b: ItemRecord | null; change: 'better' | 'worse' | 'same' | 'na'; note: string; scoreA: number | null; scoreB: number | null }[] = [];
   for (let k = 0; k < n; k++) {
     const x = itemsA[k] ?? null;
     const y = itemsB[k] ?? null;
@@ -155,11 +157,14 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
       else if (change === 'worse') note = `В #${b.id} не пройдено: ${fb.join('; ')}`;
       else if (y!.outcome === 'failed') note = `В обоих: ${fb.join('; ')}`;
     }
-    cases.push({ pos: k + 1, case: (x ?? y)!.case?.id ?? '', solution: (x ?? y)!.solution?.title ?? '', a: x, b: y, change, note });
+    cases.push({ pos: k + 1, case: (x ?? y)!.case?.id ?? '', solution: (x ?? y)!.solution?.title ?? '', a: x, b: y, change, note, scoreA: caseScoreValue(x), scoreB: caseScoreValue(y) });
   }
   const common = cases.filter((c) => c.change !== 'na');
   const passA = common.filter((c) => c.a?.outcome === 'passed').length;
   const passB = common.filter((c) => c.b?.outcome === 'passed').length;
+  // Балл A и B — на тех же общих кейсах, что и число успехов: позиции, которые не сравниваются, в него не входят.
+  const scoreA = scoreOf(common.map((c) => c.a!)).value;
+  const scoreB = scoreOf(common.map((c) => c.b!)).value;
 
   const ma = computeRunMetrics(a);
   const mb = computeRunMetrics(b);
@@ -194,7 +199,7 @@ export function compareRuns(a: RunRecord, b: RunRecord) {
       same: cases.filter((c) => c.change === 'same').length,
       na: notCompared.length,
     },
-    common: { n: common.length, passA, passB },
+    common: { n: common.length, passA, passB, scoreA, scoreB },
     metrics,
     limitations,
   };

@@ -77,6 +77,13 @@ test('обучение на новом операторе: reset перед ка
   assert.equal(success.status, 'ok');
   const tokens = run.summary.find((m: any) => m.id === 'tokens');
   assert.equal(tokens.status, 'ok');
+  // Балл прогона (решение владельца от 12–13.11.2026): шесть кейсов по 100 и 70 у блокировки суммы — попытку экспертизы оператор
+  // отклонил, остальное агент сделал верно. Поправки в балл не входят: их число за прогон стоит рядом с баллом.
+  assert.deepEqual(run.score.items.map((i: any) => i.value), [100, 100, 100, 100, 100, 100, 70]);
+  assert.deepEqual([run.score.value, run.score.zone, run.score.passed, run.score.evaluated, run.score.total], [96, 'high', 6, 7, 7]);
+  assert.deepEqual(cases.map((i: any) => i.stats.corrections), [2, 2, 0, 0, 0, 0, 1]);
+  const listed = (await s.api('GET', '/api/runs')).data.runs.find((r: any) => r.id === run.id);
+  assert.deepEqual([listed.score.value, listed.score.zone, listed.corrections], [96, 'high', 5]);
   // Журнал кейса: скрытые события и проверки с событиями-доказательствами.
   const ex = await s.api('GET', `/api/runs/${run.id}/executions/${cases[0].execName}`);
   assert.ok(ex.data.events.some((e: any) => e.type === 'operator_decision' && e.hidden));
@@ -137,12 +144,48 @@ test('проверка до и после обучения: новый опер�
   const aPassed = a.lines[0].items.filter((i: any) => i.outcome === 'passed').length;
   const bPassed = b.lines[0].items.filter((i: any) => i.outcome === 'passed').length;
   assert.ok(bPassed > aPassed, `обученный оператор лучше нового: ${aPassed} → ${bPassed}`);
+  // Балл прогона: до обучения — 44 при «0 из 4», после — 100. В списке прогонов — тот же балл без баллов линий и кейсов;
+  // число поправок есть только у обучающего прогона.
+  const list = (await s.api('GET', '/api/runs')).data.runs;
+  const listed = (r: any) => list.find((x: any) => x.id === r.id);
+  assert.deepEqual(listed(a).score, { value: 44, zone: null, evaluated: 4, total: 4, passed: 0, actions: 56, answer: 54, noAnswer: 0, reason: '' });
+  assert.deepEqual(a.score, {
+    ...listed(a).score,
+    lines: [{ line: 1, value: 44, evaluated: 4, total: 4 }],
+    items: [
+      { line: 1, index: 0, value: 53, actions: 67, answer: 67 },
+      { line: 1, index: 1, value: 47, actions: 67, answer: 50 },
+      { line: 1, index: 2, value: 53, actions: 67, answer: 67 },
+      { line: 1, index: 3, value: 23, actions: 25, answer: 33 },
+    ],
+  });
+  assert.deepEqual(listed(b).score, { value: 100, zone: 'high', evaluated: 4, total: 4, passed: 4, actions: 100, answer: 100, noAnswer: 0, reason: '' });
+  assert.deepEqual([b.score.value, b.score.items.map((i: any) => i.value)], [100, [100, 100, 100, 100]]);
+  assert.deepEqual([listed(a).corrections, listed(b).corrections, listed(train).score.value, listed(train).corrections], [null, null, 96, 5]);
   const cmp = await s.api('GET', `/api/compare?a=${a.id}&b=${b.id}`);
   assert.equal(cmp.status, 200);
   assert.ok(cmp.data.counts.better > 0);
   assert.equal(cmp.data.rows.filter((r: any) => !r.same).map((r: any) => r.key).join(','), 'operator');
   assert.deepEqual([cmp.data.comparable, cmp.data.conclusion], [true, 'Отличается только: тестовый оператор'], 'до и после обучения сопоставимы');
   assert.match(cmp.data.rows.find((r: any) => r.key === 'operator').b, new RegExp(`^после #${train.id} обучение$`));
+  // Балл в сравнении — на общих кейсах. Здесь сравниваются все четыре позиции, поэтому баллы те же, что у прогонов.
+  assert.deepEqual(cmp.data.common, { n: 4, passA: 0, passB: 4, scoreA: 44, scoreB: 100 });
+  assert.deepEqual(cmp.data.cases.map((c: any) => [c.pos, c.change, c.scoreA, c.scoreB]), [[1, 'better', 53, 100], [2, 'better', 47, 100], [3, 'better', 53, 100], [4, 'better', 23, 100]]);
+  // Позиция 3 в A завершилась техническим сбоем: она не сравнивается, и её балл не входит ни в балл A, ни в балл B.
+  // B здесь — та же проверка до обучения: по всем кейсам её балл 44, а на трёх общих — 41, без 53 третьей позиции.
+  const before = s.app.runs.get(a.id);
+  const failAt = (positions: number[]) => {
+    const copy = structuredClone(before);
+    for (const i of copy.lines[0].items) if (positions.includes(i.pos ?? 0)) Object.assign(i, { status: 'agent_error', outcome: 'technical', reason: 'HTTP 500', checks: null, scores: null, steps: { ...i.steps, checks: null, judge: null } });
+    return copy;
+  };
+  const partial = compareRuns(failAt([3]), before);
+  assert.deepEqual(partial.common, { n: 3, passA: 0, passB: 0, scoreA: 41, scoreB: 41 });
+  assert.deepEqual(partial.cases.map((c) => [c.change, c.scoreA, c.scoreB]), [['same', 53, 53], ['same', 47, 47], ['na', null, 53], ['same', 23, 23]]);
+  // Ни одна позиция не оценена в обоих прогонах: балла сравнения нет, а не ноль.
+  const none = compareRuns(failAt([1, 2, 3, 4]), s.app.runs.get(b.id));
+  assert.deepEqual(none.common, { n: 0, passA: 0, passB: 0, scoreA: null, scoreB: null });
+  assert.deepEqual(none.cases.map((c) => [c.change, c.scoreA, c.scoreB]), [['na', null, 100], ['na', null, 100], ['na', null, 100], ['na', null, 100]]);
 
   // Метрики аналитика. M1: со стартовыми скиллами блокировка суммы идёт как спорная операция — экспертиза вместо ответа; после обучения — ответ и закрытие.
   const metric = (r: any, id: string) => r.summary.find((m: any) => m.id === id);
