@@ -60,6 +60,10 @@ a.it:hover{background:#FAFAF8}
 .bars .b{height:8px;border-radius:4px;background:#171C19;flex:none}
 .bars .b.live{background:#FFFFFF;box-shadow:inset 0 0 0 1px #F17A35}
 .bars .b.zero{width:3px;background:#C9CDC4}
+/* Полоса результатов корзины: одна отметка — один кейс в порядке позиций. Отметка не уже 5,5 px; что не помещается, переходит
+   на следующий ряд того же размера, а отметки короткой корзины делят ширину поровну. В полосе таблицы «Завершённые» шириной
+   128 px (runs.js) при зазоре .bar из clawgym.css в ряду 15 отметок: эти три числа меняются вместе с test/web-runs.test.ts. */
+.bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(5.5px,1fr))}
 
 /* Разбор кейса */
 .kvh{display:flex;flex-wrap:wrap;gap:6px}
