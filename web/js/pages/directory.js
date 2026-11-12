@@ -12,7 +12,7 @@ function terminalCell(terminal) {
 }
 
 function agentSection(a) {
-  const health = !a.health ? '' : a.health.ok === null ? html`<span class="pill na">${a.health.note}</span>` : html`<span class="pill ${a.health.ok ? 'pass' : 'tech'}">${a.health.ok ? icon('check') : icon('bolt')}${a.health.note}</span>`;
+  const health = !a.health ? '' : a.health.ok === null ? html`<span class="pill na note">${a.health.note}</span>` : html`<span class="pill ${a.health.ok ? 'pass' : 'tech'} note">${a.health.ok ? icon('check') : icon('bolt')}${a.health.note}</span>`;
   return html`<section class="sec" id="agent-${a.id}" aria-labelledby="ag-${a.id}" style="gap: 22px">
 <div class="row" style="justify-content: space-between; gap: 16px; align-items: flex-end">
 <div class="col" style="gap: 8px">${ref(a.file)}<h2 class="h1" id="ag-${a.id}" style="font-size: 26px; line-height: 34px">${a.title}</h2></div>
@@ -62,7 +62,7 @@ export async function render() {
 <div class="sec-h"><h2 class="h2" id="mo-h">Модели</h2><span class="cap mono">models/</span></div>
 <div class="tw"><table class="tbl"><thead><tr><th>Модель</th><th>Роли</th><th>Провайдер и параметры</th><th>Готовность</th></tr></thead>
 <tbody>${d.models.map(
-    (m) => html`<tr><td><span class="mono m5">${m.id}</span><div class="cap">${m.title}</div></td><td>${m.roles.map((r) => html`<span class="pill">${r === 'operator' ? 'оператор' : 'оценка'}</span> `)}</td><td class="t2">${m.provider}${m.model ? html` · <span class="mono">${m.model}</span>` : ''}${Object.entries(m.params ?? {}).length ? ` · ${Object.entries(m.params).map(([k, v]) => `${k} ${v}`).join(' · ')}` : ''}${m.endpoint ? html`<div class="cap mono">POST ${m.endpoint}</div>` : ''}${m.auth ? html`<div class="cap">${icon('lock', 's14')} ${m.auth}</div>` : ''}${m.description ? html`<div class="cap">${m.description}</div>` : ''}</td><td>${m.readiness ? html`<span class="pill na">${m.readiness}</span>` : mk(true)}</td></tr>`,
+    (m) => html`<tr><td><span class="mono m5">${m.id}</span><div class="cap">${m.title}</div></td><td>${m.roles.map((r) => html`<span class="pill">${r === 'operator' ? 'оператор' : 'оценка'}</span> `)}</td><td class="t2">${m.provider}${m.model ? html` · <span class="mono">${m.model}</span>` : ''}${Object.entries(m.params ?? {}).length ? ` · ${Object.entries(m.params).map(([k, v]) => `${k} ${v}`).join(' · ')}` : ''}${m.endpoint ? html`<div class="cap mono">POST ${m.endpoint}</div>` : ''}${m.auth ? html`<div class="cap">${icon('lock', 's14')} ${m.auth}</div>` : ''}${m.description ? html`<div class="cap">${m.description}</div>` : ''}</td><td>${m.readiness ? html`<span class="pill na note">${m.readiness}</span>` : mk(true)}</td></tr>`,
   )}</tbody></table></div>
 ${hint('Здесь модели LLM-оператора и судьи. Модель агента задаёт его сборка — она указана у подключения. Одна модель может играть обе роли, но вызовы и контексты ролей всегда раздельные.')}
 </section>

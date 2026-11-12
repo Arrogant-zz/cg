@@ -60,7 +60,7 @@ export async function render(ctx) {
 <div class="row" style="gap: 8px">${typeBadge(c.a.type)}<a href="/runs/${c.a.id}">#${c.a.id}</a>${opOf(c.a)}${icon('arrow', 's14 t3')}${typeBadge(c.b.type)}<a href="/runs/${c.b.id}">#${c.b.id}</a>${opOf(c.b)}</div>
 <section class="split" aria-labelledby="cmp-h">
 <div class="mn sec" style="gap: 6px">
-<div class="sec-h" style="padding-bottom: 10px"><h2 class="h2" id="cmp-h">Сопоставимость условий</h2><span class="pill ${c.comparable ? 'pass' : 'na'}">${c.comparable ? icon('check') : ''}${c.conclusion}</span></div>
+<div class="sec-h" style="padding-bottom: 10px"><h2 class="h2" id="cmp-h">Сопоставимость условий</h2><span class="pill ${c.comparable ? 'pass' : 'na'} note">${c.comparable ? icon('check') : ''}${c.conclusion}</span></div>
 <div class="tw"><table class="tbl"><thead><tr><th>Настройка</th><th>#${c.a.id}</th><th>#${c.b.id}</th><th></th></tr></thead>
 <tbody>${c.rows.map((r) => html`<tr><td class="${r.focus ? 'm5' : 't2'}">${r.title}${r.details?.length ? html`<div class="cap mono">${r.details.join('; ')}</div>` : ''}</td><td><span class="${r.key === 'basket' || r.key === 'contract' ? 'mono' : ''}">${r.a}</span></td><td><span class="${r.key === 'basket' || r.key === 'contract' ? 'mono' : ''}">${r.b}</span></td><td class="r">${r.same ? mk(true) : r.focus ? html`<span class="pill live">сравниваем это</span>` : html`<span class="pill fail">различается</span>`}</td></tr>`)}</tbody></table></div>
 </div>

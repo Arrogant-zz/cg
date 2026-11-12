@@ -481,7 +481,9 @@ export function messageView(e, { full = true, human = false, http = false } = {}
   const marks = e.marks;
   const kv = [];
   if (full && marks) {
-    if (marks.correction) kv.push(html`<span class="lesson">поправка${marks.lessonId ? ` · ${marks.lessonId}` : marks.lessonNote ? ` · ${marks.lessonNote}` : ' · урок не указан'}${marks.repeated ? ' · повторная' : ''}</span>`);
+    // Метка урока — идентификатор или короткая подпись. Заметка «вне каталога» — свободный текст: её показывает решение оператора, а у метки она в подсказке.
+    const note = !marks.lessonId && marks.lessonNote ? marks.lessonNote : null;
+    if (marks.correction) kv.push(html`<span class="lesson"${note ? html` title="${note}"` : ''}>поправка · ${marks.lessonId || (note ? 'урок вне каталога' : 'урок не указан')}${marks.repeated ? ' · повторная' : ''}</span>`);
     if (marks.explanation) kv.push(html`<span>объяснение правила</span>`);
     if (marks.approval) kv.push(html`<span>одобрение результата</span>`);
     if (marks.finish) kv.push(html`<span>завершение: да</span>`);
@@ -506,7 +508,8 @@ export function decisionBlock(e, { http = false } = {}) {
   if (e.event === 'confirmation') kv.push(html`<span>подтверждение: ${d.confirmation === 'approve' ? 'разрешить' : d.confirmation === 'reject' ? 'отклонить' : '—'}</span>`);
   if ('correction' in d) kv.push(html`<span>поправка: ${d.correction ? 'да' : 'нет'}</span>`);
   if (d.lessonId) kv.push(html`<span class="lesson">урок: ${d.lessonId}</span>`);
-  if (d.lessonNote && !d.lessonId) kv.push(html`<span>урок вне каталога: ${d.lessonNote}</span>`);
+  // Заметка урока вне каталога — свободный текст: строкой с подписью, а не меткой.
+  const lessonNote = d.lessonNote && !d.lessonId ? html`<span><span class="m5">Урок вне каталога.</span> ${d.lessonNote}</span>` : '';
   if ('finish' in d) kv.push(html`<span>завершение: ${d.finish ? 'да' : 'нет'}</span>`);
   if (d.approval) kv.push(html`<span>одобрение</span>`);
   if (e.moot) kv.push(html`<span>кейс уже закрыт: решение не применено</span>`);
@@ -516,9 +519,10 @@ export function decisionBlock(e, { http = false } = {}) {
   const reply = e.event === 'confirmation' && d.reply ? html`<div class="bub sys" style="white-space: pre-wrap">${d.reply}</div>` : '';
   const meta = e.forced ? e.forced : `${e.model}${e.durationMs ? ` · ${fmtDur(e.durationMs)}` : ''}${e.attempts?.length > 1 ? ` · попыток ${e.attempts.length}` : ''}`;
   return html`<div class="hid" id="ev-${e.seq}"><div class="hid-h">${icon('hidden')}Решение оператора · скрыто от агента<span class="cap">${meta}</span><span class="ev" style="margin-left: auto">#${e.seq}</span>${http ? httpLink(e) : ''}</div>
-${e.error ? html`<span class="pill tech" style="align-self: flex-start">${e.error}</span>` : ''}
+${e.error ? html`<span class="pill tech note" style="align-self: flex-start">${e.error}</span>` : ''}
 ${kv.length ? html`<div class="kvh">${kv}</div>` : ''}
 ${reply}
+${lessonNote}
 ${d.reason ? html`<span>${d.reason}</span>` : ''}
 ${e.attempts?.some((a) => !a.ok) ? html`<span class="cap">${e.attempts.filter((a) => !a.ok).map((a) => `попытка ${a.n}: ${a.kind === 'format' ? 'ошибка формата' : 'ошибка LLM'} — ${a.error}`).join(' · ')}</span>` : ''}
 </div>`;
@@ -716,7 +720,7 @@ export function exchangeCard(x, { live = false } = {}) {
   const status = x.response
     ? html`<span class="pill ${x.response.status < 400 ? 'pass' : 'tech'}">HTTP ${x.response.status}</span>`
     : x.error
-      ? html`<span class="pill tech">${icon('bolt')}${x.error}</span>`
+      ? html`<span class="pill tech note">${icon('bolt')}${x.error}</span>`
       : lost
         ? html`<span class="pill na">ответ не получен: стенд перезапущен до ответа</span>`
         : html`<span class="pill live">${icon('clock')}ждёт ответа ${waitTime({ startedAt: x.startedAt, deadline: x.deadline ?? null })}</span>`;

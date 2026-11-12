@@ -63,7 +63,9 @@ a.it:hover{background:#FAFAF8}
 
 /* Разбор кейса */
 .kvh{display:flex;flex-wrap:wrap;gap:6px}
-.kvh>span{display:inline-flex;align-items:center;gap:6px;min-height:24px;padding:2px 9px;border-radius:999px;background:#FFFFFF;box-shadow:inset 0 0 0 1px #E4E6E1;font-size:12px;line-height:16px;color:#3E4641}
+/* Метка в строке отметок не шире своего блока: метка длиннее блока переносится, а не выходит из колонки журнала.
+   У метки в одну строку высота 24 px, поэтому радиус 12 px даёт ту же форму, что 999 px. */
+.kvh>span{display:inline-flex;align-items:center;gap:6px;min-height:24px;min-width:0;max-width:100%;padding:2px 9px;border-radius:12px;background:#FFFFFF;box-shadow:inset 0 0 0 1px #E4E6E1;font-size:12px;line-height:16px;color:#3E4641;white-space:normal;overflow-wrap:anywhere}
 .kvh>span.lesson{background:#FDEFE5;color:#8F3E10;box-shadow:none;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace}
 .legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;line-height:16px;color:#4A524D}
 .legend>span{display:inline-flex;align-items:center;gap:6px}
@@ -156,8 +158,11 @@ dialog.confirm::backdrop{background:rgba(23,28,25,.32)}
 .fold.all{justify-content:flex-end;min-height:24px;padding:0 16px 4px;color:#69716B}
 .fold.all:hover{background:transparent;color:#A84A16;text-decoration:underline}
 
+/* Реплика не шире своей колонки. Длинное слово без пробелов — адрес, идентификатор, JSON в одну строку — переносится
+   внутри реплики и скрытого блока журнала, а не выходит за них. */
+.msg>.bub{max-width:100%;overflow-wrap:anywhere}
+.hid{overflow-wrap:anywhere}
 /* Markdown в сообщениях агента (web/js/md.js): типографика внутри пузыря; код и таблицы — на белом, прокручиваются в своей рамке. */
-.msg>.bub{max-width:100%}
 .md{min-width:0;overflow-wrap:anywhere}
 .md :is(p,ul,ol,pre,blockquote,div,h1,h2,h3,h4,h5,h6){margin:0}
 .md :is(p,ul,ol,pre,blockquote,div,h1,h2,h3,h4,h5,h6)+:is(p,ul,ol,pre,blockquote,div){margin-top:8px}
@@ -197,10 +202,16 @@ dialog.confirm::backdrop{background:rgba(23,28,25,.32)}
 .md-src{display:none;white-space:pre-wrap}
 .msg.md-raw .md{display:none}
 .msg.md-raw .md-src{display:block}
-/* Запись стенда и сбой команды в ленте: длинный текст переносится, а не раздвигает страницу; подпись команды и статуса не сжимается. */
+/* Запись стенда и сбой команды в ленте: подпись команды и статуса не сжимается. */
 .cmd .ref{flex:none}
-.cmd .pill.note{flex:0 1 auto;min-width:0;white-space:normal;border-radius:12px;padding:4px 10px}
-.cmd .pill.note .ic{align-self:flex-start;margin-top:1px;flex:none}
+/* Пилюля со свободным текстом. Класс note нужен пилюле, если её текст задаёт не интерфейс: LLM, сообщение об ошибке, файл настроек.
+   Такой текст переносится, а не раздвигает страницу. Пилюли с подписями из фиксированного набора остаются неразрывными.
+   У пунктирной пилюли рамка входит в высоту: отступ на 1 px меньше. В таблице ширина столбца считается по наименьшей ширине
+   содержимого, и без предела пилюля сжалась бы до одного символа в строке. */
+.pill.note{flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;border-radius:12px;padding:4px 10px}
+.pill.note .ic{align-self:flex-start;margin-top:1px;flex:none}
+.pill.na.note{padding:3px 9px}
+.tbl .pill.note{width:max-content;max-width:360px}
 .md-sw{padding:0 4px;border:0;border-radius:5px;background:transparent;box-shadow:inset 0 0 0 1px #E4E6E1;cursor:pointer}
 .md-sw:hover{color:#A84A16}
 .md-sw[aria-pressed="true"]{background:#171C19;color:#FFFFFF;box-shadow:none}

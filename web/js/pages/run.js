@@ -106,7 +106,7 @@ function passWait(p) {
 function curatorPass(p) {
   const title = p.reason === 'final' ? 'финальный' : `curator ${p.pass}`;
   const w = passWait(p);
-  const st = p.status === 'running' ? html`<span class="st"><span class="dot live"></span>выполняется${w ? html` · ${w.text} ${waitTime(w)}` : ''}</span>` : p.status === 'ok' ? '' : p.status === 'skipped' ? html`<span class="cap">очередь пуста</span>` : html`<span class="pill tech">${icon('bolt')}${p.error ?? p.status}</span>`;
+  const st = p.status === 'running' ? html`<span class="st"><span class="dot live"></span>выполняется${w ? html` · ${w.text} ${waitTime(w)}` : ''}</span>` : p.status === 'ok' ? '' : p.status === 'skipped' ? html`<span class="cap">очередь пуста</span>` : html`<span class="pill tech note">${icon('bolt')}${p.error ?? p.status}</span>`;
   return html`<div class="col" style="gap: 4px">
 <span class="row m5" style="gap: 8px; padding-bottom: 6px; flex-wrap: wrap"><span class="pb cu" style="height: 24px; padding: 0 8px">${icon('curator')}${title}</span>после позиции ${p.afterPos}${p.durationMs ? ` · ${fmtDur(p.durationMs)}` : ''}${st}</span>
 ${curatorResult(p)}

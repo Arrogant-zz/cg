@@ -48,7 +48,7 @@ ${p ? html`<div class="tool ${p.kind === 'confirmation' ? 'wait' : 'miss'}" styl
 function outside(r) {
   const parts = [];
   if (r.status === 'stopped') return html`<span class="st"><span class="dot stop"></span>Остановлен${r.notStarted ? ` · ${r.notStarted} не начаты` : ''}</span>`;
-  if (r.status === 'failed') return html`<span class="pill tech">${icon('bolt')}${r.error ?? 'сбой стенда'}</span>`;
+  if (r.status === 'failed') return html`<span class="pill tech note">${icon('bolt')}${r.error ?? 'сбой стенда'}</span>`;
   if (r.tech) parts.push(html`<span class="pill tech">${icon('bolt')}${r.tech} ${plural(r.tech, 'технический сбой', 'технических сбоя', 'технических сбоев')}</span>`);
   if (r.notEvaluated) parts.push(html`<span class="pill na">${r.notEvaluated} не оценено</span>`);
   return parts.length ? html`<span class="row" style="gap: 6px">${parts}</span>` : html`<span class="t3">—</span>`;
